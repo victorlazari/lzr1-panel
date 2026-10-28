@@ -784,11 +784,24 @@ _go)  # _go ID KEY: enter and double-click; a session goes to the viewer with th
   else $SELF _select $2 $3 force; $SELF _focus $2; fi
   ;;
 
-_kill)  # _kill KEY
+_kill)  # _kill KEY [ID]: end the session (Claude and its tmux session); with ID, the panel and the viewer then move
+       # to the first session left
+  local id=$3 next= it
   split_key $2; [[ -n $KS && $KP != +pr ]] || exit 0
-  print -rn -- "End session ${(qq)KS} on $KP? Claude stops there. [y/N] "
-  read -q && { load $KP && on 'tmux kill-session -t "=$1"' $KS }
+  print -rn -- "End ${(qq)KS} on $KP? Claude stops and its tmux session closes. [y/N] "
+  read -q || { print; exit 0 }
   print
+  if [[ -n $id ]]; then
+    for it in "${(@)${(@0)"$(<$STATE/$id.cache)"}[2,-1]}"; do
+      it=${it%%$'\t'*}
+      [[ -z $it || $it == */ || $it == +pr/* || $it == $2 ]] && continue
+      next=$it; break
+    done
+  fi
+  # The viewer moves first, so it is never left on a session that is gone.
+  [[ -n $next ]] && $SELF _select $id $next force
+  load $KP && on 'tmux kill-session -t "=$1"' $KS
+  [[ -n $next ]] && $SELF _pos $id $FZF_PORT $next >/dev/null 2>&1 &!
   ;;
 
 _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: switch the viewer to it)
@@ -853,7 +866,7 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
     [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
     acts+=( $'new\tnew session on this machine' )
     [[ $st == work ]] && acts+=( $'esc\tinterrupt Claude (Esc)' )
-    acts+=( $'rename\trename it' "end"$'\t'"${E}end the session…$R" )
+    acts+=( $'rename\trename it' "end"$'\t'"${E}end it: stop Claude and close its tmux session…$R" )
   fi
   acts+=( "cancel"$'\t'"${D}cancel$R" )
   _cut $head $(( ${COLUMNS:-56} - 3 ))
@@ -911,7 +924,7 @@ gh pr checks $num, fix it and push." ;;
       [[ $new == *[.:/\|]* ]] && { print -r -- 'names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0 }
       on 'tmux rename-session -t "=$1" "$2"' $KS $new || { print -n "press a key"; read -k1 -s; exit 0 }
       [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target ;;
-    end)   $SELF _kill $key ;;
+    end)   $SELF _kill $key $id ;;
   esac
   ;;
 
@@ -959,7 +972,7 @@ _panel)  # _panel ID
     --bind "o:execute-silent($S _open_url {1})" \
     --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
     --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
-    --bind "x:execute($S _kill {1})+reload-sync($S _list $id)" \
+    --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
@@ -983,7 +996,8 @@ keys)
   s  or [+sonnet]  new Sonnet session (a repository name opens in its folder)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
-  x                end the session (asks first)
+  x                end the session: Claude and its tmux session (asks first),
+                   then the first session left shows
   r  or [↻]        refresh now (it refreshes every 15s)
   q                close the panel
 

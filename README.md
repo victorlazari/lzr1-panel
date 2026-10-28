@@ -135,7 +135,7 @@ flowchart LR
 | `n` / `s`, or `[+opus]` / `[+sonnet]` | a new Opus / Sonnet session (type a name, or click a repository) |
 | `t` | the session in a new Ghostty tab |
 | `o` | its Remote Control link (on a PR: the PR) |
-| `x` | ends the session (asks first) |
+| `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
 | `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
 | `?` / `q` | all the keys / quit |
 
@@ -155,7 +155,7 @@ flowchart LR
 | open its repository on GitHub, or its folder | **ask Claude to fix its failing checks** |
 | copy the command that attaches to it | re-run failed checks |
 | new session · interrupt Claude · rename | mark it ready for review |
-| end it (asks first) | merge or close it (both ask first) |
+| end it: stop Claude, close its tmux session, show the first one left | merge or close it (both ask first) |
 
 A machine's heading has a menu too: new sessions there, test the machine, refresh.
 
