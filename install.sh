@@ -6,9 +6,10 @@
 #   ./install.sh --no-shell   leave your shell rc files alone
 #   ./install.sh --uninstall  remove the links, the shell hook and the Claude skill (profiles stay)
 #
-# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl and git; Claude Code if it is missing; Ghostty on macOS if
+# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh and jq; Claude Code if it is missing; Ghostty on macOS if
 # you want it; the lzr1-panel command in ~/.local/bin; the Claude Code skill that creates profiles; a shell hook
-# with cl-* helpers and (optionally) the panel opening with Ghostty; then your first profile.
+# with cl-* helpers and (optionally) the panel opening with Ghostty; Ctrl+C copying in Ghostty; GitHub sign-in; your
+# first profile; then lzr1-panel doctor checks it all.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -54,6 +55,11 @@ if [[ $UNINSTALL == 1 ]]; then
   rm -f "$SKILLS/lzr1-panel-profiles" && ok "removed the Claude skill link"
   for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do remove_hook "$rc"; done
   ok "removed the shell hook"
+  GCONF="$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  if grep -qs 'lzr1-panel/install.sh' "$GCONF"; then
+    grep -v -e 'Added by lzr1-panel/install.sh' -e '^keybind = performable:ctrl+c=copy_to_clipboard$' "$GCONF" >"$GCONF.tmp" || true
+    mv "$GCONF.tmp" "$GCONF" && ok "removed the Ghostty Ctrl+C copy key"
+  fi
   info "profiles kept in $CONFIG (delete that folder to remove them)"
   exit 0
 fi
@@ -80,6 +86,16 @@ version_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]
 step "Checking tools"
 for t in zsh tmux curl openssl git; do
   if have "$t"; then ok "$t"; else info "installing $t"; pkg_install "$t"; ok "$t installed"; fi
+done
+
+# gh lists your pull requests under the sessions; jq reads them when gh is not signed in. Neither is required.
+for t in gh jq; do
+  if have "$t"; then ok "$t"; continue; fi
+  pkg=$t
+  [[ $t == gh ]] && { have pacman || have apk; } && pkg=github-cli
+  info "installing $t"
+  if ( pkg_install "$pkg" ) >/dev/null 2>&1; then ok "$t installed"
+  else warn "could not install $t: your pull requests need it (https://cli.github.com)"; fi
 done
 
 fzf_version() { fzf --version 2>/dev/null | awk '{print $1}'; }
@@ -120,6 +136,18 @@ if [[ $OS == Darwin ]]; then
     brew install --cask ghostty && ok "Ghostty installed"
   else
     info "skipped: lzr1-panel will use its tmux layout"
+  fi
+  # Ghostty reads this file as well as ~/.config/ghostty; "performable" passes Ctrl+C on when nothing is selected.
+  GCONF="$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  GBIND='keybind = performable:ctrl+c=copy_to_clipboard'
+  if [[ -d /Applications/Ghostty.app ]]; then
+    if grep -qsF "$GBIND" "$GCONF"; then
+      ok "Ghostty: Ctrl+C copies selected text"
+    elif ask "Let Ctrl+C copy selected text in Ghostty (with nothing selected it still stops Claude)?"; then
+      mkdir -p "$(dirname "$GCONF")"
+      printf '\n# Added by lzr1-panel/install.sh: Ctrl+C copies a selection, and is Ctrl+C otherwise.\n%s\n' "$GBIND" >>"$GCONF"
+      ok "Ghostty: Ctrl+C copies selected text (reload Ghostty's config, Cmd+Shift+,)"
+    fi
   fi
 fi
 
@@ -181,7 +209,23 @@ else
   info "none yet: run 'lzr1-panel profile add', or ask Claude to create a new lzr1-panel profile"
 fi
 
+# ---- GitHub ---------------------------------------------------------------------------------------------------------
+
+step "GitHub (your pull requests under the sessions)"
+if ! have gh; then
+  info "no gh: the panel falls back to your SSH key's account (public PRs only)"
+elif gh auth status >/dev/null 2>&1; then
+  ok "gh is signed in as $(gh api user -q .login 2>/dev/null)"
+elif [[ -t 0 && $YES == 0 ]] && ask "Sign in to GitHub now (gh auth login), so the panel lists your pull requests?"; then
+  gh auth login </dev/tty || warn "not signed in: run 'gh auth login' later"
+else
+  info "not signed in: run 'gh auth login' to list your pull requests"
+fi
+
 [[ -t 1 ]] && "$BIN/lzr1-panel" splash --install || true
+
+step "Checking everything"
+"$BIN/lzr1-panel" doctor || warn "fix the items marked ✗ above (docs/troubleshooting.md explains each)"
 
 step "Done"
 info "open a new terminal (or: source ~/.zshrc), then run: lzr1-panel open"
