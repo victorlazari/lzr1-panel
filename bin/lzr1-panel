@@ -279,7 +279,12 @@ prs_refresh() {
   [[ ${LZR1_PRS:-1} == 0 ]] && return
   local -a fresh=( $STATE/prs(Nms-60) )
   (( $#fresh )) && return
-  prs_fetch >$STATE/prs.$$ && mv $STATE/prs.$$ $STATE/prs || { rm -f $STATE/prs.$$; touch $STATE/prs }
+  prs_fetch >$STATE/prs.$$ || { rm -f $STATE/prs.$$; touch $STATE/prs; return }
+  # gh failing for a moment must not swap its full list for the SSH key's public PRs: keep the last gh list.
+  if [[ $(head -1 $STATE/prs.$$) == *$'\037'ssh && $(head -1 $STATE/prs 2>/dev/null) == *$'\037'gh ]]; then
+    rm -f $STATE/prs.$$; touch $STATE/prs; return
+  fi
+  mv $STATE/prs.$$ $STATE/prs
 }
 
 # _ago SECONDS: 45s, 12m, 3h or 2d, into REPLY
@@ -327,7 +332,19 @@ pr_rows() {  # pr_rows WIDTH: the PR section's fzf items, after the sessions (la
 # A row key is PROFILE/SESSION; a profile's heading row is PROFILE/.
 split_key() { KP=${1%%/*} KS=${1#*/} }
 
-ghostty() { osascript -e 'tell application "Ghostty"' -e "$1" -e 'end tell' }
+# The script goes in on stdin, not the command line, where any process could read the variables genv passes.
+ghostty() { print -r -- "tell application \"Ghostty\""$'\n'"$1"$'\n'"end tell" | osascript - }
+
+# genv: AppleScript that hands a new Ghostty surface (into cfg) the variables a bare login shell lacks: Ghostty
+# starts a split's command without your shell's startup files, so a token set there (gh's GITHUB_TOKEN, say)
+# would be missing and the pull requests would fall back to your SSH key's public ones.
+genv() {
+  local v; local -a kv
+  for v in GITHUB_TOKEN GH_TOKEN GH_HOST LZR1_CONFIG LZR1_PRS LZR1_MENU_BUTTON LZR1_PANEL_WIDTH; do
+    [[ -n ${(P)v} ]] && kv+=( "\"$v=${${(P)v}//(#m)[\\\"]/\\$MATCH}\"" )
+  done
+  (( $#kv )) && print -r -- "set environment variables of cfg to {${(j:, :)kv}}"
+}
 
 mode() { print -rn -- "$(<$STATE/$1.mode)" } 2>/dev/null
 
@@ -583,6 +600,7 @@ open)  # panel on the left, viewer on the right
     print -rn -- $term >$STATE/$id.vterm
     ghostty "set cfg to new surface configuration
       set command of cfg to \"$SELF _panel $id\"
+      $(genv)
       set p to split (terminal id \"$term\") direction left with configuration cfg
       return id of p" >$STATE/$id.me || die "cannot split the Ghostty pane"
     exec $SELF _viewer $id
@@ -604,6 +622,7 @@ open)  # panel on the left, viewer on the right
   [[ -n $clip ]] && $T set-hook -g pane-set-clipboard "run-shell -b 'tmux save-buffer - | $clip'"
   vpane=$($T display -p -t $sess '#{pane_id}')
   print -rn -- tmux >$STATE/$id.mode
+  print -rn -- $TERM_PROGRAM >$STATE/$id.term
   print -rn -- $vpane >$STATE/$id.vterm
   $T split-window -hb -l $PANEL_W -t $sess "$SELF _panel $id"
   TMUX= exec $T attach -t $sess
@@ -791,6 +810,7 @@ _respawn)  # _respawn ID: open a new viewer pane to the right of the panel
   else
     ghostty "set cfg to new surface configuration
       set command of cfg to \"$SELF _viewer $id\"
+      $(genv)
       set v to split (terminal id \"$me\") direction right with configuration cfg
       return id of v" >$STATE/$id.vterm.new
   fi && mv $STATE/$id.vterm.new $STATE/$id.vterm
@@ -840,6 +860,7 @@ _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: swit
   if [[ $(mode $2) == ghostty ]]; then
     ghostty "set cfg to new surface configuration
       set command of cfg to \"$SELF _attach ${(q)3}\"
+      $(genv)
       new tab in front window with configuration cfg" >/dev/null
   else
     $SELF _select $2 $3 force; $SELF _focus $2
@@ -1013,6 +1034,28 @@ _panel)  # _panel ID
         *↻*)      echo 'reload-sync($S _list $id)' ;;
         *\?*)     echo 'execute($S keys; read -k1 -s)' ;;
       esac"
+  # q (or esc) closes the viewer too, so the window closes with the panel.
+  $SELF _quit $id
+  ;;
+
+_quit)  # _quit ID: close the viewer and, in the tmux layout, the layout itself
+  if [[ $(mode $2) == tmux ]]; then
+    local tty=$(tmux -L lzr1 list-clients -t lzr1-$2 -F '#{client_tty}' 2>/dev/null | head -1)
+    tmux -L lzr1 kill-session -t lzr1-$2 2>/dev/null
+    # macOS Terminal keeps a window open after its shell ends ("[Process completed]"): close the one that held the
+    # layout, unless it has other tabs.
+    if [[ $(<$STATE/$2.term 2>/dev/null) == Apple_Terminal && -n $tty ]]; then
+      sleep 0.5
+      print -r -- "tell application \"Terminal\"
+        repeat with w in windows
+          if (count of tabs of w) is 1 and tty of tab 1 of w is \"$tty\" then close w
+        end repeat
+      end tell" | osascript - >/dev/null 2>&1
+    fi
+  else
+    local vp=$(<$STATE/$2.vpid 2>/dev/null)
+    [[ -n $vp ]] && { pkill -TERM -P $vp 2>/dev/null; kill -TERM $vp 2>/dev/null }
+  fi
   ;;
 
 keys)
@@ -1030,7 +1073,7 @@ keys)
   x                end the session: Claude and its tmux session (asks first),
                    then the first session left shows
   r  or [↻]        refresh now (it refreshes every 15s)
-  q                close the panel
+  q                close the panel and the viewer (the window closes)
 
   In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.
   Copy: drag over the text, then Ctrl-C (Cmd-C does not reach Claude). Cmd-V pastes.
