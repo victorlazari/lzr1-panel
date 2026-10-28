@@ -5,7 +5,9 @@
 #   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
 #   lzr1-panel start PROFILE opus|sonnet NAME [args] start a detached Claude session on PROFILE; a NAME that is a
 #                                                    folder under the profile's repos opens in it, else in its root
-#   lzr1-panel list                                  print every profile's sessions
+#   lzr1-panel list                                  print every profile's sessions, then your open PRs
+#   lzr1-panel prs                                   your open pull requests (the GitHub account on this machine)
+#   lzr1-panel doctor                                check everything the panel needs, with the fix for what is missing
 #   lzr1-panel profile list|show|add|test|remove     manage profiles (lzr1-panel profile help)
 #   lzr1-panel keys                                  the panel's keys
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
@@ -21,6 +23,7 @@ CONFIG=${LZR1_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel}
 PROFILES=$CONFIG/profiles
 STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
 PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
+MENU_BUTTON=${LZR1_MENU_BUTTON:-right}  # the mouse button that opens a row's menu: right or left
 mkdir -p $PROFILES $STATE
 chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
 
@@ -75,6 +78,22 @@ on() {
 
 # Shared by the scripts below: expands a leading ~ on the machine that runs them.
 EXP='exp() { case $1 in "~"|"~/"*) printf "%s" "$HOME${1#"~"}" ;; *) printf "%s" "$1" ;; esac; }
+'
+
+# Run before attaching a viewer, on the machine: with tmux's mouse on, a drag selects in tmux, out of the terminal's
+# reach, and the selection used to vanish on release with Cmd+C left nothing to copy. Now releasing the mouse copies
+# the selection and keeps it shown, Ctrl+C copies it and leaves copy mode, and the copy reaches this computer's
+# clipboard: through pbcopy on a Mac, and through the terminal (OSC 52) from any machine, SSH included.
+# Claude Code takes the mouse itself and copies its own selection with OSC 52, which some terminals (macOS
+# Terminal) ignore: on a Mac, tmux hands those copies to pbcopy too.
+CLIP='tmux set -s set-clipboard on 2>/dev/null
+tmux set -s "terminal-features[90]" "*:clipboard" 2>/dev/null
+c=; command -v pbcopy >/dev/null 2>&1 && c=pbcopy
+[ -n "$c" ] && tmux set-hook -g pane-set-clipboard "run-shell -b \"tmux save-buffer - | $c\"" 2>/dev/null
+for t in copy-mode copy-mode-vi; do
+  tmux bind -T $t MouseDragEnd1Pane send -X copy-pipe-no-clear $c 2>/dev/null
+  tmux bind -T $t C-c send -X copy-pipe-and-cancel $c 2>/dev/null
+done
 '
 
 # One record per session back to the panel, fields split by \037 (empty fields survive it, unlike a tab):
@@ -215,6 +234,82 @@ profile_add() {
   profile_test $name
 }
 
+# ---- pull requests --------------------------------------------------------------------------------------------------
+
+# The open pull requests of the GitHub account on this machine, newest first: the account gh is signed in to, or,
+# without gh, the one this machine's SSH key belongs to (public PRs only, and it needs jq). The first line is
+# LOGIN<us>SOURCE; then one record per PR, fields split by \037:
+# repository number title url draft branch review-decision checks updated
+prs_fetch() {
+  local login
+  if command -v gh >/dev/null && gh api graphql -f query='{ viewer { login }
+      search(query: "is:pr is:open author:@me sort:updated-desc", type: ISSUE, first: 20) { nodes { ... on PullRequest {
+        number title url isDraft updatedAt headRefName reviewDecision repository { nameWithOwner }
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }' --jq '
+      "\(.data.viewer.login)\u001fgh",
+      (.data.search.nodes[] | [.repository.nameWithOwner, (.number | tostring), .title, .url, (.isDraft | tostring),
+        .headRefName, (.reviewDecision // ""), (.commits.nodes[0].commit.statusCheckRollup.state // ""), .updatedAt]
+        | join("\u001f"))' 2>/dev/null; then
+    return 0
+  fi
+  # GitHub greets an SSH key with its account: "Hi LOGIN! You've successfully authenticated, ..."
+  login=$(ssh -T -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>&1 | sed -n 's/^Hi \([^!]*\)!.*/\1/p')
+  [[ -n $login ]] && command -v jq >/dev/null || return 1
+  print -r -- "$login"$'\037'ssh
+  curl -sf -m 10 "https://api.github.com/search/issues?q=is:pr+is:open+author:$login&sort=updated&per_page=20" |
+    jq -r '.items[] | [(.repository_url | sub(".*/repos/"; "")), (.number | tostring), .title, .html_url,
+      (.draft | tostring), "", "", "", .updated_at] | join("\u001f")'
+}
+
+# The cached list, refreshed at most once a minute (the search takes about a second); LZR1_PRS=0 turns it off.
+# A failed search keeps the last list and waits a minute too.
+prs_refresh() {
+  [[ ${LZR1_PRS:-1} == 0 ]] && return
+  local -a fresh=( $STATE/prs(Nms-60) )
+  (( $#fresh )) && return
+  prs_fetch >$STATE/prs.$$ && mv $STATE/prs.$$ $STATE/prs || { rm -f $STATE/prs.$$; touch $STATE/prs }
+}
+
+# _ago SECONDS: 45s, 12m, 3h or 2d, into REPLY
+_ago() {
+  if   (( $1 < 60 ));    then REPLY=${1}s
+  elif (( $1 < 3600 ));  then REPLY=$(( $1 / 60 ))m
+  elif (( $1 < 86400 )); then REPLY=$(( $1 / 3600 ))h
+  else REPLY=$(( $1 / 86400 ))d; fi
+}
+
+# A PR row's key is +pr/URL; the section heading's is +pr/.
+pr_rows() {  # pr_rows WIDTH: the PR section's fzf items, after the sessions (layout 1, cards)
+  [[ ${LZR1_PRS:-1} == 0 || ! -s $STATE/prs ]] && return
+  local W=$1 D=$'\e[90m' B=$'\e[1m' Y=$'\e[33m' G=$'\e[32m' E=$'\e[31m' M=$'\e[37m' R=$'\e[0m'
+  local -a got=( ${(f)"$(<$STATE/prs)"} )
+  local login src repo num title url draft branch review checks updated glyph words color hd fl t age pre l1 l2 line
+  IFS=$'\037' read -r login src <<<"${got[1]}"
+  zmodload zsh/datetime; local TZ=UTC  # GitHub's times are UTC
+  hd=" pull requests $login · $src · $(( $#got - 1 )) "
+  fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
+  # The heading starts with five blank lines: a gap between the sessions and the PRs that the cursor never lands on.
+  print -rn -- "+pr/"$'\t\n\n\n\n\n'" ${B}pull requests$R $D$login · $src · $(( $#got - 1 )) ${(l:fl::─:)}$R"$'\0'
+  for line in "${(@)got[2,-1]}"; do
+    IFS=$'\037' read -r repo num title url draft branch review checks updated <<<"$line"
+    # One glyph from the draft flag, the latest commit's checks and the review, worst first.
+    if [[ $draft == true ]]; then glyph="$D◌$R" words=draft color=$D
+    elif [[ $checks == (FAILURE|ERROR) ]]; then glyph="$E✗$R" words="checks failed" color=$E
+    elif [[ $review == CHANGES_REQUESTED ]]; then glyph="$E✗$R" words="changes requested" color=$E
+    elif [[ $checks == (PENDING|EXPECTED) ]]; then glyph="$Y⧗$R" words="checks running" color=$Y
+    elif [[ $review == REVIEW_REQUIRED ]]; then glyph="$Y⧗$R" words="review required" color=$Y
+    elif [[ $checks == SUCCESS ]]; then glyph="$G✓$R" color=$G words="checks passed${${(M)review:#APPROVED}:+ · approved}"
+    else glyph="$D·$R" words=${${review:l}//_/ } color=$D; fi
+    t=$EPOCHSECONDS; [[ -n $updated ]] && strftime -r -s t '%Y-%m-%dT%H:%M:%SZ' $updated 2>/dev/null
+    _ago $(( EPOCHSECONDS - t )); age=$REPLY
+    _cut "#$num $title" $(( W - 6 - ${#age} )); l1=" $glyph $M${(r:W - 6 - ${#age}:)REPLY}$R $D$age$R"
+    pre="${repo:t}${branch:+ · ⎇ $branch}${words:+ · }"
+    _cut "$pre$words" $(( W - 4 ))
+    if (( ${#REPLY} > ${#pre} )); then l2="   $D$pre$R$color${REPLY:${#pre}}$R"; else l2="   $D$REPLY$R"; fi
+    print -rn -- "+pr/$url"$'\t'"$l1"$'\n'"$l2"$'\0'
+  done
+}
+
 # ---- panel internals ------------------------------------------------------------------------------------------------
 
 # A row key is PROFILE/SESSION; a profile's heading row is PROFILE/.
@@ -223,6 +318,16 @@ split_key() { KP=${1%%/*} KS=${1#*/} }
 ghostty() { osascript -e 'tell application "Ghostty"' -e "$1" -e 'end tell' }
 
 mode() { print -rn -- "$(<$STATE/$1.mode)" } 2>/dev/null
+
+browse() { if [[ $OSTYPE == darwin* ]]; then open $1; else xdg-open $1 >/dev/null 2>&1; fi }
+
+# clip TEXT: onto the clipboard of the computer in front of you (pbcopy, wl-copy, xclip, or the terminal's OSC 52)
+clip() {
+  if command -v pbcopy >/dev/null; then print -rn -- $1 | pbcopy
+  elif [[ -n $WAYLAND_DISPLAY ]] && command -v wl-copy >/dev/null; then print -rn -- $1 | wl-copy
+  elif [[ -n $DISPLAY ]] && command -v xclip >/dev/null; then print -rn -- $1 | xclip -selection clipboard
+  else printf '\e]52;c;%s\a' "$(print -rn -- $1 | base64 | tr -d '\n')" >/dev/tty; fi
+}
 
 # _cut TEXT WIDTH: TEXT cut to WIDTH characters with an ellipsis, into REPLY
 _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
@@ -246,6 +351,7 @@ list_rows() {
     ( if load $p && on "$LIST_SCRIPT" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
       else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
   done
+  prs_refresh &
   wait
   local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
   local -a items got; local n=0 w=0 q=0 i=0 line kind glyph right l1 l2 l3
@@ -256,6 +362,7 @@ list_rows() {
     [[ -e $tmp/$p.fail ]] && continue
     load $p 2>/dev/null; kind=$P_TYPE
     got=( ${(f)"$(<$tmp/$p.out)"} )
+    cp $tmp/$p.out $STATE/raw-$p  # the menu reads a session's details from here
     local hd=" $p $kind · online · $#got " fl
     fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
     items+=( "$p/"$'\t'" $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$R" )
@@ -267,16 +374,13 @@ list_rows() {
         wait) (( q++ )); glyph="$Y⧗$R" ;;
         *)    (( i++ )); glyph="$D·$R" ;;
       esac
-      if   (( age < 60 ));    then age=${age}s
-      elif (( age < 3600 ));  then age=$(( age / 60 ))m
-      elif (( age < 86400 )); then age=$(( age / 3600 ))h
-      else age=$(( age / 86400 ))d; fi
+      _ago $age; age=$REPLY
       right="${model:+$model · }$age"
       _cut $name $(( W - 6 - ${#right} )); l1=" $glyph ${(r:W - 6 - ${#right}:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
       if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( W - 4 )); l2="   $Y$REPLY$R"
       elif [[ -n $title ]]; then _cut $title $(( W - 4 )); l2="   $M$REPLY$R"
       else l2="   ${D}no task yet$R"; fi
-      if [[ -n $branch ]]; then _cut "⎇ $branch${changed:#0:+ +$changed} · ${dir:t}" $(( W - 4 ))
+      if [[ -n $branch ]]; then _cut "⎇ $branch${${changed:#0}:+ +$changed} · ${dir:t}" $(( W - 4 ))
       else _cut "${dir:t}" $(( W - 4 )); fi
       l3="   $D$REPLY$R"
       items+=( "$p/$name"$'\t'"$l1"$'\n'"$l2"$'\n'"$l3" )
@@ -285,6 +389,7 @@ list_rows() {
   rm -rf $tmp
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
+  pr_rows $W
 }
 
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
@@ -305,13 +410,16 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
   local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --remote-control ${(q)name} ${(j: :)${(q)@}}"
   # If Claude exits (Ctrl-C twice, /exit, a crash) the session stays and Enter resumes the same conversation.
   # Only typing "end" closes it: Ctrl-C and Ctrl-D, easy to hit by accident in a viewer, do not (the trap is a handler, so Claude and its commands still get Ctrl-C).
-  local cmd="trap : INT; $claude; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
+  # LZR1_PROMPT is Claude's first message; a resumed conversation does not get it again.
+  local cmd="trap : INT; $claude ${LZR1_PROMPT:+${(q)LZR1_PROMPT}}; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
   print -r -- "starting: $name on $P_NAME"
   on "$EXP"'
     name=$1 cmd=$2 root=$(exp "$3") repos=$(exp "$4")
     if tmux has-session -t "=$name" 2>/dev/null; then echo "already running"; exit 0; fi
     dir=$root inrepo=
-    if [ -n "$repos" ] && [ -d "$repos/$name" ]; then dir=$repos/$name inrepo=1; fi
+    if [ -n "$repos" ] && [ -d "$repos/$name" ]; then dir=$repos/$name inrepo=1
+    # A session about a pull request, REPO-prN, opens in REPO.
+    elif [ -n "$repos" ] && [ -d "$repos/${name%-pr*}" ]; then dir=$repos/${name%-pr*} inrepo=1; fi
     [ -d "$dir" ] || dir=$HOME
     echo "folder: $dir"
     tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
@@ -329,6 +437,53 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
       if [ -n "$url" ]; then tmux set-option -t "=$name:" @rc_url "$url"; echo "remote control: $url"; exit 0; fi
     done
     echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model"
+  ;;
+
+prs)  # your open pull requests, fresh
+  rm -f $STATE/prs; prs_refresh
+  local it; for it in "${(@0)$(pr_rows ${COLUMNS:-80})}"; do [[ -n $it ]] && print -r -- ${it#*$'\t'}; done
+  [[ -s $STATE/prs ]] || print -ru2 -- "lzr1-panel: no GitHub account found (sign in with: gh auth login)"
+  ;;
+
+doctor)  # checks this computer, GitHub and every profile, with the fix for anything missing
+  local bad=0 v login p GC="$HOME/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+  local -a all=( $(profiles) )
+  _ok()   { print -r -- "  ✓ $*" }
+  _no()   { print -r -- "  ✗ $*"; bad=1 }
+  _hint() { print -r -- "      → $*" }
+  autoload -Uz is-at-least
+  print "this computer"
+  for v in zsh tmux git curl openssl; do
+    (( $+commands[$v] )) && _ok $v || { _no "$v is missing"; _hint "./install.sh installs it" }
+  done
+  v=$(fzf --version 2>/dev/null); v=${v%% *}
+  if [[ -n $v ]] && is-at-least 0.74 $v; then _ok "fzf $v"
+  else _no "fzf ${v:-is missing} (0.74 or newer is needed)"; _hint "./install.sh installs it"; fi
+  if [[ $OSTYPE == darwin* ]]; then
+    if [[ -d /Applications/Ghostty.app ]]; then
+      _ok "Ghostty"
+      if grep -qsF 'performable:ctrl+c=copy_to_clipboard' $GC ~/.config/ghostty/config(|.ghostty)(N); then
+        _ok "Ghostty: Ctrl+C copies a selection"
+      else print "  · Ghostty: Ctrl+C does not copy yet"; _hint "./install.sh offers it"; fi
+    else print "  · no Ghostty: the panel opens as a tmux layout"; fi
+  fi
+  print "\ngithub (the pull requests under your sessions)"
+  if [[ ${LZR1_PRS:-1} == 0 ]]; then print "  · hidden (LZR1_PRS=0)"
+  elif (( $+commands[gh] )) && login=$(gh api user -q .login 2>/dev/null); then _ok "gh is signed in as $login"
+  else
+    login=$(ssh -T -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>&1 | sed -n 's/^Hi \([^!]*\)!.*/\1/p')
+    if [[ -n $login ]] && (( $+commands[jq] )); then
+      _ok "your SSH key belongs to $login (public PRs only)"; _hint "for every PR, with checks and reviews: gh auth login"
+    else
+      _no "no GitHub account found"
+      (( $+commands[gh] )) && _hint "run: gh auth login" || _hint "./install.sh installs gh and signs you in"
+    fi
+  fi
+  print "\nprofiles"
+  (( $#all )) || { _no "no profiles yet"; _hint "lzr1-panel profile add" }
+  for p in $all; do profile_test $p | sed 's/^/  /' || bad=1; done
+  if (( bad )); then print "\n  something needs fixing: see docs/troubleshooting.md"; else print "\n  all good"; fi
+  exit $bad
   ;;
 
 list)
@@ -374,10 +529,17 @@ open)  # panel on the left, viewer on the right
   # the viewer or Claude; the mouse picks a pane.
   command -v tmux >/dev/null || die "needs tmux"
   local -a T=(tmux -L lzr1 -f /dev/null)
-  local sess=lzr1-$id vpane
+  local sess=lzr1-$id vpane clip=
+  # Copies made inside (Claude Code's own, or a session's tmux on any machine) arrive here as OSC 52: put them on
+  # this computer's clipboard ourselves, since not every terminal does.
+  if (( $+commands[pbcopy] )); then clip=pbcopy
+  elif [[ -n $WAYLAND_DISPLAY ]] && (( $+commands[wl-copy] )); then clip=wl-copy
+  elif [[ -n $DISPLAY ]] && (( $+commands[xclip] )); then clip='xclip -selection clipboard'; fi
   $T new-session -d -s $sess -x ${COLUMNS:-200} -y ${LINES:-50} "$SELF _viewer $id" || die "cannot start tmux"
   $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
-     \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' >/dev/null
+     \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' \
+     \; set -s set-clipboard on \; set -s 'terminal-features[90]' '*:clipboard' >/dev/null  # copies reach the terminal
+  [[ -n $clip ]] && $T set-hook -g pane-set-clipboard "run-shell -b 'tmux save-buffer - | $clip'"
   vpane=$($T display -p -t $sess '#{pane_id}')
   print -rn -- tmux >$STATE/$id.mode
   print -rn -- $vpane >$STATE/$id.vterm
@@ -411,6 +573,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
           n=$((n + 1)); [ $n -gt 150 ] && { printf "  %s did not start\n" "$2"; sleep 3; exit 1; }
           sleep 0.2
         done
+        '"$CLIP"'
         unset TMUX
         exec tmux attach -t "=$2"' $id $KS
     else
@@ -425,7 +588,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
 _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrowing through rows stays cheap)
   local id=$2 key=$3 tfile=$STATE/$2.target
   split_key $key
-  [[ -z $KP || -z $KS ]] && exit 0
+  [[ -z $KP || -z $KS || $KP == +pr ]] && exit 0
   # A click on another row, enter or a new session brings back a viewer pane that was closed.
   if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
     print -rn -- $key >$tfile
@@ -462,7 +625,7 @@ _ticker)  # _ticker ID PORT: show the first session in the viewer, then reload t
   ( local first i
     for i in {1..50}; do
       first=$(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port?limit=200" |
-        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | head -1)
+        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | grep -v '^+pr/' | head -1)
       [[ -n $first ]] && { $SELF _select $id $first; break; }
       sleep 0.2
     done
@@ -489,10 +652,11 @@ _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel list
   done
   ;;
 
-_new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the background, shows it in the viewer
-  local model=$2 id=$3 p=${4%%/*} name
+_new)  # _new opus|sonnet ID KEY [NAME [PROMPT]]: type a name on KEY's profile (or take NAME); starts in the background,
+       # shows it in the viewer; PROMPT is Claude's first message
+  local model=$2 id=$3 p=${4%%/*} name=$5 prompt=$6
   # Only the machines that answered on the last refresh.
-  local -a all=( ${${(M)${(@0)"$(<$STATE/$id.cache)"}:#[^/]##/$'\t'*}%%/*} )
+  local -a all=( ${${(M)${(@0)"$(<$STATE/$id.cache)"}:#[^+/]##/$'\t'*}%%/*} )
   (( $#all )) || all=( $(profiles) )
   [[ -n $p && -e $PROFILES/$p.conf ]] || p=${all[1]}
   if (( $#all > 1 )); then
@@ -506,19 +670,19 @@ _new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the ba
   load $p || { read -k1 -s; exit 0 }
   # Type a name and press enter, or click a repository. Enter with nothing typed takes the highlighted one.
   local -a picked
-  picked=( "${(@f)$(on "$EXP"'ls -1 "$(exp "$1")" 2>/dev/null' $P_REPOS |
+  [[ -z $name ]] && picked=( "${(@f)$(on "$EXP"'ls -1 "$(exp "$1")" 2>/dev/null' $P_REPOS |
     fzf --layout=reverse --print-query --prompt="new $model on $p › " --info=hidden --no-sort \
       --gutter=' ' --pointer='▌' --highlight-line --color='pointer:yellow,current-fg:bold' \
       --header=$'type a name ↵ or click a repo\nrepos open in their own folder' \
       --header-border=bottom \
       --bind 'enter:transform:[ -n {q} ] && echo print-query || echo accept' \
       --bind 'tab:replace-query,left-click:accept,double-click:accept,esc:abort')}" )
-  name=${picked[2]:-${picked[1]}}
+  [[ -z $name ]] && name=${picked[2]:-${picked[1]}}
   [[ -z $name ]] && exit 0
   if [[ $name == *[.:/\|]* ]]; then
     print -r -- 'session names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0
   fi
-  $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
+  LZR1_PROMPT=$prompt $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
   # Back to the list as soon as tmux has the session; the viewer shows Claude starting in it.
   if ! on 'i=0; while [ $i -lt 100 ]; do tmux has-session -t "=$1" 2>/dev/null && exit 0; i=$((i + 1)); sleep 0.1; done; exit 1' $name; then
     print -r -- "could not start $name:"; cat $STATE/$id.startlog; print "press a key"; read -k1 -s; exit 0
@@ -556,21 +720,28 @@ _url)  # _url KEY: the session's Remote Control link
   load $KP && on 'tmux show-options -v -t "=$1:" @rc_url 2>/dev/null' $KS
   ;;
 
-_open_url)  # _open_url KEY
-  local u=$($SELF _url $2)
-  [[ -n $u ]] || exit 0
-  if [[ $OSTYPE == darwin* ]]; then open $u; else xdg-open $u >/dev/null 2>&1; fi
+_open_url)  # _open_url KEY: a session's Remote Control link, or a PR
+  local u
+  split_key $2
+  if [[ $KP == +pr ]]; then u=$KS; else u=$($SELF _url $2); fi
+  [[ -n $u ]] && browse $u
+  ;;
+
+_go)  # _go ID KEY: enter and double-click; a session goes to the viewer with the keyboard, a PR opens in the browser
+  split_key $3
+  if [[ $KP == +pr ]]; then [[ -n $KS ]] && browse $KS
+  else $SELF _select $2 $3 force; $SELF _focus $2; fi
   ;;
 
 _kill)  # _kill KEY
-  split_key $2; [[ -n $KS ]] || exit 0
+  split_key $2; [[ -n $KS && $KP != +pr ]] || exit 0
   print -rn -- "End session ${(qq)KS} on $KP? Claude stops there. [y/N] "
   read -q && { load $KP && on 'tmux kill-session -t "=$1"' $KS }
   print
   ;;
 
 _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: switch the viewer to it)
-  split_key $3; [[ -n $KS ]] || exit 0
+  split_key $3; [[ -n $KS && $KP != +pr ]] || exit 0
   if [[ $(mode $2) == ghostty ]]; then
     ghostty "set cfg to new surface configuration
       set command of cfg to \"$SELF _attach ${(q)3}\"
@@ -580,9 +751,122 @@ _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: swit
   fi
   ;;
 
+_menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or move to it and press enter
+  local id=$2 key=$3 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' head line act new pick pr=
+  local -a acts  # ACTION<tab>label
+  local name st att age url model dir title branch changed waitfor
+  local repo num ptitle purl draft pbranch review checks updated
+  split_key $key
+  if [[ $KP == +pr && -n $KS ]]; then
+    for line in ${(f)"$(<$STATE/prs)"}; do
+      IFS=$'\037' read -r repo num ptitle purl draft pbranch review checks updated <<<"$line"
+      [[ $purl == $KS ]] && break
+    done
+    [[ $purl == $KS ]] || exit 0
+    head="#$num $ptitle"
+    acts=( $'open\topen in the browser' $'checks\topen its checks' $'files\topen its files' $'copy\tcopy its link' )
+    [[ -n $pbranch ]] && acts+=( $'copybranch\tcopy its branch' )
+    acts+=( $'session\tnew session on '${repo:t} $'review\task Claude to review it' )
+    [[ $checks == (FAILURE|ERROR) ]] && acts+=( $'fix\task Claude to fix the failing checks' $'rerun\tre-run the failed checks' )
+    [[ $draft == true ]] && acts+=( $'ready\tmark it ready for review' )
+    [[ $checks == SUCCESS && $draft != true && $review != (CHANGES_REQUESTED|REVIEW_REQUIRED) ]] &&
+      acts+=( "merge"$'\t'"${E}merge it (squash)…$R" )
+    acts+=( "close"$'\t'"${E}close it…$R" )
+  elif [[ $KP == +pr ]]; then
+    head="pull requests"
+    acts=( $'all\topen all your pull requests on GitHub' $'refresh\trefresh the list now' )
+  elif [[ -z $KS ]]; then
+    [[ -e $PROFILES/$KP.conf ]] || exit 0
+    head=$KP
+    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'test\ttest this machine' $'reload\trefresh' )
+  else
+    load $KP || exit 0
+    for line in ${(f)"$(<$STATE/raw-$KP)"}; do
+      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
+      [[ $name == $KS ]] && break
+    done
+    [[ $name == $KS ]] || exit 0
+    head=$KS
+    acts=( $'view\tview it here' $'focus\tview it and type in it' )
+    [[ $(mode $id) == ghostty ]] && acts+=( $'tab\topen it in a new Ghostty tab' )
+    [[ -n $url ]] && acts+=( $'rc\topen its Remote Control link' $'copyrc\tcopy its Remote Control link' )
+    # Its pull request: one of yours on the same branch, in a repository named like its folder.
+    if [[ -n $branch && -s $STATE/prs ]]; then
+      for line in "${(@)${(f)"$(<$STATE/prs)"}[2,-1]}"; do
+        IFS=$'\037' read -r repo num ptitle purl draft pbranch review checks updated <<<"$line"
+        [[ $pbranch == $branch && ${repo:t} == ${dir:t} ]] && { pr=$purl; acts+=( $'pr\topen its pull request #'$num ); break }
+      done
+    fi
+    [[ -n $dir ]] && acts+=( $'github\topen its repository on GitHub' )
+    acts+=( $'attach\tcopy the attach command' )
+    [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
+    acts+=( $'new\tnew session on this machine' )
+    [[ $st == work ]] && acts+=( $'esc\tinterrupt Claude (Esc)' )
+    acts+=( $'rename\trename it' "end"$'\t'"${E}end the session…$R" )
+  fi
+  acts+=( "cancel"$'\t'"${D}cancel$R" )
+  _cut $head $(( ${COLUMNS:-56} - 3 ))
+  pick=$(print -rl -- $acts | fzf --ansi --layout=reverse --no-input --no-sort --delimiter=$'\t' --with-nth=2 \
+    --info=hidden --gutter=' ' --pointer='▌' --highlight-line --color='header:bold,pointer:yellow,current-fg:bold' \
+    --header=" $REPLY" --header-border=bottom \
+    --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || exit 0
+  act=${pick%%$'\t'*}
+  # gh_do WHAT COMMAND...: runs a GitHub change where you can read its answer; the PR list refreshes after it.
+  gh_do() { print -r -- "$1 ..."; shift; "$@" 2>&1; rm -f $STATE/prs; print -n "press a key"; read -k1 -s }
+  case $act in
+    open)  browse $purl ;;
+    checks) browse $purl/checks ;;
+    files) browse $purl/files ;;
+    copy)  clip $purl ;;
+    copybranch) clip $pbranch ;;
+    session) $SELF _new opus $id +pr/ ${repo:t} ;;
+    review) $SELF _new opus $id +pr/ ${repo:t}-pr$num "Review pull request #$num of $repo ($purl). If this folder \
+is not a clone of $repo, clone it first. Check it out with gh pr checkout $num, read the diff and the discussion, \
+and report what you find, most severe first." ;;
+    fix) $SELF _new opus $id +pr/ ${repo:t}-pr$num "The checks of pull request #$num of $repo ($purl) are failing. \
+If this folder is not a clone of $repo, clone it first. Check it out with gh pr checkout $num, find out why with \
+gh pr checks $num, fix it and push." ;;
+    rerun) gh_do "re-running the failed checks of #$num" gh run rerun \
+             "$(gh run list --repo $repo --branch $pbranch --status failure -L 1 --json databaseId -q '.[0].databaseId')" \
+             --failed --repo $repo ;;
+    ready) gh_do "marking #$num ready for review" gh pr ready $num --repo $repo ;;
+    merge) print -rn -- "Merge #$num of $repo (squash)? [y/N] "
+           read -q && { print; gh_do "merging #$num" gh pr merge $num --repo $repo --squash } ;;
+    close) print -rn -- "Close #$num of $repo without merging? [y/N] "
+           read -q && { print; gh_do "closing #$num" gh pr close $num --repo $repo } ;;
+    all)   browse https://github.com/pulls ;;
+    refresh) rm -f $STATE/prs ;;
+    opus|sonnet) $SELF _new $act $id $key ;;
+    test)  $SELF profile test $KP; print -n "press a key"; read -k1 -s ;;
+    view)  $SELF _select $id $key force ;;
+    focus) $SELF _select $id $key force; $SELF _focus $id ;;
+    tab)   $SELF _tab $id $key ;;
+    rc)    browse $url ;;
+    copyrc) clip $url ;;
+    pr)    browse $pr ;;
+    github)
+      line=$(on 'git -C "$1" remote get-url origin 2>/dev/null' $dir)
+      line=${${line%.git}/#(git@github.com:|ssh:\/\/git@github.com\/)/https://github.com/}
+      [[ $line == https://* ]] && browse $line ;;
+    attach)
+      if [[ $P_TYPE == local ]]; then clip "tmux attach -t =$KS"
+      else clip "ssh ${P_KEY:+-i $P_KEY }${P_PORT:+-p $P_PORT }-t $P_HOST tmux attach -t =$KS"; fi ;;
+    folder) browse $dir ;;
+    new)   $SELF _new opus $id $key ;;
+    esc)   on 'tmux send-keys -t "=$1:" Escape' $KS ;;
+    rename)
+      read -r "new?Rename $KS to: "
+      [[ -z $new || $new == $KS ]] && exit 0
+      [[ $new == *[.:/\|]* ]] && { print -r -- 'names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0 }
+      on 'tmux rename-session -t "=$1" "$2"' $KS $new || { print -n "press a key"; read -k1 -s; exit 0 }
+      [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target ;;
+    end)   $SELF _kill $key ;;
+  esac
+  ;;
+
 _attach)  # _attach KEY
   split_key $2; load $KP || exit 1
-  on -t 'unset TMUX; exec tmux attach -t "=$1"' $KS
+  on -t "$CLIP"'unset TMUX; exec tmux attach -t "=$1"' $KS
   ;;
 
 _panel)  # _panel ID
@@ -603,6 +887,9 @@ _panel)  # _panel ID
     fi
   fi
   local S=$SELF
+  # A row's menu opens on the right button (LZR1_MENU_BUTTON=left: on the left one, which then also picks the row).
+  local menu="execute($S _menu $id {1})+reload-sync($S _list $id)" button=right-click
+  [[ $MENU_BUTTON == left ]] && button=left-click
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
@@ -614,8 +901,9 @@ _panel)  # _panel ID
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "focus:execute-silent($S _select $id {1} &)" \
-    --bind "enter:execute-silent($S _select $id {1} force; $S _focus $id)" \
-    --bind "double-click:execute-silent($S _select $id {1} force; $S _focus $id)" \
+    --bind "enter:execute-silent($S _go $id {1})" \
+    --bind "double-click:execute-silent($S _go $id {1})" \
+    --bind "$button:$menu" --bind "m:$menu" \
     --bind "t:execute-silent($S _tab $id {1})" \
     --bind "o:execute-silent($S _open_url {1})" \
     --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
@@ -638,19 +926,23 @@ keys)
   lzr1-panel keys
 
   click / ↑ ↓      show that session in the viewer
-  enter / dbl-click  show it and move the keyboard to the viewer
+  enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
+  right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
   n  or [+opus]    new Opus session on the highlighted row's profile
   s  or [+sonnet]  new Sonnet session (a repository name opens in its folder)
   t                open the session in a new Ghostty tab
-  o                open its Remote Control link in the browser
+  o                open its Remote Control link (a PR: the PR) in the browser
   x                end the session (asks first)
   r  or [↻]        refresh now (it refreshes every 15s)
   q                close the panel
 
   In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.
+  Copy: drag over the text, then Ctrl-C (Cmd-C does not reach Claude). Cmd-V pastes.
+  Terminal's own selection: Cmd-R (macOS Terminal) or Shift-drag (Ghostty), then Cmd-C.
   If Claude exits, its session stays: Enter resumes the conversation.
 
   glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
+  PRs:    ✓ checks passed  ✗ failed or changes requested  ⧗ running or review pending  ◌ draft
 
   press a key
 EOF
@@ -661,7 +953,7 @@ splash) lzr1_splash ${2:+${2#--}} ;;
 version|--version) print -r -- "lzr1-panel $VERSION" ;;
 
 *)
-  sed -n '2,13p' $SELF | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' $SELF | sed 's/^# \{0,1\}//'
   [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
   ;;
 esac

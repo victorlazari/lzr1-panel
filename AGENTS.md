@@ -8,3 +8,5 @@
 - The code is zsh (`bin/lzr1-panel`, `lib/splash.zsh`) and bash (`install.sh`, which must run on macOS's bash 3.2).
   Check with `zsh -n bin/lzr1-panel lib/splash.zsh` and `bash -n install.sh`.
 - Scripts sent to a profile's machine go through `on` as POSIX `sh`: no bashisms or zsh syntax inside them.
+- Asked to **fix a problem with the panel**: run `lzr1-panel doctor` first, then follow
+  [docs/troubleshooting.md](docs/troubleshooting.md). Add any new problem and its fix there.

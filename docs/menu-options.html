@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lzr1 Menu Options</title>
+<!-- Template: ring:visualizing standard.html -->
+<!-- Artifact brief: Audience: the user choosing what the right-click menu on a session row and on a pull request row looks like in lzr1-panel, and which actions it offers. Physical scene: the 56-column panel in Ghostty, where fzf replaces the list with the menu until a line is picked. Source facts: lzr1-panel already has view, focus, Ghostty tab, Remote Control link, end session and new session; tmux can rename sessions and send keys; gh can open, check out, mark ready, merge and re-run checks of a PR; a session's branch can match one of the user's open PRs. Entities: sessions, pull requests, the five menu styles, the action catalogue. Hierarchy: the five styles first, then every possible action with its source. Message: pick a style 1 to 5 and the actions to keep. Non-invention boundary: sessions and PRs are sample values; every action maps to a command named in the catalogue. -->
+<!-- Visual thesis: each style shows the same two menus side by side, session left and PR right, at the panel's real width; "another example" redraws them with other sample rows. -->
+<!-- Design choices: 1) session and PR menus paired per style so the styles compare on the same content; 2) destructive actions (end, close, merge) set apart and red in every style; 3) the catalogue table names the command behind each action, so nothing in a menu is decorative; 4) menus drawn as fzf draws them, in monospace, with the yellow pointer on the first line. -->
+<!-- ============================================
+     LERIAN STANDARD TEMPLATE v1.0.0
+     Source: Lerian product-console design system
+
+     USAGE: Copy this entire <style> block as the
+     foundation for any visual-explainer output.
+     Then add diagram-specific styles after the
+     "TEMPLATE-SPECIFIC STYLES" marker.
+
+     FOUNDATION / DEMO BOUNDARY:
+     Copy the foundation, header, footer, and date script.
+     Do not copy demo titles, metrics, service names, statuses,
+     or sample content into generated artifacts. Replace the demo
+     shell with a source-grounded product surface.
+
+     ARTIFACT SHELL GUIDANCE:
+     Generated pages should feel like trustworthy product surfaces
+     for technical judgment: restrained by default, structurally clear,
+     and visually richer only when the source material earns it.
+     ============================================ -->
+
+<!-- ========== FONTS ==========
+     IBM Plex. Hosted, the portal serves it with its injected /tokens.css;
+     anywhere else this loads it from Google Fonts. -->
+<script>
+  addEventListener('DOMContentLoaded', function () {
+    if (document.querySelector('link[href="/tokens.css"]')) return;
+    var plex = document.createElement('link');
+    plex.rel = 'stylesheet';
+    plex.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap';
+    document.head.appendChild(plex);
+  });
+</script>
+
+<style>
+/* ==========================================================================
+   LERIAN STANDARD FOUNDATION
+   All visual-explainer outputs MUST start from these tokens and base styles.
+   ========================================================================== */
+
+/* ========== DESIGN TOKENS ==========
+   The Alfarrábio portal's tokens (runtime/public/tokens.css), same names and
+   values. :where() keeps them at zero specificity: hosted, the portal's
+   injected /tokens.css wins and its theme toggle drives the page; opened
+   locally, the page follows prefers-color-scheme. Dark is the default. */
+:where(:root) {
+  color-scheme: dark;
+  --alf-yellow: #FEED02;
+  --alf-preto: #191A1B;
+  --alf-preto-fundo: #111213;
+  --alf-cinza-escuro: #3E3C37;
+  --alf-cinza-medio: #8B877C;
+  --alf-cinza: #CECECE;
+  --alf-cinza-claro: #F2F2F2;
+  --alf-verde: #50F769;
+  --alf-vermelho: #FF6760;
+  --alf-azul: #2ED8FE;
+  --alf-accent: var(--alf-yellow);
+  --alf-accent-hover: #E8D802;
+  --alf-accent-ink: var(--alf-preto);
+  --alf-accent-tint-08: rgb(254 237 2 / 0.10);
+  --alf-accent-tint-15: rgb(254 237 2 / 0.20);
+  --alf-accent-tint-30: rgb(254 237 2 / 0.38);
+  --alf-font-ui: "Alfarrabio Plex Sans", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --alf-font-display: "Alfarrabio Plex Serif", "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --alf-font-mono: "Alfarrabio Plex Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --alf-bg: var(--alf-preto-fundo);
+  --alf-surface: var(--alf-preto);
+  --alf-surface-2: #2B2A28;
+  --alf-surface-3: var(--alf-cinza-escuro);
+  --alf-raised: var(--alf-preto);
+  --alf-border: #6B6860;
+  --alf-border-soft: var(--alf-cinza-escuro);
+  --alf-rule: var(--alf-cinza-claro);
+  --alf-text: var(--alf-cinza-claro);
+  --alf-text-muted: var(--alf-cinza);
+  --alf-text-dim: #A09C92;
+  --alf-text-faint: var(--alf-cinza-medio);
+  --alf-accent-text: var(--alf-yellow);
+  --alf-focus: var(--alf-yellow);
+  --alf-green: var(--alf-verde);
+  --alf-red: var(--alf-vermelho);
+  --alf-blue: var(--alf-azul);
+  --alf-green-tint-08: rgb(80 247 105 / 0.08);
+  --alf-green-tint-15: rgb(80 247 105 / 0.15);
+  --alf-red-tint-10: rgb(255 103 96 / 0.12);
+  --alf-blue-tint-08: rgb(46 216 254 / 0.08);
+  --alf-blue-tint-15: rgb(46 216 254 / 0.16);
+}
+
+/* Light: when the OS asks for it, and always on paper. */
+@media (prefers-color-scheme: light), print {
+  :where(:root) {
+    color-scheme: light;
+    --alf-bg: var(--alf-cinza-claro);
+    --alf-surface: var(--alf-cinza-claro);
+    --alf-surface-2: #E3E3E3;
+    --alf-surface-3: var(--alf-cinza);
+    --alf-raised: var(--alf-cinza-claro);
+    --alf-border: var(--alf-cinza-medio);
+    --alf-border-soft: var(--alf-cinza);
+    --alf-rule: var(--alf-preto);
+    --alf-text: var(--alf-preto);
+    --alf-text-muted: var(--alf-cinza-escuro);
+    --alf-text-dim: #5A5751;
+    --alf-text-faint: #6B6860;
+    --alf-accent-text: var(--alf-preto);
+    --alf-focus: var(--alf-preto);
+    --alf-green: #13773A;
+    --alf-red: #B42318;
+    --alf-blue: #006B85;
+    --alf-green-tint-08: rgb(19 119 58 / 0.08);
+    --alf-green-tint-15: rgb(19 119 58 / 0.14);
+    --alf-red-tint-10: rgb(180 35 24 / 0.08);
+    --alf-blue-tint-08: rgb(0 107 133 / 0.08);
+    --alf-blue-tint-15: rgb(0 107 133 / 0.15);
+  }
+}
+
+
+/* ========== RESET & BASE ========== */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--alf-font-ui);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--alf-text);
+  background: var(--alf-bg);
+  padding: 40px 20px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+/* ========== CONTAINER ========== */
+
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+
+/* ========== HEADER ========== */
+
+.lerian-header {
+  margin-bottom: 32px;
+}
+
+.lerian-header a {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--alf-text);
+  transition: color 0.2s ease;
+}
+
+.lerian-header .logo-mark {
+  width: 100px;
+  height: auto;
+  display: block;
+}
+
+
+/* ========== TYPOGRAPHY ========== */
+
+h1 {
+  font-family: var(--alf-font-display);
+  font-size: 36px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--alf-text);
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+h2 {
+  font-family: var(--alf-font-display);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--alf-text);
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+h3 {
+  font-family: var(--alf-font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--alf-text);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+p {
+  color: var(--alf-text-muted);
+  margin-bottom: 16px;
+}
+
+
+/* ========== STANDARD UTILITIES: CARDS ========== */
+
+.card {
+  background: var(--alf-surface);
+  border: 1px solid var(--alf-border-soft);
+  padding: 24px;
+}
+
+.card-elevated {
+  background: var(--alf-raised);
+  border: 2px solid var(--alf-rule);
+  padding: 24px;
+}
+
+/* ========== STANDARD UTILITIES: BADGES ========== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.badge-success { background: var(--alf-green-tint-08); color: var(--alf-green); }
+.badge-warning { background: var(--alf-accent-tint-15); color: var(--alf-accent-text); }
+.badge-error   { background: var(--alf-red-tint-10);   color: var(--alf-red); }
+.badge-info    { background: var(--alf-blue-tint-08);     color: var(--alf-blue); }
+.badge-neutral { background: var(--alf-surface-2); color: var(--alf-text-muted); }
+
+
+
+/* ========== STANDARD UTILITIES: STATUS DOTS ========== */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+}
+
+.status-dot-success { background: var(--alf-green); }
+.status-dot-warning { background: var(--alf-accent); border: 1px solid var(--alf-rule); }
+.status-dot-error   { background: var(--alf-red); }
+.status-dot-info    { background: var(--alf-blue); }
+
+
+/* ========== STANDARD UTILITIES: TABLES ========== */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--alf-text-muted);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--alf-border-soft);
+  font-size: 13px;
+}
+
+.data-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--alf-border-soft);
+  color: var(--alf-text);
+}
+
+.data-table tbody tr:hover {
+  background: var(--alf-accent-tint-15);
+}
+
+
+
+/* ========== STANDARD UTILITIES: TEXT ========== */
+
+.mono { font-family: var(--alf-font-mono); }
+
+.text-muted     { color: var(--alf-text-dim); }
+.text-secondary { color: var(--alf-text-muted); }
+.text-accent    { color: var(--alf-accent-text); }
+.text-success   { color: var(--alf-green); }
+.text-error     { color: var(--alf-red); }
+
+.font-medium    { font-weight: 500; }
+.font-semibold  { font-weight: 600; }
+
+
+/* ========== ANIMATIONS ========== */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate {
+  opacity: 0;
+  animation: fadeUp 0.5s ease-out forwards;
+  animation-delay: calc(var(--i, 0) * 0.05s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ========== FOOTER ========== */
+
+.lerian-footer {
+  margin-top: 64px;
+  padding: 24px 0;
+  border-top: 2px solid var(--alf-rule);
+  position: relative;
+}
+
+/* Full-bleed background via pseudo-element */
+.lerian-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: var(--alf-surface);
+  z-index: -1;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.footer-company {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--alf-text);
+  line-height: 1.3;
+}
+
+.footer-link {
+  font-size: 13px;
+  color: var(--alf-text-dim);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+  color: var(--alf-accent-text);
+}
+
+.footer-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.footer-generated {
+  font-size: 13px;
+  color: var(--alf-text-muted);
+}
+
+.footer-generated strong {
+  font-weight: 600;
+}
+
+.footer-date {
+  font-size: 13px;
+  color: var(--alf-text-dim);
+}
+
+
+/* ========== RESPONSIVE ========== */
+
+@media (max-width: 768px) {
+  body {
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  h2 {
+    font-size: 19px;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-meta {
+    align-items: flex-start;
+  }
+
+  .data-table {
+    font-size: 13px;
+  }
+
+  .data-table thead th,
+  .data-table tbody td {
+    padding: 10px 12px;
+  }
+}
+
+
+/* ========== PRINT ========== */
+
+@media print {
+  body {
+    padding: 20px;
+  }
+
+  .lerian-header {
+    margin-bottom: 16px;
+  }
+
+  .lerian-footer::before {
+    display: none;
+  }
+
+  .animate {
+    opacity: 1 !important;
+    animation: none !important;
+  }
+}
+
+
+/* ========== LERIAN STANDARD: DO NOT MODIFY ABOVE THIS LINE ========== */
+/* Diagram-specific styles go below */
+
+/* ========== TEMPLATE-SPECIFIC STYLES ========== */
+.sub{color:var(--alf-text-muted);max-width:820px;margin-bottom:22px}
+.opts{display:flex;flex-direction:column;gap:28px}
+.opt{border:2px solid var(--alf-rule);background:var(--alf-surface);min-width:0}
+.opt>header{display:flex;align-items:baseline;gap:10px;padding:10px 14px;border-bottom:1px solid var(--alf-border-soft);flex-wrap:wrap}
+.num{font-family:var(--alf-font-mono);background:var(--alf-accent);color:var(--alf-accent-ink);padding:0 8px;font-weight:500}
+.name{font-weight:600;color:var(--alf-text)}.meta{color:var(--alf-text-dim);font-size:13px;margin-left:auto;font-family:var(--alf-font-mono)}
+.pair{display:flex;background:var(--alf-bg);overflow-x:auto;min-width:0}
+.pane{background:var(--alf-bg);flex:none;border-right:2px solid var(--alf-border)}
+.pane .cap{font-family:var(--alf-font-mono);font-size:12px;color:var(--alf-text-faint);padding:8px 12px 0}
+.pane pre{font-family:var(--alf-font-mono);font-size:12.5px;line-height:1.35;margin:0;padding:6px 12px 12px;white-space:pre;color:var(--alf-text-dim)}
+.desc{padding:10px 14px;font-size:14px;color:var(--alf-text-muted);border-top:1px solid var(--alf-border-soft)}
+.mi{cursor:pointer;display:inline-block;width:100%}.mi:hover{background:var(--alf-accent-tint-15)}.cur{background:var(--alf-accent-tint-30)}
+.h{color:var(--alf-text);font-weight:600}.d{color:var(--alf-text-faint)}.m{color:var(--alf-text-muted)}.t{color:var(--alf-text)}
+.w{color:var(--alf-blue)}.q{color:var(--alf-accent-text)}.i{color:var(--alf-text-faint)}.ok{color:var(--alf-green)}.bad{color:var(--alf-red)}.bdg{color:var(--alf-blue)}
+.btnrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 22px}
+.btnrow button{font:inherit;font-family:var(--alf-font-mono);background:var(--alf-accent);color:var(--alf-accent-ink);border:2px solid var(--alf-accent);padding:3px 12px;cursor:pointer}
+.btnrow span{color:var(--alf-text-dim);font-size:13px}
+table.src{width:100%;border-collapse:collapse;font-size:14px;margin-top:10px}
+table.src th,table.src td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--alf-border-soft);vertical-align:top}
+table.src th{color:var(--alf-text-muted);font-weight:500;font-size:13px}
+table.src td code{font-family:var(--alf-font-mono);font-size:12px;background:var(--alf-surface-2);padding:1px 4px}
+table.src tr.grp td{color:var(--alf-text);font-weight:600;background:var(--alf-surface-2)}
+.wrapt{overflow-x:auto}.note{font-size:13px;color:var(--alf-text-dim);margin-top:14px}
+</style></head><body><div class="container" style="max-width:1220px">
+  <header class="lerian-header">
+    <a href="https://lerian.studio" aria-label="Lerian Studio">
+      <svg class="logo-mark" viewBox="0 0 1090.88 280" role="img" aria-label="Lerian" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" d="M619.42,29.69c0,15.43-10.87,27.93-27.93,27.93s-27.93-12.51-27.93-27.93,10.86-27.93,27.92-27.93,27.93,12.51,27.93,27.93h0ZM158.64,242.4v33.54H12.13v-33.55h48.36c3.16,0,5.73-2.57,5.73-5.73V87.77c0-3.16-2.57-5.73-5.73-5.73H7.85v-34.31h98.33v188.94c0,3.16,2.57,5.73,5.73,5.73h46.74ZM168.85,179.86c0,58.52,37.29,98.33,99.47,98.33,49.15,0,79.7-30.6,86.27-67.08h-40.69c-6.29,24.54-26.97,33.91-48.61,33.91-48.85,0-53.41-45.18-53.83-55-.04-1.02.77-1.87,1.79-1.87h143.61c.76-5.26,1.13-10.42,1.13-15.44,0-32.71-20.25-91.92-95.33-91.92-57.04,0-93.8,41.26-93.81,99.07ZM314.47,158.39l-99.49.02c-1.08,0-1.94-.96-1.78-2.02,4.49-31.28,30.98-42.82,50.98-42.82,33.88,0,48.71,21.59,52.08,42.79.17,1.08-.69,2.04-1.78,2.04h0ZM867.2,83.16h0s0,0,0,0h0ZM826.87,83.16h40.33v192.83h-40.32v-24.53c0-3.09-3.92-4.41-5.79-1.95-.18.23-.35.47-.53.71h0s0,.02,0,.02h0c-.11.16-.23.32-.35.47-7.92,10.56-20.68,27.53-56.24,27.53-60.83,0-91.19-46.33-91.19-98.7,0-61.42,40.37-98.72,91.17-98.72,36.73,0,48.44,15.73,56.64,26.75l.49.66c1.86,2.49,5.81,1.18,5.81-1.93v-23.14ZM770.75,115.48c34.78,0,56.14,27.81,56.14,64.8h0c0,42-26.32,63.68-56.14,63.68-34.83,0-56.14-27.43-56.14-64.43,0-42.07,26.11-64.05,56.14-64.05ZM1063.39,101.7c14.42,14.06,21.64,36.67,21.64,67.8v106.25h-41.06v-103.99c0-43.98-22.35-56.14-45.96-56.14-31.99,0-51.6,23.22-51.6,62.92v97.21h-40.68V83.15h39.93v25.07c0,3.11,3.95,4.4,5.82,1.92,8.55-11.4,26.72-29.52,55.98-29.52,37.55,0,55.75,20.88,55.93,21.08ZM657.42,275.94v-33.54h0s-37.37,0-37.37,0c-3.16,0-5.73-2.57-5.73-5.73V83.14h-81.34v34.31h37.54c3.16,0,5.73,2.57,5.73,5.73v113.48c0,3.16-2.57,5.73-5.73,5.73h-38.14v33.55h125.03ZM499.27,119.27c0,.13-.1.23-.23.23h0s-36.31,0-36.31,0c-28.68,0-28.65,24.99-28.64,43.62,0,.46,0,.92,0,1.37v111.24c0,.13-.1.23-.23.23h-41.01c-.13,0-.23-.1-.23-.23V83.27c0-.13.1-.23.23-.23h36.49c.13,0,.23.1.23.23v24.03c0,4.05,5.24,5.65,7.49,2.28.22-.32.43-.64.65-.97,8.18-12.25,18.71-28.02,52.51-28.02h9.05v38.68Z"/>
+      </svg>
+    </a>
+  </header>
+
+<section class="animate" style="--i:0">
+<h1>lzr1 panel: right-click menus</h1>
+<p class="sub">Five styles for the menu a right-click opens (or a left-click, with <code>LZR1_MENU_BUTTON=left</code>; <code>m</code> opens it from the keyboard). Each style shows the menu of a <b>session</b> on the left and of a <b>pull request</b> on the right, as fzf draws it in the 56-column panel. Style 1, plain list, is the one lzr1-panel uses (chosen on 28 Oct 2026). Hover a line to move the pointer. The rows are <b>sample values</b>: “another example” redraws every menu with other sessions and PRs, so you can see how each style copes with long names, waiting sessions, failing checks and drafts.</p>
+</section>
+<div class="btnrow animate" style="--i:1"><button type="button" id="shuffle">another example ↻</button><span id="ex"></span></div>
+<div class="opts" id="opts"></div>
+<section class="animate" style="--i:8;margin-top:34px">
+<h2>Every action a menu could offer</h2>
+<div class="wrapt"><table class="src">
+<thead><tr><th>Action</th><th>How lzr1-panel would do it</th><th>Note</th></tr></thead>
+<tbody>
+<tr class="grp"><td colspan="3">Session</td></tr>
+<tr><td>view it here</td><td>today's click: <code>_select</code></td><td></td></tr>
+<tr><td>view it and type in it</td><td>today's enter: <code>_select force</code> + <code>_focus</code></td><td></td></tr>
+<tr><td>open in a new Ghostty tab</td><td>today's <code>t</code></td><td>Ghostty only</td></tr>
+<tr><td>open / copy its Remote Control link</td><td>today's <code>o</code>; copy with <code>pbcopy</code> (or OSC 52)</td><td></td></tr>
+<tr><td>open its pull request</td><td>its branch matched against your open PRs</td><td>only when one matches</td></tr>
+<tr><td>open its repository on GitHub</td><td><code>git remote get-url origin</code> in its folder</td><td></td></tr>
+<tr><td>copy the attach command</td><td><code>ssh HOST -t tmux attach -t =NAME</code></td><td>for another terminal</td></tr>
+<tr><td>open its folder</td><td><code>open DIR</code></td><td>local machines only</td></tr>
+<tr><td>new session in the same repository</td><td><code>lzr1-panel start</code> with a numbered name</td><td></td></tr>
+<tr><td>interrupt Claude (Esc)</td><td><code>tmux send-keys Escape</code></td><td>when working</td></tr>
+<tr><td>rename</td><td><code>tmux rename-session</code></td><td></td></tr>
+<tr><td>end the session</td><td>today's <code>x</code>, asks first</td><td>destructive</td></tr>
+<tr class="grp"><td colspan="3">Pull request</td></tr>
+<tr><td>open in the browser / its checks / its files</td><td>its URL, <code>/checks</code>, <code>/files</code></td><td></td></tr>
+<tr><td>copy its link / its branch</td><td><code>pbcopy</code> (or OSC 52)</td><td></td></tr>
+<tr><td>new session on its repository</td><td><code>lzr1-panel start PROFILE opus REPO</code></td><td>picks the machine if several</td></tr>
+<tr><td>ask Claude to review it</td><td>a new session started with “review PR #N”</td><td></td></tr>
+<tr><td>ask Claude to fix the failing checks</td><td>a new session started with “fix the failing checks of PR #N”</td><td>when checks fail</td></tr>
+<tr><td>re-run failed checks</td><td><code>gh run rerun --failed</code></td><td>when checks fail</td></tr>
+<tr><td>mark ready for review</td><td><code>gh pr ready</code></td><td>drafts only</td></tr>
+<tr><td>merge (squash)</td><td><code>gh pr merge --squash</code>, asks first</td><td>destructive; when green</td></tr>
+<tr><td>close</td><td><code>gh pr close</code>, asks first</td><td>destructive</td></tr>
+</tbody></table></div>
+<p class="note">Actions that only make sense in some states (interrupt while working, re-run when checks fail, ready on drafts, merge when green) appear only then, in every style. Nothing runs without a click; the destructive ones ask again.</p>
+</section>
+  <!-- ========== FOOTER ========== -->
+
+  <footer class="lerian-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="footer-brand-text">
+          <span class="footer-company">Lerian Studio</span>
+          <a href="https://lerian.studio" class="footer-link">lerian.studio</a>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="footer-generated"><strong>Generated with Ring</strong></span>
+        <span class="footer-date"></span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ========== DATE AUTO-FILL ========== -->
+<script>
+  var footerDate = document.querySelector('.footer-date');
+  if (footerDate) footerDate.textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+</script>
+<script>
+(function(){
+var W=56;
+var SS=[{n:"lerian-clients",p:"oracle-sessions",st:"w",m:"opus",age:"12m",task:"Docker dev data export and import",br:"feat/docker-dev-data",ch:3,pr:906},
+ {n:"midaz",p:"macbook-pro-sessions",st:"q",m:"opus",age:"4m",wait:"Do you want to run make test?",br:"feat/fees",ch:7,pr:1412},
+ {n:"erebor",p:"oracle-sessions",st:"i",m:"sonnet",age:"2h",task:"Review the tmux layer",br:"main",ch:0},
+ {n:"lerian-proxmox-infrastructure",p:"macbook-pro-sessions",st:"w",m:"sonnet",age:"38m",task:"Terraform for the new storage pool",br:"feat/ceph-pool-with-a-long-name",ch:12},
+ {n:"lzr1-panel",p:"macbook-pro-sessions",st:"i",m:"opus",age:"5m",task:"Your PRs under the sessions",br:"feat/prs",ch:2,pr:2}];
+var PS=[{repo:"LerianStudio/lerian-clients",n:906,t:"fix(oncall): guard ownerless VoIP providers",br:"fix/voip-owner",g:"q",rev:"checks running · review required",age:"2h"},
+ {repo:"LerianStudio/midaz",n:1412,t:"feat(fees): fee rules per ledger",br:"feat/fees",g:"bad",rev:"checks failed",age:"1d"},
+ {repo:"LerianStudio/midaz",n:1398,t:"chore: bump lib-commons",br:"chore/lib-commons",g:"ok",rev:"checks passed · approved",age:"3d"},
+ {repo:"victorlazari/lzr1-panel",n:2,t:"Panel: your PRs under the sessions, with right-click menus everywhere",br:"feat/prs",g:"i",draft:1,rev:"draft",age:"5m"},
+ {repo:"LerianStudio/matcher",n:311,t:"feat: tolerance rules for PSP reconciliation",br:"feat/tolerance",g:"q",rev:"review required",age:"6h"}];
+var si=0,pi=0;
+var G={w:'<span class="w">▶</span>',q:'<span class="q">⧗</span>',i:'<span class="i">·</span>'},PG={ok:'<span class="ok">✓</span>',bad:'<span class="bad">✗</span>',q:'<span class="q">⧗</span>',i:'<span class="i">◌</span>'};
+function pad(s,n){s=String(s);return s.length>n?s.slice(0,n-1)+"…":s+" ".repeat(Math.max(0,n-s.length))}
+function e(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function sh(r){return r.repo.replace(/^.*\//,"")}
+// Actions shown for this session / PR: [group, label, key, kind]
+function sAct(s){var a=[["view","view it here","↵"],["view","view it and type in it","f"],["view","open in a new Ghostty tab","t"],
+ ["links","open its Remote Control link","o"],["links","copy its Remote Control link","c"]];
+ if(s.pr)a.push(["links","open its pull request #"+s.pr,"p"]);
+ a.push(["links","open its repository on GitHub","g"],["links","copy the attach command","a"]);
+ if(s.p.indexOf("macbook")==0)a.push(["links","open its folder","d"]);
+ a.push(["session","new session in the same repository","n"]);
+ if(s.st=="w")a.push(["session","interrupt Claude (Esc)","i"]);
+ a.push(["session","rename","r"],["danger","end the session…","x"]);return a}
+function pAct(p){var a=[["open","open in the browser","↵"],["open","open its checks","k"],["open","open its files","v"],
+ ["copy","copy its link","c"],["copy","copy its branch","b"],
+ ["claude","new session on "+sh(p),"n"],["claude","ask Claude to review it","R"]];
+ if(p.g=="bad")a.push(["claude","ask Claude to fix the failing checks","F"],["gh","re-run failed checks","e"]);
+ if(p.draft)a.push(["gh","mark ready for review","y"]);
+ if(p.g=="ok")a.push(["danger","merge (squash)…","M"]);
+ a.push(["danger","close…","X"]);return a}
+var GL={view:"view",links:"links",session:"session",open:"open",copy:"copy",claude:"with Claude",gh:"on GitHub",danger:"careful"};
+function line(t,i,cls){return '<span class="mi'+(i==0?' cur':'')+'"> '+(i==0?'<span class="q">▌</span>':' ')+' '+t+"</span>"}
+function lab(a){return a[0]=="danger"?'<span class="bad">'+e(a[1])+"</span>":e(a[1])}
+function sHead(s){return ' <span class="h">'+e(pad(s.n,W-16))+'</span><span class="d">'+s.p.split("-")[0]+"</span>\n"}
+function pHead(p){return ' '+PG[p.g]+' <span class="h">'+e(pad("#"+p.n+" "+p.t,W-4))+"</span>\n"}
+function rule(){return '<span class="d">'+"─".repeat(W)+"</span>\n"}
+var STY=[
+ ["1","Plain list","One action per line, nothing else: the shortest menu to read. Destructive actions last and red.",
+  function(acts,head){var o=head+rule();acts.forEach(function(a,i){o+=line(lab(a),i)+"\n"});return o+line('<span class="d">cancel</span>',1)}],
+ ["2","Grouped, with keys","Actions in labelled groups, each with a one-letter key on the right, so the menu also teaches the keyboard.",
+  function(acts,head){var o=head+rule(),g="",i=0;acts.forEach(function(a){if(a[0]!=g){g=a[0];o+=' <span class="d">'+GL[g]+"</span>\n"}
+   o+=line(e(pad(a[1],W-9)).replace(/^(.*)$/,a[0]=="danger"?'<span class="bad">$1</span>':"$1")+'<span class="q">'+a[2]+"</span>",i++)+"\n"});return o}],
+ ["3","Details, then actions","A card with everything known about the row first (state, task, branch, checks), then the actions. Useful when the row is cut short in the list.",
+  function(acts,head,info){var o=head+info+rule();acts.forEach(function(a,i){o+=line(lab(a),i)+"\n"});return o}],
+ ["4","Inline, under the row","The menu opens inside the list, right under the clicked row, as a short strip of buttons; the rest of the list stays visible below. Only the most used actions; “more…” opens style 1.",
+  function(acts,head,info,ctx){var top=acts.filter(function(a){return a[0]!="danger"}).slice(0,6),o=ctx.before,b=" ",ln="";
+   top.forEach(function(a,i){var t="["+a[1].replace(/ its| it| the| on .*| in .*| \(.*\)| Remote Control/g,"").replace(/^ask Claude to /,"claude: ")+"]";if((ln+t).length>W-3){b+='<span class="q">'+e(ln)+"</span>\n ";ln=""}ln+=t+" "});
+   b+='<span class="q">'+e(ln)+'</span><span class="d">[more…]</span>';
+   return o+'<span class="cur" style="display:inline-block;width:100%">'+ctx.row+"</span>\n"+'<span class="d">  ┌'+"─".repeat(W-6)+"┐</span>\n"+b.split("\n").map(function(x){return '<span class="d">  │</span>'+x}).join("\n")+"\n"+'<span class="d">  └'+"─".repeat(W-6)+"┘</span>\n"+ctx.after}],
+ ["5","Claude first","Leads with what Claude can do for this row (review, fix checks, continue), then the plain actions folded into one line each.",
+  function(acts,head,info,ctx,kind){var c=acts.filter(function(a){return a[0]=="claude"||(kind=="s"&&a[0]=="view")}),r=acts.filter(function(a){return c.indexOf(a)<0}),o=head+rule(),i=0;
+   o+=' <span class="bdg">✻ Claude</span>\n';c.forEach(function(a){o+=line('<span class="t">'+e(a[1])+"</span>",i++)+"\n"});
+   o+=' <span class="d">more</span>\n';r.forEach(function(a){o+=line(lab(a),i++)+"\n"});return o}]];
+function sInfo(s){return ' '+G[s.st]+' <span class="'+(s.wait?"q":"m")+'">'+e(pad(s.wait||s.task,W-4))+"</span>\n"+'   <span class="d">'+e(pad("⎇ "+s.br+(s.ch?" +"+s.ch:"")+" · "+s.m+" · "+s.age,W-4))+"</span>\n"}
+function pInfo(p){return '   <span class="d">'+e(pad(p.repo+" · ⎇ "+p.br,W-4))+"</span>\n"+'   <span class="'+(p.g=="bad"?"bad":p.g=="ok"?"ok":"q")+'">'+e(pad(p.rev+" · "+p.age,W-4))+"</span>\n"}
+function sRow(s){return ' '+G[s.st]+' <span class="t">'+e(pad(s.n,W-14))+'</span><span class="bdg">'+s.m+'</span><span class="d"> · '+s.age+"</span>"}
+function pRow(p){return ' '+PG[p.g]+' <span class="t">'+e(pad("#"+p.n+" "+p.t,W-8))+'</span><span class="d"> '+p.age+"</span>"}
+var host=document.getElementById("opts");
+STY.forEach(function(v,i){var el=document.createElement("article");el.className="opt animate";el.style.setProperty("--i",i+2);
+ el.innerHTML='<header><span class="num">'+v[0]+'</span><span class="name">'+v[1]+'</span><span class="meta">'+W+' columns · right-click</span></header><div class="pair"><div class="pane"><div class="cap">right-click on a session</div><pre class="s"></pre></div><div class="pane"><div class="cap">right-click on a pull request</div><pre class="p"></pre></div></div><div class="desc">'+v[2]+"</div>";
+ host.appendChild(el);v.s=el.querySelector("pre.s");v.p=el.querySelector("pre.p")});
+function draw(){var s=SS[si],p=PS[pi],so=SS[(si+1)%SS.length],po=PS[(pi+1)%PS.length];
+ document.getElementById("ex").textContent="session: "+s.n+" ("+{w:"working",q:"waiting",i:"idle"}[s.st]+") · PR: #"+p.n+" ("+p.rev+")";
+ STY.forEach(function(v){
+  v.s.innerHTML=v[3](sAct(s),sHead(s),sInfo(s),{before:sRow(SS[(si+SS.length-1)%SS.length])+"\n",row:sRow(s),after:sRow(so)+"\n"},"s");
+  v.p.innerHTML=v[3](pAct(p),pHead(p),pInfo(p),{before:pRow(PS[(pi+PS.length-1)%PS.length])+"\n",row:pRow(p),after:pRow(po)+"\n"},"p")})}
+function shuffle(){var a=si,b=pi;while(si==a)si=Math.floor(Math.random()*SS.length);while(pi==b)pi=Math.floor(Math.random()*PS.length);draw()}
+document.getElementById("shuffle").addEventListener("click",shuffle);
+host.addEventListener("mouseover",function(ev){var m=ev.target.closest(".mi");if(!m)return;var pre=m.closest("pre");pre.querySelectorAll(".mi").forEach(function(x){x.classList.toggle("cur",x==m);var p=x.firstChild&&x.childNodes[1];});
+ pre.querySelectorAll(".mi").forEach(function(x){var q=x.querySelector(".q");if(q&&q.textContent=="▌")q.outerHTML=" "});var t=m.innerHTML;m.innerHTML=" "+'<span class="q">▌</span>'+t.slice(2)});
+draw();
+})();
+</script>
+</body>
+</html>
