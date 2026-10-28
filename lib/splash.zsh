@@ -62,7 +62,11 @@ lzr1_splash() {
     ( local p out
       for p in $names; do
         ( if load $p 2>/dev/null; then
-            out=$(on "$EXP"'printf "%s %s\n" "$(tmux list-sessions 2>/dev/null | wc -l | tr -d " ")" "$(ls -1 "$(exp "$1")" 2>/dev/null | wc -l | tr -d " ")"' "$P_REPOS" 2>/dev/null)
+            # A profile with only= counts just the sessions inside that folder.
+            out=$(on "$EXP"'o=$(exp "$2"); o=${o%/}
+              n=$(tmux list-sessions -F "#{pane_current_path}" 2>/dev/null | while read -r d; do
+                if [ -n "$o" ]; then case $d in ("$o"|"$o"/*) ;; (*) continue ;; esac; fi; echo; done | wc -l | tr -d " ")
+              printf "%s %s\n" "$n" "$(ls -1 "$(exp "$1")" 2>/dev/null | wc -l | tr -d " ")"' "$P_REPOS" "$P_ONLY" 2>/dev/null)
             if [[ -n $out ]]; then print -r -- "reach $p ok $out" >>$sfile; else print -r -- "reach $p fail 0 0" >>$sfile; fi
           fi ) &
       done

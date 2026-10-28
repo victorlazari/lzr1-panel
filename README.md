@@ -1,12 +1,17 @@
 <div align="center">
 
 <pre>
-██╗      ███████╗ ██████╗   ██╗    ██████╗   █████╗  ███╗   ██╗ ███████╗ ██╗
-██║      ╚══███╔╝ ██╔══██╗ ███║    ██╔══██╗ ██╔══██╗ ████╗  ██║ ██╔════╝ ██║
-██║        ███╔╝  ██████╔╝ ╚██║    ██████╔╝ ███████║ ██╔██╗ ██║ █████╗   ██║
-██║       ███╔╝   ██╔══██╗  ██║    ██╔═══╝  ██╔══██║ ██║╚██╗██║ ██╔══╝   ██║
-███████╗ ███████╗ ██║  ██║  ██║    ██║      ██║  ██║ ██║ ╚████║ ███████╗ ███████╗
-╚══════╝ ╚══════╝ ╚═╝  ╚═╝  ╚═╝    ╚═╝      ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚══════╝ ╚══════╝
+      ██          ██████████  ████████        ██
+      ██                ██    ██      ██    ████
+      ██              ██      ████████        ██
+      ██            ██        ██    ██        ██
+      ██████████  ██████████  ██      ██    ██████
+
+████████      ██████    ██      ██  ██████████  ██
+██      ██  ██      ██  ████    ██  ██          ██
+████████    ██████████  ██  ██  ██  ████████    ██
+██          ██      ██  ██    ████  ██          ██
+██          ██      ██  ██      ██  ██████████  ██████████
 </pre>
 
 **Every Claude Code session you run, on every machine you own, in one clickable list.**<br>
@@ -29,32 +34,34 @@
 </div>
 
 ```
-┌──────────────────────── lzr1 ────────────────────────┬─ viewer ───────────────────────┐
-│ 3 sessions · 1▶ 1⧗ 1·                                │                                │
-│ oracle-sessions ssh · online · 2 ─────────────────── │  the session you picked, live: │
-│ ▌ ▶ lerian-clients                     opus · 12m ●  │  Claude Code running in tmux   │
-│ ▌   Docker dev data export and import                │  on that machine               │
-│ ▌   ⎇ feat/docker-dev-data +3 · lerian-clients       │                                │
-│   · erebor                            sonnet · 2h    │                                │
-│     Review the tmux layer                            │                                │
-│     ⎇ main · erebor                                  │                                │
-│ macbook-pro-sessions local · online · 1 ──────────── │                                │
-│   ⧗ midaz                               opus · 4m    │                                │
-│     ⧗ Do you want to run make test?                  │                                │
-│     ⎇ feat/fees +7 · midaz                           │                                │
-│                                                      │                                │
-│                                                      │                                │
-│                                                      │                                │
-│                                                      │                                │
-│                                                      │                                │
-│ pull requests victorlazari · gh · 2 ──────────────── │                                │
-│   ⧗ #906 fix(oncall): guard ownerless VoIP pro… 2h   │                                │
-│     lerian-clients · ⎇ fix/voip-owner · review req…  │                                │
-│   ✓ #1398 chore: bump lib-commons               3d   │                                │
-│     midaz · ⎇ chore/lib-commons · checks passed      │                                │
-│ [+opus] [+sonnet] [↻] [?]                            │                                │
-└──────────────────────────────────────────────────────┴────────────────────────────────┘
+ lzr1 ───────────────────────────────────────────────
+ 3 sessions · 1▶ 1⧗ 1·
+ oracle-sessions ssh · online · 2 ───────────────────
+ ▌ ▶ lerian-clients                     opus · 12m ●
+ ▌   Docker dev data export and import
+ ▌   ⎇ feat/docker-dev-data +3 · lerian-clients
+   · erebor                            sonnet · 2h
+     Review the tmux layer
+     ⎇ main · erebor
+ macbook-pro-sessions local · online · 1 ────────────
+   ⧗ midaz                               opus · 4m
+     ⧗ Do you want to run make test?
+     ⎇ feat/fees +7 · midaz
+
+
+
+
+
+ pull requests victorlazari · gh · 2 ────────────────
+   ⧗ #906 fix(oncall): guard ownerless VoIP pro… 2h
+     lerian-clients · ⎇ fix/voip-owner · review req…
+   ✓ #1398 chore: bump lib-commons               3d
+     midaz · ⎇ chore/lib-commons · checks passed
+ ────────────────────────────────────────────────────
+ [+opus] [+sonnet] [↻] [?]
 ```
+
+<p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
 
 ---
 
@@ -192,6 +199,13 @@ Or in one line:
 ```sh
 lzr1-panel profile add my-mac --local --repos ~/Github/lerian
 lzr1-panel profile add my-server --ssh user@host --key ~/.ssh/my.key --repos '~/repos'
+```
+
+**One machine, several folders?** Give each profile `--only`, and it lists just the sessions inside its folder:
+
+```sh
+lzr1-panel profile add lzr1-personal --local --repos ~/Github/lazari --only ~/Github/lazari
+lzr1-panel profile add lzr1-lerian --local --repos ~/Github/lerian --only ~/Github/lerian
 ```
 
 Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](docs/profiles.md)).
