@@ -16,6 +16,8 @@ BIN=$HOME/.local/bin
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel
 SKILLS=$HOME/.claude/skills
 FZF_MIN=0.74
+# Tools installed below land in ~/.local/bin, which a fresh account often has off PATH: make them visible to this run.
+case ":$PATH:" in *":$BIN:"*) ;; *) export PATH="$BIN:$PATH" ;; esac
 YES=0 SHELL_HOOK=1 UNINSTALL=0
 for a in "$@"; do
   case $a in
