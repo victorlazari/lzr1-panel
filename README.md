@@ -1,14 +1,32 @@
-```
+<div align="center">
+
+<pre>
 ██╗      ███████╗ ██████╗   ██╗    ██████╗   █████╗  ███╗   ██╗ ███████╗ ██╗
 ██║      ╚══███╔╝ ██╔══██╗ ███║    ██╔══██╗ ██╔══██╗ ████╗  ██║ ██╔════╝ ██║
 ██║        ███╔╝  ██████╔╝ ╚██║    ██████╔╝ ███████║ ██╔██╗ ██║ █████╗   ██║
 ██║       ███╔╝   ██╔══██╗  ██║    ██╔═══╝  ██╔══██║ ██║╚██╗██║ ██╔══╝   ██║
 ███████╗ ███████╗ ██║  ██║  ██║    ██║      ██║  ██║ ██║ ╚████║ ███████╗ ███████╗
 ╚══════╝ ╚══════╝ ╚═╝  ╚═╝  ╚═╝    ╚═╝      ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚══════╝ ╚══════╝
-```
+</pre>
 
-**Every Claude Code session you run, on every machine you own, in one clickable list. Your pull requests right
-under them.**
+**Every Claude Code session you run, on every machine you own, in one clickable list.**<br>
+**Your pull requests right under them.**
+
+![macOS](https://img.shields.io/badge/macOS-supported-555?logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-supported-555?logo=linux&logoColor=white)
+![zsh](https://img.shields.io/badge/zsh-script-4EAA25?logo=gnubash&logoColor=white)
+![tmux](https://img.shields.io/badge/tmux-sessions-1BB91F?logo=tmux&logoColor=white)
+![fzf](https://img.shields.io/badge/fzf-0.74%2B-yellow)
+![Claude Code](https://img.shields.io/badge/Claude_Code-Remote_Control-D97757?logo=anthropic&logoColor=white)
+
+[Quick start](#-quick-start) ·
+[What you get](#-what-you-get) ·
+[Using it](#-using-it) ·
+[Profiles](#-profiles) ·
+[Settings](#-settings) ·
+[Something wrong?](#-something-wrong)
+
+</div>
 
 ```
 ┌──────────────────────── lzr1 ────────────────────────┬─ viewer ───────────────────────┐
@@ -24,6 +42,11 @@ under them.**
 │   ⧗ midaz                               opus · 4m    │                                │
 │     ⧗ Do you want to run make test?                  │                                │
 │     ⎇ feat/fees +7 · midaz                           │                                │
+│                                                      │                                │
+│                                                      │                                │
+│                                                      │                                │
+│                                                      │                                │
+│                                                      │                                │
 │ pull requests victorlazari · gh · 2 ──────────────── │                                │
 │   ⧗ #906 fix(oncall): guard ownerless VoIP pro… 2h   │                                │
 │     lerian-clients · ⎇ fix/voip-owner · review req…  │                                │
@@ -35,7 +58,7 @@ under them.**
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 ```sh
 git clone https://github.com/victorlazari/lzr1-panel.git ~/Github/lazari/lzr1-panel
@@ -49,18 +72,18 @@ Then open a new terminal and run:
 lzr1-panel open
 ```
 
-That's it. The installer sets everything up and checks it at the end. If anything is off, run `lzr1-panel doctor`:
-it says what is wrong and how to fix it.
+That's it. The installer sets everything up and checks it at the end.
+If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix it.
 
 ---
 
-## What you get
+## ✨ What you get
 
 | | |
 |---|---|
 | 🖥 **All your machines** | This computer and any server over SSH, each one a *profile*. A machine that does not answer is left out until it does. |
 | 📋 **Every session, at a glance** | Three lines each: its state (`▶` working, `⧗` waiting on you, `·` idle), name, model and age; what Claude is doing, or the question it is waiting on; its git branch and folder. |
-| 🔀 **Your pull requests** | Under the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
+| 🔀 **Your pull requests** | Below the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
 | 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
@@ -69,7 +92,31 @@ it says what is wrong and how to fix it.
 
 ---
 
-## Using it
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+    you(["You"]) --> panel["Panel<br/>(fzf, on the left)"]
+    panel -- "pick a session" --> viewer["Viewer<br/>(on the right)"]
+    panel -- "list, every 15s" --> machines
+    viewer -- "tmux attach" --> machines
+    subgraph machines ["Your machines (profiles)"]
+        local["This computer"]
+        ssh["Servers over SSH"]
+    end
+    machines --> claude["Claude Code<br/>in tmux sessions"]
+    claude -. "Remote Control" .-> phone["claude.ai/code<br/>and your phone"]
+    panel -- "your open PRs, every minute" --> github["GitHub<br/>(gh)"]
+```
+
+- Each **machine** keeps its Claude Code sessions in **tmux**, so they run whether the panel is open or not.
+- The **panel** asks every machine for its sessions at once (one shared SSH connection per server), and asks
+  GitHub for your open pull requests.
+- The **viewer** attaches to the session you pick. Leave it with `Ctrl-b d`, and the session keeps going.
+
+---
+
+## 🎮 Using it
 
 ### The panel
 
@@ -107,9 +154,12 @@ A machine's heading has a menu too: new sessions there, test the machine, refres
 
 ### Copying text
 
-- **In a session**: drag over the text (Claude highlights it), then press **Ctrl-C**. Paste with Cmd-V as usual.
-  Cmd-C does not copy there: the terminal keeps it for its own selection, which is empty while Claude has the mouse.
-- **With your terminal's own selection**: turn mouse reporting off while you select (macOS Terminal: **Cmd-R**;
+> [!TIP]
+> In a session: **drag** over the text (Claude highlights it), press **Ctrl-C**, then paste with **Cmd-V**.
+
+- **Cmd-C does not copy inside a session.** Your terminal keeps Cmd-C for its own selection, which is empty while
+  Claude has the mouse. Use Ctrl-C.
+- **Prefer your terminal's own selection?** Turn mouse reporting off while you select (macOS Terminal: **Cmd-R**;
   Ghostty: hold **Shift**; iTerm2: hold **Option**), then Cmd-C. This also works in the panel.
 
 Not copying? See [Copying text](docs/troubleshooting.md#copying-text).
@@ -125,11 +175,11 @@ lzr1-panel doctor                           # check everything, with fixes
 lzr1-panel keys                             # every key
 ```
 
-After installing, each profile also gets two shortcuts: `cl-<profile>-opus NAME` and `cl-<profile>-sonnet NAME`.
+Each profile also gets two shortcuts in your shell: `cl-<profile>-opus NAME` and `cl-<profile>-sonnet NAME`.
 
 ---
 
-## Profiles
+## 🗂 Profiles
 
 A profile is a machine. Add one by answering a few questions:
 
@@ -146,7 +196,7 @@ lzr1-panel profile add my-server --ssh user@host --key ~/.ssh/my.key --repos '~/
 
 Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](docs/profiles.md)).
 
-| | |
+| Command | What it does |
 |---|---|
 | `lzr1-panel profile list` | your profiles |
 | `lzr1-panel profile test NAME` | reaches it and checks tmux, Claude and the folders |
@@ -155,15 +205,16 @@ Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](
 
 A session named like a folder in `--repos` opens inside it: `lerian-clients` opens in `~/Github/lerian/lerian-clients`.
 
-> **Profiles stay private.** They live in `~/.config/lzr1-panel/profiles/`, never in this repository: they hold hosts
-> and key paths.
+> [!IMPORTANT]
+> **Profiles stay private.** They live in `~/.config/lzr1-panel/profiles/`, never in this repository: they hold
+> hosts and key paths.
 
 An SSH machine needs **tmux** and **Claude Code** (signed in) installed there. `lzr1-panel profile test NAME` tells
 you if something is missing.
 
 ---
 
-## What the installer does
+## 📦 What the installer does
 
 `./install.sh` works on macOS and Linux, and is safe to run again: it only changes what is missing.
 
@@ -177,17 +228,17 @@ you if something is missing.
 8. **Your first profile**.
 9. **`lzr1-panel doctor`**, to check it all.
 
-| | |
+| Option | What it does |
 |---|---|
-| `./install.sh --yes` | answer yes to everything |
-| `./install.sh --no-shell` | leave your shell files alone |
-| `./install.sh --uninstall` | remove it all (your profiles stay) |
+| `./install.sh --yes` | answers yes to everything |
+| `./install.sh --no-shell` | leaves your shell files alone |
+| `./install.sh --uninstall` | removes it all (your profiles stay) |
 
 ---
 
-## Settings
+## ⚙ Settings
 
-Set these in your shell (for example in `~/.zshenv`):
+Set these in your shell, for example in `~/.zshenv`:
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -201,7 +252,7 @@ Set these in your shell (for example in `~/.zshenv`):
 
 ---
 
-## Something wrong?
+## 🛟 Something wrong?
 
 Run this first:
 
@@ -213,7 +264,7 @@ Then see **[docs/troubleshooting.md](docs/troubleshooting.md)**: every common pr
 
 ---
 
-## Inside the repository
+## 🧱 Inside the repository
 
 ```
 bin/lzr1-panel                  the command: panel, viewer, sessions, PRs, menus, profiles
@@ -225,3 +276,18 @@ docs/*-options.html             the designs considered: splash, sidebar, PR sect
 skills/lzr1-panel-profiles/     the Claude Code skill that creates profiles
 AGENTS.md                       pointers for AI assistants working here
 ```
+
+## 🤝 Contributing
+
+Changes are welcome. Before opening a pull request, check the scripts parse:
+
+```sh
+zsh -n bin/lzr1-panel lib/splash.zsh
+bash -n install.sh          # it must also run on macOS's bash 3.2
+```
+
+Scripts sent to a profile's machine run as POSIX `sh`. [AGENTS.md](AGENTS.md) has the rest.
+
+<div align="center">
+<sub>Made for people who run Claude Code everywhere.</sub>
+</div>
