@@ -65,7 +65,7 @@ it says what is wrong and how to fix it.
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
 | 🛟 **Sessions survive** | If Claude exits (two Ctrl-Cs, `/exit`, a crash), the session stays. Enter resumes the same conversation. |
-| ✂️ **Copy just works** | Drag to select and it's copied, even from SSH machines. Ctrl-C copies a selection too. |
+| ✂️ **Copy just works** | Drag to select, Ctrl-C, and it's on your clipboard: in any terminal, from any machine. |
 
 ---
 
@@ -107,8 +107,12 @@ A machine's heading has a menu too: new sessions there, test the machine, refres
 
 ### Copying text
 
-- **In the viewer**: drag to select. It is copied when you let go, and stays highlighted. Ctrl-C copies it as well.
-- **In the panel**: hold **Shift** while dragging, then Cmd-C.
+- **In a session**: drag over the text (Claude highlights it), then press **Ctrl-C**. Paste with Cmd-V as usual.
+  Cmd-C does not copy there: the terminal keeps it for its own selection, which is empty while Claude has the mouse.
+- **With your terminal's own selection**: turn mouse reporting off while you select (macOS Terminal: **Cmd-R**;
+  Ghostty: hold **Shift**; iTerm2: hold **Option**), then Cmd-C. This also works in the panel.
+
+Not copying? See [Copying text](docs/troubleshooting.md#copying-text).
 
 ### From the command line
 
@@ -165,7 +169,7 @@ you if something is missing.
 
 1. **Tools**: zsh, tmux, fzf 0.74+, curl, openssl, git, gh and jq.
 2. **Claude Code**, and **Ghostty** on macOS (it asks first).
-3. **Copying**: Ctrl-C copies selected text in Ghostty (it asks first).
+3. **Copying**: Ctrl-C copies a Shift-selection in Ghostty (it asks first).
 4. **The `lzr1-panel` command**, in `~/.local/bin`.
 5. **The Claude Code skill** that creates profiles.
 6. **A shell hook**: the `cl-*` shortcuts and, if you want, the panel opening with Ghostty.

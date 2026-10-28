@@ -142,7 +142,7 @@ The session is still there.
 
 ### Ctrl-C does nothing in Claude
 
-Ctrl-C copies when text is selected. With nothing selected, it goes to Claude as usual.
+With text selected, Ctrl-C copies it instead of reaching Claude.
 
 **Fix:** click once in the viewer to clear the selection, then press Ctrl-C.
 
@@ -150,35 +150,54 @@ Ctrl-C copies when text is selected. With nothing selected, it goes to Claude as
 
 ## Copying text
 
-### Selecting text in the viewer does not copy
+### How copying works in a session
 
-The viewer shows the session through tmux, which handles the mouse. The panel sets tmux up so that letting go of the
-mouse copies the selection. That setup happens when the viewer attaches to a session.
+Claude Code handles the mouse itself, so copying goes through Claude, in any terminal and from any machine:
+
+1. **Drag** over the text: Claude highlights it.
+2. Press **Ctrl-C**: it is on your clipboard.
+3. **Cmd-V** (or Ctrl-Shift-V on Linux) pastes it, as usual.
+
+**Cmd-C does not copy there.** Your terminal keeps Cmd-C for its own selection, which stays empty while Claude
+has the mouse. Use Ctrl-C.
+
+### I select, press Ctrl-C, and nothing is copied
+
+Claude sends the copy to the terminal as an escape code (OSC 52). Some terminals, such as macOS Terminal, ignore
+it, so the panel's tmux takes the copy and puts it on the clipboard itself. That is set up when the panel opens
+and when the viewer attaches to a session.
 
 **Fix:**
 
-1. Click another session and back (this re-attaches, with copying set up).
-2. Drag to select, then let go. The text is copied and stays highlighted.
-3. Still nothing? Your terminal must allow programs to set the clipboard:
-   - **Ghostty**: allowed by default. If you set `clipboard-write = deny`, change it to `allow`.
-   - **iTerm2**: Settings → General → Selection → *Applications in terminal may access clipboard*.
-   - **Other terminals**: look for "OSC 52" in their settings.
+1. Quit the panel (`q`) and run `lzr1-panel open` again, then pick the session.
+2. Select, Ctrl-C, then paste somewhere to check.
+3. On Linux, the panel needs `wl-copy` (Wayland) or `xclip` (X11) installed, or a terminal that supports OSC 52.
 
-### Copying from an SSH machine does not work
+### Paste gives me old text
 
-There, the copy travels back through your terminal (OSC 52), so the terminal must allow it (see the previous
-answer). Nothing needs installing on the server.
+The copy did not happen, so the clipboard still holds what was there before. See the answer above.
 
-### Ctrl-C does not copy in Ghostty
+### I want to select with my terminal instead (and use Cmd-C)
+
+Turn off mouse reporting while you select:
+
+- **macOS Terminal**: View → Allow Mouse Reporting (**Cmd-R**) to turn it off; Cmd-R again to turn it back on.
+- **Ghostty**: hold **Shift** while dragging.
+- **iTerm2**: hold **Option** while dragging.
+
+Then Cmd-C copies, as in any terminal. This also works in the panel, which uses the mouse for clicks.
+
+### Ctrl-C does not copy a Shift-selection in Ghostty
 
 **Fix:** run `./install.sh` again and say yes to *"Let Ctrl+C copy selected text in Ghostty"*. Then reload
 Ghostty's config with **Cmd+Shift+,**. `lzr1-panel doctor` tells you whether it is set.
 
-### I cannot select text in the panel
+### Copying from an SSH machine does not work
 
-The panel uses the mouse for clicks.
+The copy travels back through SSH to this computer, where the panel puts it on the clipboard. Nothing needs
+installing on the server.
 
-**Fix:** hold **Shift** while dragging, then press **Cmd-C**.
+**Fix:** as in "I select, press Ctrl-C, and nothing is copied" above.
 
 ---
 
