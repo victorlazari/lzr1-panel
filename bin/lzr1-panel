@@ -263,7 +263,8 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
   [[ $name == *[.:/]* ]] && die 'session names cannot contain ".", ":" or "/"'
   local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --name ${(q)name} --remote-control ${(q)name} ${(j: :)${(q)@}}"
   # If Claude exits (Ctrl-C twice, /exit, a crash) the session stays and Enter resumes the same conversation.
-  local cmd="$claude; while printf '\\n  Claude exited. Enter: resume this conversation · Ctrl-D: end the session\\n' && read -r _; do $claude --continue; done"
+  # Only typing "end" closes it: Ctrl-C and Ctrl-D, easy to hit by accident in a viewer, do not (the trap is a handler, so Claude and its commands still get Ctrl-C).
+  local cmd="trap : INT; $claude; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
   print -r -- "starting: $name on $P_NAME"
   on "$EXP"'
     name=$1 cmd=$2 root=$(exp "$3") repos=$(exp "$4")
