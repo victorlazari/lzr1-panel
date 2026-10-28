@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lzr1 Splash Options</title>
+<!-- Template: ring:visualizing standard.html -->
+<!-- Artifact brief: Audience: the user choosing the opening animation for lzr1-panel (shown on install and on every open, about 5s, any key skips). Physical scene: a wall of ten small terminals, each playing one candidate. Source facts: logo is LZR1 over a word alternating TECH and PANEL in a 3D block font (box-drawing shadow); a status line and progress bar sit at the bottom; messages name real work (profiles, machines, sessions, projects) plus fun lines; the terminal version must respect any window size. Entities: the ten candidates; the logo; the status line; the bar. Hierarchy: the animation first, its name and one-line idea second, a replay control third. Message: compare the ten and pick a number. Non-invention boundary: counts in the messages are sample values, labeled as such; colors are mapped to the Lerian tokens here, the terminal uses its 256-color palette. -->
+<!-- Visual thesis: a contact sheet of live terminals; every frame uses the same logo, bar and messages so only the motion differs. -->
+<!-- Design choices: 1) one shared character-grid renderer, so every option is honest about what a terminal can draw; 2) identical bottom status and bar across cards, isolating the animation as the only variable; 3) cards numbered 1-10 with a replay button, so the choice is a number; 4) the grid redraws only while a card is on screen. -->
+<!-- ============================================
+     LERIAN STANDARD TEMPLATE v1.0.0
+     Source: Lerian product-console design system
+
+     USAGE: Copy this entire <style> block as the
+     foundation for any visual-explainer output.
+     Then add diagram-specific styles after the
+     "TEMPLATE-SPECIFIC STYLES" marker.
+
+     FOUNDATION / DEMO BOUNDARY:
+     Copy the foundation, header, footer, and date script.
+     Do not copy demo titles, metrics, service names, statuses,
+     or sample content into generated artifacts. Replace the demo
+     shell with a source-grounded product surface.
+
+     ARTIFACT SHELL GUIDANCE:
+     Generated pages should feel like trustworthy product surfaces
+     for technical judgment: restrained by default, structurally clear,
+     and visually richer only when the source material earns it.
+     ============================================ -->
+
+<!-- ========== FONTS ==========
+     IBM Plex. Hosted, the portal serves it with its injected /tokens.css;
+     anywhere else this loads it from Google Fonts. -->
+<script>
+  addEventListener('DOMContentLoaded', function () {
+    if (document.querySelector('link[href="/tokens.css"]')) return;
+    var plex = document.createElement('link');
+    plex.rel = 'stylesheet';
+    plex.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap';
+    document.head.appendChild(plex);
+  });
+</script>
+
+<style>
+/* ==========================================================================
+   LERIAN STANDARD FOUNDATION
+   All visual-explainer outputs MUST start from these tokens and base styles.
+   ========================================================================== */
+
+/* ========== DESIGN TOKENS ==========
+   The Alfarrábio portal's tokens (runtime/public/tokens.css), same names and
+   values. :where() keeps them at zero specificity: hosted, the portal's
+   injected /tokens.css wins and its theme toggle drives the page; opened
+   locally, the page follows prefers-color-scheme. Dark is the default. */
+:where(:root) {
+  color-scheme: dark;
+  --alf-yellow: #FEED02;
+  --alf-preto: #191A1B;
+  --alf-preto-fundo: #111213;
+  --alf-cinza-escuro: #3E3C37;
+  --alf-cinza-medio: #8B877C;
+  --alf-cinza: #CECECE;
+  --alf-cinza-claro: #F2F2F2;
+  --alf-verde: #50F769;
+  --alf-vermelho: #FF6760;
+  --alf-azul: #2ED8FE;
+  --alf-accent: var(--alf-yellow);
+  --alf-accent-hover: #E8D802;
+  --alf-accent-ink: var(--alf-preto);
+  --alf-accent-tint-08: rgb(254 237 2 / 0.10);
+  --alf-accent-tint-15: rgb(254 237 2 / 0.20);
+  --alf-accent-tint-30: rgb(254 237 2 / 0.38);
+  --alf-font-ui: "Alfarrabio Plex Sans", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --alf-font-display: "Alfarrabio Plex Serif", "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --alf-font-mono: "Alfarrabio Plex Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --alf-bg: var(--alf-preto-fundo);
+  --alf-surface: var(--alf-preto);
+  --alf-surface-2: #2B2A28;
+  --alf-surface-3: var(--alf-cinza-escuro);
+  --alf-raised: var(--alf-preto);
+  --alf-border: #6B6860;
+  --alf-border-soft: var(--alf-cinza-escuro);
+  --alf-rule: var(--alf-cinza-claro);
+  --alf-text: var(--alf-cinza-claro);
+  --alf-text-muted: var(--alf-cinza);
+  --alf-text-dim: #A09C92;
+  --alf-text-faint: var(--alf-cinza-medio);
+  --alf-accent-text: var(--alf-yellow);
+  --alf-focus: var(--alf-yellow);
+  --alf-green: var(--alf-verde);
+  --alf-red: var(--alf-vermelho);
+  --alf-blue: var(--alf-azul);
+  --alf-green-tint-08: rgb(80 247 105 / 0.08);
+  --alf-green-tint-15: rgb(80 247 105 / 0.15);
+  --alf-red-tint-10: rgb(255 103 96 / 0.12);
+  --alf-blue-tint-08: rgb(46 216 254 / 0.08);
+  --alf-blue-tint-15: rgb(46 216 254 / 0.16);
+}
+
+/* Light: when the OS asks for it, and always on paper. */
+@media (prefers-color-scheme: light), print {
+  :where(:root) {
+    color-scheme: light;
+    --alf-bg: var(--alf-cinza-claro);
+    --alf-surface: var(--alf-cinza-claro);
+    --alf-surface-2: #E3E3E3;
+    --alf-surface-3: var(--alf-cinza);
+    --alf-raised: var(--alf-cinza-claro);
+    --alf-border: var(--alf-cinza-medio);
+    --alf-border-soft: var(--alf-cinza);
+    --alf-rule: var(--alf-preto);
+    --alf-text: var(--alf-preto);
+    --alf-text-muted: var(--alf-cinza-escuro);
+    --alf-text-dim: #5A5751;
+    --alf-text-faint: #6B6860;
+    --alf-accent-text: var(--alf-preto);
+    --alf-focus: var(--alf-preto);
+    --alf-green: #13773A;
+    --alf-red: #B42318;
+    --alf-blue: #006B85;
+    --alf-green-tint-08: rgb(19 119 58 / 0.08);
+    --alf-green-tint-15: rgb(19 119 58 / 0.14);
+    --alf-red-tint-10: rgb(180 35 24 / 0.08);
+    --alf-blue-tint-08: rgb(0 107 133 / 0.08);
+    --alf-blue-tint-15: rgb(0 107 133 / 0.15);
+  }
+}
+
+
+/* ========== RESET & BASE ========== */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--alf-font-ui);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--alf-text);
+  background: var(--alf-bg);
+  padding: 40px 20px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+
+/* ========== CONTAINER ========== */
+
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+
+/* ========== HEADER ========== */
+
+.lerian-header {
+  margin-bottom: 32px;
+}
+
+.lerian-header a {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--alf-text);
+  transition: color 0.2s ease;
+}
+
+.lerian-header .logo-mark {
+  width: 100px;
+  height: auto;
+  display: block;
+}
+
+
+/* ========== TYPOGRAPHY ========== */
+
+h1 {
+  font-family: var(--alf-font-display);
+  font-size: 36px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--alf-text);
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+h2 {
+  font-family: var(--alf-font-display);
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--alf-text);
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+h3 {
+  font-family: var(--alf-font-display);
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--alf-text);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+p {
+  color: var(--alf-text-muted);
+  margin-bottom: 16px;
+}
+
+
+/* ========== STANDARD UTILITIES: CARDS ========== */
+
+.card {
+  background: var(--alf-surface);
+  border: 1px solid var(--alf-border-soft);
+  padding: 24px;
+}
+
+.card-elevated {
+  background: var(--alf-raised);
+  border: 2px solid var(--alf-rule);
+  padding: 24px;
+}
+
+/* ========== STANDARD UTILITIES: BADGES ========== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.badge-success { background: var(--alf-green-tint-08); color: var(--alf-green); }
+.badge-warning { background: var(--alf-accent-tint-15); color: var(--alf-accent-text); }
+.badge-error   { background: var(--alf-red-tint-10);   color: var(--alf-red); }
+.badge-info    { background: var(--alf-blue-tint-08);     color: var(--alf-blue); }
+.badge-neutral { background: var(--alf-surface-2); color: var(--alf-text-muted); }
+
+
+
+/* ========== STANDARD UTILITIES: STATUS DOTS ========== */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+}
+
+.status-dot-success { background: var(--alf-green); }
+.status-dot-warning { background: var(--alf-accent); border: 1px solid var(--alf-rule); }
+.status-dot-error   { background: var(--alf-red); }
+.status-dot-info    { background: var(--alf-blue); }
+
+
+/* ========== STANDARD UTILITIES: TABLES ========== */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--alf-text-muted);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--alf-border-soft);
+  font-size: 13px;
+}
+
+.data-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--alf-border-soft);
+  color: var(--alf-text);
+}
+
+.data-table tbody tr:hover {
+  background: var(--alf-accent-tint-15);
+}
+
+
+
+/* ========== STANDARD UTILITIES: TEXT ========== */
+
+.mono { font-family: var(--alf-font-mono); }
+
+.text-muted     { color: var(--alf-text-dim); }
+.text-secondary { color: var(--alf-text-muted); }
+.text-accent    { color: var(--alf-accent-text); }
+.text-success   { color: var(--alf-green); }
+.text-error     { color: var(--alf-red); }
+
+.font-medium    { font-weight: 500; }
+.font-semibold  { font-weight: 600; }
+
+
+/* ========== ANIMATIONS ========== */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate {
+  opacity: 0;
+  animation: fadeUp 0.5s ease-out forwards;
+  animation-delay: calc(var(--i, 0) * 0.05s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ========== FOOTER ========== */
+
+.lerian-footer {
+  margin-top: 64px;
+  padding: 24px 0;
+  border-top: 2px solid var(--alf-rule);
+  position: relative;
+}
+
+/* Full-bleed background via pseudo-element */
+.lerian-footer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 100%;
+  background: var(--alf-surface);
+  z-index: -1;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.footer-company {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--alf-text);
+  line-height: 1.3;
+}
+
+.footer-link {
+  font-size: 13px;
+  color: var(--alf-text-dim);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+  color: var(--alf-accent-text);
+}
+
+.footer-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.footer-generated {
+  font-size: 13px;
+  color: var(--alf-text-muted);
+}
+
+.footer-generated strong {
+  font-weight: 600;
+}
+
+.footer-date {
+  font-size: 13px;
+  color: var(--alf-text-dim);
+}
+
+
+/* ========== RESPONSIVE ========== */
+
+@media (max-width: 768px) {
+  body {
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 28px;
+  }
+
+  h2 {
+    font-size: 19px;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .footer-meta {
+    align-items: flex-start;
+  }
+
+  .data-table {
+    font-size: 13px;
+  }
+
+  .data-table thead th,
+  .data-table tbody td {
+    padding: 10px 12px;
+  }
+}
+
+
+/* ========== PRINT ========== */
+
+@media print {
+  body {
+    padding: 20px;
+  }
+
+  .lerian-header {
+    margin-bottom: 16px;
+  }
+
+  .lerian-footer::before {
+    display: none;
+  }
+
+  .animate {
+    opacity: 1 !important;
+    animation: none !important;
+  }
+}
+
+
+/* ========== LERIAN STANDARD: DO NOT MODIFY ABOVE THIS LINE ========== */
+/* Diagram-specific styles go below */
+
+/* ========== TEMPLATE-SPECIFIC STYLES ========== */
+
+
+.sub{color:var(--alf-text-muted);max-width:760px;margin-bottom:28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,500px),1fr));gap:20px}
+.opt{border:2px solid var(--alf-rule);background:var(--alf-surface);min-width:0;display:flex;flex-direction:column}
+.opt header{display:flex;align-items:baseline;gap:10px;padding:10px 14px;border-bottom:1px solid var(--alf-border-soft)}
+.num{font-family:var(--alf-font-mono);background:var(--alf-accent);color:var(--alf-accent-ink);padding:0 8px;font-weight:500}
+.name{font-weight:600;color:var(--alf-text)}
+.opt header button{margin-left:auto;font:500 12px var(--alf-font-mono);background:var(--alf-surface-2);color:var(--alf-text);border:1px solid var(--alf-border);padding:2px 10px;cursor:pointer}
+.opt header button:hover{background:var(--alf-accent);color:var(--alf-accent-ink)}
+.screen{background:var(--alf-bg);padding:10px 0;overflow:hidden;min-width:0}
+.screen pre{font-family:var(--alf-font-mono);line-height:1.18;margin:0 auto;white-space:pre;color:var(--alf-text-dim);width:max-content}
+.desc{padding:10px 14px;font-size:14px;color:var(--alf-text-muted);border-top:1px solid var(--alf-border-soft)}
+.f0{color:var(--alf-blue)}.f1{color:color-mix(in srgb,var(--alf-blue) 80%,var(--alf-red))}.f2{color:color-mix(in srgb,var(--alf-blue) 60%,var(--alf-red))}
+.f3{color:color-mix(in srgb,var(--alf-blue) 40%,var(--alf-red))}.f4{color:color-mix(in srgb,var(--alf-blue) 20%,var(--alf-red))}.f5{color:var(--alf-red)}
+.sh{color:var(--alf-text-faint)}.sn{color:var(--alf-text);font-weight:500}.g1{color:var(--alf-red)}.g2{color:var(--alf-green)}
+.dm{color:var(--alf-text-faint)}.tx{color:var(--alf-text-muted)}.ok{color:var(--alf-green)}.ac{color:var(--alf-accent-text)}
+.bb{color:var(--alf-blue)}.be{color:var(--alf-border-soft)}.pk{color:var(--alf-red)}
+.l1{color:var(--alf-text-faint)}.l2{color:var(--alf-text-dim)}.l3{color:var(--alf-text-muted)}
+.note{font-size:13px;color:var(--alf-text-dim);margin-top:18px}
+</style></head><body><div class="container" style="max-width:1120px">
+  <header class="lerian-header">
+    <a href="https://lerian.studio" aria-label="Lerian Studio">
+      <svg class="logo-mark" viewBox="0 0 1090.88 280" role="img" aria-label="Lerian" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" d="M619.42,29.69c0,15.43-10.87,27.93-27.93,27.93s-27.93-12.51-27.93-27.93,10.86-27.93,27.92-27.93,27.93,12.51,27.93,27.93h0ZM158.64,242.4v33.54H12.13v-33.55h48.36c3.16,0,5.73-2.57,5.73-5.73V87.77c0-3.16-2.57-5.73-5.73-5.73H7.85v-34.31h98.33v188.94c0,3.16,2.57,5.73,5.73,5.73h46.74ZM168.85,179.86c0,58.52,37.29,98.33,99.47,98.33,49.15,0,79.7-30.6,86.27-67.08h-40.69c-6.29,24.54-26.97,33.91-48.61,33.91-48.85,0-53.41-45.18-53.83-55-.04-1.02.77-1.87,1.79-1.87h143.61c.76-5.26,1.13-10.42,1.13-15.44,0-32.71-20.25-91.92-95.33-91.92-57.04,0-93.8,41.26-93.81,99.07ZM314.47,158.39l-99.49.02c-1.08,0-1.94-.96-1.78-2.02,4.49-31.28,30.98-42.82,50.98-42.82,33.88,0,48.71,21.59,52.08,42.79.17,1.08-.69,2.04-1.78,2.04h0ZM867.2,83.16h0s0,0,0,0h0ZM826.87,83.16h40.33v192.83h-40.32v-24.53c0-3.09-3.92-4.41-5.79-1.95-.18.23-.35.47-.53.71h0s0,.02,0,.02h0c-.11.16-.23.32-.35.47-7.92,10.56-20.68,27.53-56.24,27.53-60.83,0-91.19-46.33-91.19-98.7,0-61.42,40.37-98.72,91.17-98.72,36.73,0,48.44,15.73,56.64,26.75l.49.66c1.86,2.49,5.81,1.18,5.81-1.93v-23.14ZM770.75,115.48c34.78,0,56.14,27.81,56.14,64.8h0c0,42-26.32,63.68-56.14,63.68-34.83,0-56.14-27.43-56.14-64.43,0-42.07,26.11-64.05,56.14-64.05ZM1063.39,101.7c14.42,14.06,21.64,36.67,21.64,67.8v106.25h-41.06v-103.99c0-43.98-22.35-56.14-45.96-56.14-31.99,0-51.6,23.22-51.6,62.92v97.21h-40.68V83.15h39.93v25.07c0,3.11,3.95,4.4,5.82,1.92,8.55-11.4,26.72-29.52,55.98-29.52,37.55,0,55.75,20.88,55.93,21.08ZM657.42,275.94v-33.54h0s-37.37,0-37.37,0c-3.16,0-5.73-2.57-5.73-5.73V83.14h-81.34v34.31h37.54c3.16,0,5.73,2.57,5.73,5.73v113.48c0,3.16-2.57,5.73-5.73,5.73h-38.14v33.55h125.03ZM499.27,119.27c0,.13-.1.23-.23.23h0s-36.31,0-36.31,0c-28.68,0-28.65,24.99-28.64,43.62,0,.46,0,.92,0,1.37v111.24c0,.13-.1.23-.23.23h-41.01c-.13,0-.23-.1-.23-.23V83.27c0-.13.1-.23.23-.23h36.49c.13,0,.23.1.23.23v24.03c0,4.05,5.24,5.65,7.49,2.28.22-.32.43-.64.65-.97,8.18-12.25,18.71-28.02,52.51-28.02h9.05v38.68Z"/>
+      </svg>
+    </a>
+  </header>
+
+
+
+<section class="animate" style="--i:0">
+<h1>lzr1 splash: pick one</h1>
+<p class="sub">Ten candidates for the animation lzr1-panel plays on install and every time it opens: about 5 seconds, any key skips it. All ten use the same logo, status messages and loading bar, so only the motion differs. The counts in the messages are sample values; in the terminal they come from your real profiles. Option 10, BIOS boot, is the one lzr1-panel plays (chosen on 27 Oct 2026); the others stay here for reference.</p>
+</section>
+<div class="grid" id="grid"></div>
+<p class="note">Colors here use the Lerian palette. In the terminal, the logo uses a cyan-to-magenta 256-color gradient, and every option fits any window size, falling back to a one-line logo in small terminals.</p>
+  <!-- ========== FOOTER ========== -->
+
+  <footer class="lerian-footer">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="footer-brand-text">
+          <span class="footer-company">Lerian Studio</span>
+          <a href="https://lerian.studio" class="footer-link">lerian.studio</a>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="footer-generated"><strong>Generated with Ring</strong></span>
+        <span class="footer-date"></span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<!-- ========== DATE AUTO-FILL ========== -->
+<script>
+  var footerDate = document.querySelector('.footer-date');
+  if (footerDate) footerDate.textContent = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+</script>
+
+
+<script>
+(function(){
+var G={L:["██╗     ","██║     ","██║     ","██║     ","███████╗","╚══════╝"],Z:["███████╗","╚══███╔╝","  ███╔╝ "," ███╔╝  ","███████╗","╚══════╝"],
+R:["██████╗ ","██╔══██╗","██████╔╝","██╔══██╗","██║  ██║","╚═╝  ╚═╝"],"1":[" ██╗","███║","╚██║"," ██║"," ██║"," ╚═╝"],
+T:["████████╗","╚══██╔══╝","   ██║   ","   ██║   ","   ██║   ","   ╚═╝   "],E:["███████╗","██╔════╝","█████╗  ","██╔══╝  ","███████╗","╚══════╝"],
+C:[" ██████╗","██╔════╝","██║     ","██║     ","╚██████╗"," ╚═════╝"],H:["██╗  ██╗","██║  ██║","███████║","██╔══██║","██║  ██║","╚═╝  ╚═╝"],
+P:["██████╗ ","██╔══██╗","██████╔╝","██╔═══╝ ","██║     ","╚═╝     "],A:[" █████╗ ","██╔══██╗","███████║","██╔══██║","██║  ██║","╚═╝  ╚═╝"],
+N:["███╗   ██╗","████╗  ██║","██╔██╗ ██║","██║╚██╗██║","██║ ╚████║","╚═╝  ╚═══╝"]};
+var W=66,H=20,LW=46,DUR=5,LOOP=6.2;
+function word(w){var r=["","","","","",""];w.split("").forEach(function(c){for(var i=0;i<6;i++)r[i]+=G[c][i]+" "});
+ var wd=r[0].length-1,pad=Math.floor((LW-wd)/2);return r.map(function(s){s=s.slice(0,-1);return " ".repeat(pad)+s+" ".repeat(LW-pad-wd)})}
+var LZR=word("LZR1"),TECH=word("TECH"),PANEL=word("PANEL");
+var X0=(W-LW)>>1,Y0=1;
+var MSG=[[0,"booting lzr1 core"],[.10,"loading your profiles… 2 found"],[.25,"✓ oracle-server online · 1 session · 2 projects"],
+[.45,"counting your sessions… 3 live on 2 machines"],[.60,"indexing your projects… 13 repositories"],[.72,"reticulating tmux splines"],
+[.82,"teaching Claude where your code lives"],[.92,"ready. go build something."]];
+var SPIN="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏",GL="░▒▓█▚▞■◆#%&@01<>/",HEX="0123456789abcdef";
+function rnd(n){return Math.floor(Math.random()*n)}
+function hash(a,b){var h=Math.sin(a*127.1+b*311.7)*43758.5453;return h-Math.floor(h)}
+function Buf(){this.c=[];for(var y=0;y<H;y++){var r=[];for(var x=0;x<W;x++)r.push([" ",""]);this.c.push(r)}}
+Buf.prototype.set=function(x,y,ch,k){x=Math.round(x);y=Math.round(y);if(x>=0&&x<W&&y>=0&&y<H)this.c[y][x]=[ch,k||""]};
+Buf.prototype.text=function(x,y,s,k){for(var i=0;i<s.length;i++)this.set(x+i,y,s[i],k)};
+Buf.prototype.html=function(){var o="";for(var y=0;y<H;y++){var cur=null,run="";for(var x=0;x<W;x++){var c=this.c[y][x];
+ if(c[1]!==cur){if(run)o+=cur?'<span class="'+cur+'">'+esc(run)+"</span>":esc(run);run="";cur=c[1]}run+=c[0]}
+ if(run)o+=cur?'<span class="'+cur+'">'+esc(run)+"</span>":esc(run);o+="\n"}return o};
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function fill(r){return "f"+Math.min(5,Math.floor(r*6/13))}
+function isFill(ch){return ch==="█"}
+// logo rows: 0-5 LZR1, 6 gap, 7-12 word; wordAt(t) alternates every 1.6s
+function wordAt(t){return Math.floor(t/1.6)%2?PANEL:TECH}
+function logoRows(t){return LZR.concat([" ".repeat(LW)],wordAt(t))}
+function base(b,t,f){ // status line + bar + footer, rows 16-18
+ var frac=Math.min(1,t/DUR),m=MSG[0][1];MSG.forEach(function(e){if(frac>=e[0])m=e[1]});
+ var bw=46,x=(W-bw-6)>>1;b.text(x,16,SPIN[f%10]+" "+m,"tx");
+ var n=Math.floor(bw*frac);b.text(x,17,"━".repeat(n),"bb");b.set(x+n,17,"╸","pk");b.text(x+n+1,17,"─".repeat(Math.max(0,bw-n-1)),"be");
+ var p=(Math.floor(frac*100)+"%");b.text(x+bw+2,17,("   "+p).slice(-4),"sn");
+ var ft="0x"+(f*2654435761>>>0).toString(16).slice(-4)+" · 2 profiles · 3 sessions · 13 repos · any key skips";b.text((W-ft.length)>>1,18,ft,"dm")}
+function tag(b,t,y,speed){var s="▸ claude code sessions, on every machine you own ◂",k=Math.min(s.length,Math.floor(s.length*t/(speed||1.2)));b.text((W-s.length)>>1,y,s.slice(0,k),"l2")}
+function drawLogo(b,t,o){o=o||{};var rows=logoRows(t);for(var r=0;r<13;r++){var line=rows[r];for(var x=0;x<LW;x++){var ch=line[x];if(ch===" ")continue;
+ var k=isFill(ch)?fill(r):"sh";if(o.cell){var res=o.cell(x,r,ch,k);if(!res)continue;ch=res[0];k=res[1]}
+ b.set(X0+x+(o.dx?o.dx(r):0),Y0+r+(o.dy||0),ch,k)}}}
+
+var V=[
+{n:"Glitch shift",d:"Today's version. LZR1 holds still while the word below glitches between TECH and PANEL, with a light sweep across the letters.",
+ f:function(b,t,f){var ph=t/1.6,since=t-Math.floor(ph)*1.6,tr=(since<.35&&t>1.5)?1-since/.35:0,sh=(f*2)%(LW+40)-20;
+  drawLogo(b,t,{dx:function(r){return (r>6&&tr>0&&Math.random()<.33)?rnd(3)-1:0},cell:function(x,r,ch,k){
+   if(r>6&&tr>0&&Math.random()<tr*.7)return[GL[rnd(GL.length)],Math.random()<.5?"g1":"g2"];
+   var d=x+r*2-sh;if(d>=0&&d<4)return[ch,"sn"];return[ch,k]}});tag(b,t,14)}},
+{n:"Matrix decode",d:"Green-and-binary rain falls down the screen and leaves the logo behind as it passes.",
+ f:function(b,t,f){for(var x=0;x<W;x++){var sp=6+hash(x,1)*10,off=hash(x,2)*8,head=(t*sp+off*3)%(H+8)-4;
+   for(var k=0;k<6;k++){var y=Math.floor(head)-k;if(y>=0&&y<15)b.set(x,y,"01アイウエオカキ"[rnd(9)],k?"l1":"g2")}}
+  drawLogo(b,t,{cell:function(x,r,ch,k){var col=X0+x,sp=6+hash(col,1)*10,reveal=(r+4)/sp+hash(col,3)*.6;return t>reveal?[ch,k]:null}});tag(b,t-2,14)}},
+{n:"Extrude 3D",d:"Solid letters with a deep shadow that swings around them, like a block turning under a light.",
+ f:function(b,t,f){var a=t*1.3,dx=Math.round(Math.cos(a)*2),dy=Math.round(Math.sin(a)*1);
+  var rows=logoRows(t);for(var d=3;d>=1;d--){for(var r=0;r<13;r++)for(var x=0;x<LW;x++){if(!isFill(rows[r][x]))continue;
+   b.set(X0+x+dx*d/1.5,Y0+r+dy*d/2,d>2?"░":d>1?"▒":"▓","l"+(4-d<1?1:4-d>3?3:4-d))}}
+  for(var r=0;r<13;r++)for(var x=0;x<LW;x++){if(isFill(rows[r][x]))b.set(X0+x,Y0+r,"█",fill(r))}tag(b,t,14)}},
+{n:"CRT power-on",d:"An old monitor warming up: a bright line opens into the picture, with rolling scanlines and a little color fringing.",
+ f:function(b,t,f){var open=Math.min(1,t/.7),roll=(t*9)%13;
+  if(open<1){var w=Math.floor(W*open);b.text((W-w)>>1,7,"━".repeat(w),"sn");}
+  else drawLogo(b,t,{cell:function(x,r,ch,k){if(Math.abs(r-roll)<1)return[ch,"sn"];if(r%2&&f%3==0)return[ch==="█"?"▓":ch,k];return[ch,k]}});
+  if(open>=1&&f%7<1)for(var r=0;r<13;r+=3)b.set(X0-1,Y0+r,"▌","g1");tag(b,t-.8,14)}},
+{n:"Hex decrypt",d:"Every cell spins through hex digits and locks in left to right, like a movie password crack; the word re-decrypts on each change.",
+ f:function(b,t,f){var ph=Math.floor(t/1.6),since=t-ph*1.6;
+  drawLogo(b,t,{cell:function(x,r,ch,k){var lock=(r<6?t:since)*45-(x+hash(x,r)*14);if(r<6&&t>1.6)lock=99;
+   return lock>0?[ch,k]:[HEX[rnd(16)],"ac"]}});tag(b,t,14)}},
+{n:"Wireframe fill",d:"The outline draws first in dots, then a diagonal wave fills it with ░ ▒ ▓ and finally solid blocks.",
+ f:function(b,t,f){drawLogo(b,t,{cell:function(x,r,ch,k){if(!isFill(ch))return[ch,k];var w=t*30-(x+r*2);
+   if(w<0)return["·","l1"];if(w<4)return["░",k];if(w<8)return["▒",k];if(w<12)return["▓",k];return[ch,k]}});tag(b,t-1,14)}},
+{n:"Synthwave",d:"A retro sun and a perspective grid racing toward you, with the logo floating above the horizon.",
+ f:function(b,t,f){var cx=W>>1;for(var y=0;y<8;y++){var hw=Math.floor(Math.sqrt(64-(8-y)*(8-y))*2.2);if(y%2==0||y<3)b.text(cx-hw,2+y+4,"▀".repeat(hw*2),"ac")}
+  for(var x=0;x<W;x+=1){if((x-cx)%6==0)b.set(x,15,"╱","pk")}
+  var z=(t*2)%1;[14,15].forEach(function(y,i){});b.text(0,15,"─".repeat(W),"pk");
+  for(var i=0;i<W;i+=6)b.set(i+Math.floor(z*6),15,"┼","pk");
+  drawLogo(b,t,{dy:Math.round(Math.sin(t*2))*0});}},
+{n:"Particle assembly",d:"Every block flies in from a random spot and settles into place; on each word change the bottom word bursts and rebuilds.",
+ f:function(b,t,f){var ph=Math.floor(t/1.6),since=t-ph*1.6;
+  drawLogo(b,t,{cell:function(x,r,ch,k){var tt=r<6?t:(t<1.6?t:since),p=Math.min(1,tt/1.1),e=1-Math.pow(1-p,3);
+   var sx=hash(x,r+ph*13)*W-X0,sy=hash(r,x+ph*7)*H-Y0;return[ch,k,sx+(x-sx)*e,sy+(r-sy)*e]}, });
+  }},
+{n:"Isometric light",d:"A light orbits the letters: the shading moves across them from ░ to █, so the blocks read as solid shapes.",
+ f:function(b,t,f){var lx=Math.cos(t*1.4),ly=Math.sin(t*1.4);
+  drawLogo(b,t,{cell:function(x,r,ch,k){if(!isFill(ch))return[ch,"sh"];var v=(lx*(x/LW-.5)+ly*(r/13-.5))*2+.5;
+   return[v>.75?"█":v>.45?"▓":v>.2?"▒":"░",v>.75?"sn":k]}});tag(b,t,14)}},
+{n:"BIOS boot",d:"A fast retro boot log checks your machines, then the logo slams in with a screen shake.",
+ f:function(b,t,f){var L=["LZR1 BIOS v0.1.0  (c) lzr1 tech","CPU: claude-opus  ·  RAM: 640K ought to be enough",
+   "detecting profiles ......... 2","oracle-server .............. [ OK ]","macbook-pro-lazari ......... [ OK ]","mounting ~/lerian/repositories  13 repos","starting tmux ... ok"];
+  if(t<1.6){var n=Math.floor(t/1.6*L.length*1.2);for(var i=0;i<Math.min(n,L.length);i++)b.text(2,1+i,L[i],L[i].indexOf("OK")>0?"ok":"l3");if(f%2)b.set(2+(L[Math.min(n,L.length-1)]||"").length,1+Math.min(n,L.length-1),"█","sn");return}
+  var s=t-1.6,sh=s<.6?Math.round((Math.random()-.5)*4*(1-s/.6)):0;
+  drawLogo(b,t,{dx:function(){return sh},cell:function(x,r,ch,k){return s<.08?[ch,"sn"]:[ch,k]}});tag(b,s,14,.8)}}
+];
+// particle variant draws to fractional positions: patch drawLogo to honor extra coords
+var _dl=drawLogo;drawLogo=function(b,t,o){if(!o||!o.cell)return _dl(b,t,o);var rows=logoRows(t);
+ for(var r=0;r<13;r++){for(var x=0;x<LW;x++){var ch=rows[r][x];if(ch===" ")continue;var k=isFill(ch)?fill(r):"sh";var res=o.cell(x,r,ch,k);if(!res)continue;
+  var px=res.length>2?res[2]:x,py=res.length>2?res[3]:r;b.set(X0+px+(o.dx?o.dx(r):0),Y0+py+(o.dy||0),res[0],res[1])}}};
+var grid=document.getElementById("grid"),cards=[];
+V.forEach(function(v,i){var el=document.createElement("article");el.className="opt animate";el.style.setProperty("--i",i%4);
+ el.innerHTML='<header><span class="num">'+(i+1)+'</span><span class="name">'+v.n+'</span><button type="button">replay</button></header><div class="screen"><pre aria-label="'+v.n+' animation"></pre></div><div class="desc">'+v.d+'</div>';
+ grid.appendChild(el);var c={v:v,pre:el.querySelector("pre"),scr:el.querySelector(".screen"),t0:performance.now(),vis:false,f:0};
+ el.querySelector("button").onclick=function(){c.t0=performance.now()};cards.push(c)});
+function fit(){cards.forEach(function(c){var w=c.scr.clientWidth-8;c.pre.style.fontSize=Math.max(5,Math.min(13,w/(W*0.61)))+"px"})}
+addEventListener("resize",fit);fit();
+var io=new IntersectionObserver(function(es){es.forEach(function(e){cards.forEach(function(c){if(c.scr===e.target)c.vis=e.isIntersecting})})});
+cards.forEach(function(c){io.observe(c.scr)});
+var reduce=matchMedia("(prefers-reduced-motion: reduce)").matches,last=0;
+function tick(now){requestAnimationFrame(tick);if(now-last<55)return;last=now;
+ cards.forEach(function(c){if(!c.vis)return;var t=((now-c.t0)/1000)%LOOP;if(reduce)t=DUR*.9;var b=new Buf();
+  try{c.v.f(b,Math.min(t,DUR),c.f++)}catch(e){}base(b,Math.min(t,DUR),c.f);c.pre.innerHTML=b.html()})}
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

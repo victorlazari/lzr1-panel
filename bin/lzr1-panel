@@ -1,0 +1,615 @@
+#!/usr/bin/env zsh
+# lzr1-panel: Claude Code sessions running in tmux on your machines, listed by profile in a clickable panel on the
+# left, with a viewer on the right that shows the session you pick.
+#
+#   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
+#   lzr1-panel start PROFILE opus|sonnet NAME [args] start a detached Claude session on PROFILE; a NAME that is a
+#                                                    folder under the profile's repos opens in it, else in its root
+#   lzr1-panel list                                  print every profile's sessions
+#   lzr1-panel profile list|show|add|test|remove     manage profiles (lzr1-panel profile help)
+#   lzr1-panel keys                                  the panel's keys
+#   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
+#
+# Profiles live in ~/.config/lzr1-panel/profiles/<name>.conf, outside the repository: hosts, keys and paths are yours.
+emulate -L zsh
+setopt pipe_fail extended_glob
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+VERSION=0.1.0
+SELF=${0:A}
+CONFIG=${LZR1_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel}
+PROFILES=$CONFIG/profiles
+STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
+mkdir -p $PROFILES $STATE
+chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
+
+die() { print -ru2 -- "lzr1-panel: $*"; exit 1 }
+
+source ${SELF:h:h}/lib/splash.zsh
+
+# ---- profiles -------------------------------------------------------------------------------------------------------
+
+# A profile is KEY=value lines, read as data (never sourced):
+#   type=local|ssh  host=user@host  key=~/.ssh/id  port=22  root=~/work  repos=~/work/repos  claude=/path/to/claude
+load() {
+  local f=$PROFILES/$1.conf k v
+  [[ -n $1 && -r $f ]] || { print -ru2 -- "lzr1-panel: no profile '$1' (see: lzr1-panel profile list)"; return 1 }
+  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE=
+  while IFS='=' read -r k v; do
+    case $k in
+      type) P_TYPE=$v ;; host) P_HOST=$v ;; key) P_KEY=${v/#\~/$HOME} ;; port) P_PORT=$v ;;
+      root) P_ROOT=$v ;; repos) P_REPOS=$v ;; claude) P_CLAUDE=$v ;;
+    esac
+  done <$f
+  [[ $P_TYPE == (local|ssh) ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs type=local or type=ssh"; return 1 }
+  [[ $P_TYPE == local || -n $P_HOST ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs host="; return 1 }
+  : ${P_CLAUDE:=claude}
+  return 0
+}
+
+profiles() { local f; for f in $PROFILES/*.conf(N); do print -r -- ${f:t:r}; done }
+
+# on [-t] SCRIPT ARGS...: runs a POSIX sh script on the loaded profile's machine; -t gives it a terminal.
+on() {
+  local tty=; [[ $1 == -t ]] && { tty=1; shift }
+  local script=$1; shift
+  if [[ $P_TYPE == local ]]; then
+    # Not the tmux this panel may be running in: the machine's own default server.
+    env -u TMUX -u TMUX_PANE sh -c "$script" sh "$@"
+    return
+  fi
+  mkdir -p ~/.ssh/cm
+  # One shared connection per machine keeps refreshes and switches fast.
+  local -a ssh=(ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto
+                -o "ControlPath=$HOME/.ssh/cm/lzr1-%C" -o ControlPersist=10m)
+  [[ -n $P_KEY ]] && ssh+=(-i $P_KEY)
+  [[ -n $P_PORT ]] && ssh+=(-p $P_PORT)
+  if [[ -n $tty ]]; then
+    # The machine may not know this terminal's TERM (xterm-ghostty, say); tmux needs one it knows.
+    TERM=xterm-256color $ssh -t $P_HOST "sh -c ${(qq)script} sh ${(j: :)${(qq)@}}"
+  else
+    $ssh $P_HOST "sh -c ${(qq)script} sh ${(j: :)${(qq)@}}"
+  fi
+}
+
+# Shared by the scripts below: expands a leading ~ on the machine that runs them.
+EXP='exp() { case $1 in "~"|"~/"*) printf "%s" "$HOME${1#"~"}" ;; *) printf "%s" "$1" ;; esac; }
+'
+
+LIST_SCRIPT='
+  now=$(date +%s)
+  tmux list-sessions -F "#{session_name}	#{session_attached}	#{session_activity}	#{@rc_url}" 2>/dev/null |
+  while IFS="	" read -r name att act url; do
+    full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
+    screen=$(printf "%s\n" "$full" | tail -25)
+    if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
+    elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|Claude exited"; then st=wait
+    else st=idle; fi
+    # The newest link on screen wins: a resumed conversation gets a new one.
+    new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
+    if [ -n "$new" ] && [ "$new" != "$url" ]; then url=$new; tmux set-option -t "=$name:" @rc_url "$url"; fi
+    printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$st" "$att" "$((now - act))" "$url"
+  done'
+
+# ---- profile management ---------------------------------------------------------------------------------------------
+
+profile_help() {
+  cat <<'EOF'
+lzr1-panel profile list
+lzr1-panel profile show NAME
+lzr1-panel profile add                                   guided: asks for everything
+lzr1-panel profile add NAME --local --repos PATH [--root PATH] [--claude PATH]
+lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--root PATH] [--claude PATH]
+lzr1-panel profile test NAME                             reach it, find tmux and claude, check the folders
+lzr1-panel profile remove NAME
+
+NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari).
+--repos: the folder holding your repositories; a session named like one of them opens inside it.
+--root:  where any other session opens (default: --repos).
+Paths may start with ~, read on the profile's machine.
+EOF
+}
+
+profile_test() {
+  load $1 || return 1
+  print -r -- "profile $1 ($P_TYPE${P_HOST:+ $P_HOST})"
+  local out
+  out=$(on "$EXP"'
+    printf "reach=ok\n"
+    printf "tmux=%s\n" "$(command -v tmux || echo missing)"
+    c=$(exp "$1"); case $c in */*) [ -x "$c" ] || c=missing ;; *) c=$(command -v "$c" || echo missing) ;; esac
+    printf "claude=%s\n" "$c"
+    r=$(exp "$2"); [ -d "$r" ] && printf "repos=%s (%s folders)\n" "$r" "$(ls -1 "$r" | wc -l | tr -d " ")" || printf "repos=%s missing\n" "$r"
+    o=$(exp "$3"); [ -d "$o" ] && printf "root=%s\n" "$o" || printf "root=%s missing\n" "$o"
+  ' "$P_CLAUDE" "${P_REPOS:-~}" "${P_ROOT:-${P_REPOS:-~}}" 2>&1) || { print -r -- "  cannot reach it: $out"; return 1 }
+  local bad=0 line
+  for line in ${(f)out}; do
+    print -r -- "  ${line/=/: }"
+    [[ $line == *missing* ]] && bad=1
+  done
+  (( bad )) && print -r -- "  fix the missing items above (tmux and Claude Code must be installed there)"
+  return $bad
+}
+
+profile_add() {
+  local name type host key port repos root claude
+  if (( $# == 0 )); then
+    # Guided: the same questions an agent asks, then the same command.
+    print "New lzr1-panel profile (Claude Code sessions only, for now)"
+    read -r "name?  Profile name (e.g. macbook-pro-lazari): "
+    print "  Target: 1) this computer   2) another machine over SSH"
+    read -r "type?  Choose 1 or 2: "
+    if [[ $type == 2 ]]; then
+      type=ssh
+      read -r "host?  SSH user@host: "
+      read -r "key?  SSH key file (empty: your SSH defaults): "
+      read -r "port?  SSH port (empty: 22): "
+    else
+      type=local
+    fi
+    read -r "repos?  Folder with your repositories (e.g. ~/Github/lerian): "
+    read -r "root?  Folder for sessions that are not a repository (empty: same as above): "
+  else
+    name=$1; shift
+    while (( $# )); do
+      case $1 in
+        --local) type=local ;;
+        --ssh) type=ssh host=$2; shift ;;
+        --key) key=$2; shift ;;
+        --port) port=$2; shift ;;
+        --repos) repos=$2; shift ;;
+        --root) root=$2; shift ;;
+        --claude) claude=$2; shift ;;
+        *) die "profile add: unknown option $1" ;;
+      esac
+      shift
+    done
+  fi
+  [[ $name == [a-z0-9][a-z0-9-]# ]] || die "profile name: lowercase letters, digits and dashes"
+  [[ $type == (local|ssh) ]] || die "profile add: choose --local or --ssh USER@HOST"
+  [[ $type == local || -n $host ]] || die "profile add: --ssh needs USER@HOST"
+  [[ -n $repos ]] || die "profile add: --repos PATH is required"
+  [[ -e $PROFILES/$name.conf ]] && die "profile '$name' exists (lzr1-panel profile remove $name first)"
+  [[ $key == \~* ]] && key=$HOME${key#\~}
+  [[ -z $key || -r $key ]] || die "SSH key not readable: $key"
+  # Store a path to claude that works without a login shell: tmux starts it with a bare PATH.
+  if [[ -z $claude ]]; then
+    P_TYPE=$type P_HOST=$host P_KEY=$key P_PORT=$port
+    claude=$(on 'command -v claude 2>/dev/null || { [ -x "$HOME/.local/bin/claude" ] && echo "$HOME/.local/bin/claude"; }' 2>/dev/null)
+    [[ -n $claude ]] || die "Claude Code not found on that machine (install it there, or pass --claude PATH)"
+  fi
+  {
+    print -r -- "# lzr1-panel profile: $name (written $(date +%Y-%m-%d)). Keep it out of git."
+    print -r -- "type=$type"
+    [[ -n $host ]] && print -r -- "host=$host"
+    [[ -n $key ]] && print -r -- "key=$key"
+    [[ -n $port ]] && print -r -- "port=$port"
+    print -r -- "repos=$repos"
+    print -r -- "root=${root:-$repos}"
+    print -r -- "claude=$claude"
+  } >$PROFILES/$name.conf
+  chmod 600 $PROFILES/$name.conf
+  print -r -- "saved $PROFILES/$name.conf"
+  profile_test $name
+}
+
+# ---- panel internals ------------------------------------------------------------------------------------------------
+
+# A row key is PROFILE/SESSION; a profile's heading row is PROFILE/.
+split_key() { KP=${1%%/*} KS=${1#*/} }
+
+ghostty() { osascript -e 'tell application "Ghostty"' -e "$1" -e 'end tell' }
+
+mode() { print -rn -- "$(<$STATE/$1.mode)" } 2>/dev/null
+
+list_rows() {  # every profile, listed in parallel; first line is the summary heading
+  local -a names=( $(profiles) )
+  if (( ! $#names )); then
+    print -r -- $'\t'"no profiles yet"
+    print -r -- $'-/\t'$'\e[90m'"run: lzr1-panel profile add"$'\e[0m'
+    return
+  fi
+  local tmp=$(mktemp -d) p
+  local -a down
+  for p in $names; do
+    # An offline machine is retried once a minute, so it never slows every refresh.
+    down=( $STATE/down-$p(Nms-60) )
+    if (( $#down )); then : >$tmp/$p.fail; continue; fi
+    ( if load $p && on "$LIST_SCRIPT" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
+      else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
+  done
+  wait
+  local -a rows; local n=0 w=0 q=0 i=0 name st att age url glyph line count
+  for p in $names; do
+    # A profile whose machine does not answer is left out until it does.
+    [[ -e $tmp/$p.fail ]] && continue
+    local -a got=( ${(f)"$(<$tmp/$p.out)"} )
+    count=$#got
+    rows+=("$p/"$'\t'$'\e[1m'"$p"$'\e[0m \e[90m'"$count"$'\e[0m')
+    for line in ${(f)"$(<$tmp/$p.out)"}; do
+      IFS=$'\t' read -r name st att age url <<<"$line"
+      (( n++ ))
+      case $st in
+        work) (( w++ )); glyph=$'\e[36m▶\e[0m' ;;
+        wait) (( q++ )); glyph=$'\e[33m⧗\e[0m' ;;
+        *)    (( i++ )); glyph=$'\e[90m·\e[0m' ;;
+      esac
+      if   (( age < 60 ));    then age=${age}s
+      elif (( age < 3600 ));  then age=$(( age / 60 ))m
+      elif (( age < 86400 )); then age=$(( age / 3600 ))h
+      else age=$(( age / 86400 ))d; fi
+      rows+=("$p/$name"$'\t'"  $glyph $(printf '%-19.19s %4s' "$name" "$age") $( (( att > 0 )) && print -n $'\e[32m●\e[0m' )")
+    done
+  done
+  rm -rf $tmp
+  print -r -- $'\t'"$n sessions · $w▶ $q⧗ $i·"
+  print -rl -- "${rows[@]}"
+}
+
+viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
+  split_key $2; load $KP 2>/dev/null || return 0
+  on 'c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null); [ -n "$c" ] && tmux detach-client -t "$c" 2>/dev/null; true' $1
+}
+
+# ---- commands -------------------------------------------------------------------------------------------------------
+
+case $1 in
+
+start)  # start PROFILE opus|sonnet NAME [claude args]
+  load $2 || exit 1
+  local model=$3 name=$4
+  shift 4 2>/dev/null
+  [[ $model == (opus|sonnet) && -n $name ]] || die 'usage: lzr1-panel start PROFILE opus|sonnet NAME [claude args]'
+  [[ $name == *[.:/]* ]] && die 'session names cannot contain ".", ":" or "/"'
+  local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --name ${(q)name} --remote-control ${(q)name} ${(j: :)${(q)@}}"
+  # If Claude exits (Ctrl-C twice, /exit, a crash) the session stays and Enter resumes the same conversation.
+  local cmd="$claude; while printf '\\n  Claude exited. Enter: resume this conversation · Ctrl-D: end the session\\n' && read -r _; do $claude --continue; done"
+  print -r -- "starting: $name on $P_NAME"
+  on "$EXP"'
+    name=$1 cmd=$2 root=$(exp "$3") repos=$(exp "$4")
+    if tmux has-session -t "=$name" 2>/dev/null; then echo "already running"; exit 0; fi
+    dir=$root inrepo=
+    if [ -n "$repos" ] && [ -d "$repos/$name" ]; then dir=$repos/$name inrepo=1; fi
+    [ -d "$dir" ] || dir=$HOME
+    echo "folder: $dir"
+    tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
+    trusted= i=0
+    while [ $i -lt 15 ]; do
+      i=$((i + 1)); sleep 1
+      tmux has-session -t "=$name" 2>/dev/null || { echo "claude exited right after start"; exit 1; }
+      screen=$(tmux capture-pane -p -J -t "=$name:")
+      # First run in a repository: Claude asks whether to trust the folder, defaulting to "No, exit".
+      if [ -n "$inrepo" ] && [ -z "$trusted" ] && printf "%s" "$screen" | grep -q "Yes, I trust this folder"; then
+        tmux send-keys -t "=$name:" Down Enter; trusted=1; echo "trusted the repository folder (first run)"; continue
+      fi
+      url=$(printf "%s" "$screen" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
+      if [ -n "$url" ]; then tmux set-option -t "=$name:" @rc_url "$url"; echo "remote control: $url"; exit 0; fi
+    done
+    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS"
+  ;;
+
+list)
+  local line; list_rows | while IFS= read -r line; do print -r -- ${line#*$'\t'}; done
+  ;;
+
+_list)  # _list ID: rows for fzf, cached for _pos
+  list_rows | tee $STATE/$2.cache
+  ;;
+
+profile)
+  shift
+  case $1 in
+    list|ls|'')
+      local p; local -a all=( $(profiles) )
+      for p in $all; do load $p && print -r -- "$p  $P_TYPE${P_HOST:+  $P_HOST}  repos=$P_REPOS"; done
+      (( $#all )) || print "no profiles yet: lzr1-panel profile add"
+      ;;
+    show) load $2 && { print -r -- "# $PROFILES/$2.conf"; grep -v '^#' $PROFILES/$2.conf } ;;
+    add) shift; profile_add "$@" ;;
+    test) profile_test $2 ;;
+    remove|rm) [[ -e $PROFILES/$2.conf ]] || die "no profile '$2'"; rm -f $PROFILES/$2.conf; print "removed $2" ;;
+    *) profile_help ;;
+  esac
+  ;;
+
+open)  # panel on the left, viewer on the right
+  local id=$$ term
+  rm -rf $STATE/*(Nmd+1)
+  lzr1_splash open
+  if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
+    # Ghostty: split this pane; it becomes the viewer.
+    term=$(ghostty 'get id of focused terminal of selected tab of front window') || die "cannot script Ghostty"
+    print -rn -- ghostty >$STATE/$id.mode
+    print -rn -- $term >$STATE/$id.vterm
+    ghostty "set cfg to new surface configuration
+      set command of cfg to \"$SELF _panel $id\"
+      set p to split (terminal id \"$term\") direction left with configuration cfg
+      return id of p" >$STATE/$id.me || die "cannot split the Ghostty pane"
+    exec $SELF _viewer $id
+  fi
+  # Anywhere else: a tmux layout on its own server, with no prefix key, so every key reaches the panel,
+  # the viewer or Claude; the mouse picks a pane.
+  command -v tmux >/dev/null || die "needs tmux"
+  local -a T=(tmux -L lzr1 -f /dev/null)
+  local sess=lzr1-$id vpane
+  $T new-session -d -s $sess -x ${COLUMNS:-200} -y ${LINES:-50} "$SELF _viewer $id" || die "cannot start tmux"
+  $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
+     \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' >/dev/null
+  vpane=$($T display -p -t $sess '#{pane_id}')
+  print -rn -- tmux >$STATE/$id.mode
+  print -rn -- $vpane >$STATE/$id.vterm
+  $T split-window -hb -l 38 -t $sess "$SELF _panel $id"
+  TMUX= exec $T attach -t $sess
+  ;;
+
+_viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothing is picked
+  local id=$2 target
+  local tfile=$STATE/$id.target
+  trap 'rm -f $tfile $tfile.want $tfile.detached $STATE/$id.vpid' EXIT
+  print -rn -- $$ >$STATE/$id.vpid; rmdir $STATE/$id.spawn 2>/dev/null
+  printf '\e]2;lzr1 viewer\a'
+  while true; do
+    target=$(<$tfile 2>/dev/null)
+    if [[ -z $target ]]; then
+      clear; print -P '\n  %F{8}← pick a session in the panel: click it, or use the arrow keys%f'
+      print -P '  %F{8}inside a session, Ctrl-b d leaves it (Ctrl-C goes to Claude)%f'
+      until [[ -s $tfile ]]; do sleep 0.3; done
+      continue
+    fi
+    clear
+    split_key $target
+    if load $KP; then
+      # A session the panel just created may still be starting: wait for it (up to 30s), then attach.
+      on -t '
+        mkdir -p "$HOME/.cache/lzr1-panel-viewer" && tty >"$HOME/.cache/lzr1-panel-viewer/$1"
+        n=0
+        while ! tmux has-session -t "=$2" 2>/dev/null; do
+          [ $n = 0 ] && printf "\n  starting %s ...\n" "$2"
+          n=$((n + 1)); [ $n -gt 150 ] && { printf "  %s did not start\n" "$2"; sleep 3; exit 1; }
+          sleep 0.2
+        done
+        unset TMUX
+        exec tmux attach -t "=$2"' $id $KS
+    else
+      sleep 3
+    fi
+    # Detached (Ctrl-b d) or the session ended: wait for the next pick, unless the panel already moved on.
+    # The panel's refreshes re-send its highlighted row; .detached keeps them from reattaching it.
+    if [[ $(<$tfile 2>/dev/null) == $target ]]; then print -rn -- $target >$tfile.detached; : >$tfile; fi
+  done
+  ;;
+
+_select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrowing through rows stays cheap)
+  local id=$2 key=$3 tfile=$STATE/$2.target
+  split_key $key
+  [[ -z $KP || -z $KS ]] && exit 0
+  # A click on another row, enter or a new session brings back a viewer pane that was closed.
+  if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
+    print -rn -- $key >$tfile
+    $SELF _respawn $id
+    exit 0
+  fi
+  [[ $(<$tfile 2>/dev/null) == $key ]] && exit 0
+  # Right after a new session, the panel's refresh briefly re-sends the old row: ignore it for 3s.
+  local -a hold=( $STATE/$id.hold(Nms-3) )  # globbed here: [[ ]] does not glob
+  [[ $4 != force && -n $hold && $(<$hold) != $key ]] && exit 0
+  # The session the viewer was detached from comes back only on enter or a double-click.
+  [[ $4 != force && $(<$tfile.detached 2>/dev/null) == $key ]] && exit 0
+  rm -f $tfile.detached
+  print -rn -- $key >$tfile.want
+  sleep 0.35
+  [[ $(<$tfile.want 2>/dev/null) == $key ]] || exit 0
+  local was=$(<$tfile 2>/dev/null)
+  print -rn -- $key >$tfile
+  [[ -z $was ]] && exit 0  # an idle viewer picks the target up by itself
+  if [[ ${was%%/*} == $KP ]]; then
+    # Same machine: switch the attached client in place.
+    load $KP && on '
+      c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null)
+      [ -n "$c" ] && tmux list-clients -F "#{client_tty}" | grep -qx "$c" && tmux switch-client -c "$c" -t "=$2"
+      true' $id $KS
+  else
+    # Another machine: let go of the old one; the viewer then attaches the new target.
+    viewer_detach $id $was
+  fi
+  ;;
+
+_ticker)  # _ticker ID PORT: show the first session in the viewer, then reload the panel every 15s while it is alive
+  local id=$2 port=$3
+  ( local first i
+    for i in {1..50}; do
+      first=$(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port?limit=200" |
+        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | head -1)
+      [[ -n $first ]] && { $SELF _select $id $first; break; }
+      sleep 0.2
+    done
+    while sleep 15; do
+      curl -sf -m 5 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "reload($SELF _list $id)" || exit 0
+    done ) >/dev/null 2>&1 &!
+  ;;
+
+_pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel lists it (tries for ~6s)
+  local id=$2 port=$3 key=$4 i line api=(curl -s -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$3")
+  repeat 20; do
+    sleep 0.3
+    $api -XPOST -d "reload($SELF _list $id)" >/dev/null
+    sleep 0.5
+    i=0
+    for line in "${(@f)$(tail -n +2 $STATE/$id.cache 2>/dev/null)}"; do
+      (( i++ )); [[ ${line%%$'\t'*} == $key ]] || continue
+      print -rn -- $key >$STATE/$id.target.want
+      $api -XPOST -d "pos($i)" >/dev/null; sleep 0.2
+      [[ $($api "?limit=1" | grep -o '"current":{[^}]*' ) == *"\"text\":\"$key\\t"* ]] && exit 0
+    done
+  done
+  ;;
+
+_new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the background, shows it in the viewer
+  local model=$2 id=$3 p=${4%%/*} name
+  # Only the machines that answered on the last refresh.
+  local -a all=( ${${(M)${(f)"$(tail -n +2 $STATE/$id.cache 2>/dev/null)"}:#*/$'\t'*}%%/*} )
+  (( $#all )) || all=( $(profiles) )
+  [[ -n $p && -e $PROFILES/$p.conf ]] || p=${all[1]}
+  if (( $#all > 1 )); then
+    # Several machines: confirm which one, starting from the highlighted row's.
+    p=$(print -rl -- $p ${all:#$p} | fzf --layout=reverse --prompt="new $model on › " --info=hidden \
+          --header='which profile? enter to choose' --header-border=bottom) || exit 0
+  fi
+  [[ -n $p ]] || { print "no profiles yet: lzr1-panel profile add — press a key"; read -k1 -s; exit 0 }
+  load $p || { read -k1 -s; exit 0 }
+  name=$(on "$EXP"'ls -1 "$(exp "$1")" 2>/dev/null' $P_REPOS |
+    fzf --layout=reverse --print-query --prompt="new $model on $p › " --info=hidden --no-sort \
+      --header=$'type a session name, enter to start · tab fills the highlighted repo\n'"a repository name opens in $P_REPOS/<name>" \
+      --header-border=bottom --bind 'enter:print-query,tab:replace-query,esc:abort' |
+    head -1)
+  [[ -z $name ]] && exit 0
+  if [[ $name == *[.:/]* ]]; then
+    print -r -- 'session names cannot contain ".", ":" or "/" — press a key'; read -k1 -s; exit 0
+  fi
+  $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
+  # Back to the list as soon as tmux has the session; the viewer shows Claude starting in it.
+  if ! on 'i=0; while [ $i -lt 100 ]; do tmux has-session -t "=$1" 2>/dev/null && exit 0; i=$((i + 1)); sleep 0.1; done; exit 1' $name; then
+    print -r -- "could not start $name:"; cat $STATE/$id.startlog; print "press a key"; read -k1 -s; exit 0
+  fi
+  print -rn -- "$p/$name" >$STATE/$id.hold
+  $SELF _select $id "$p/$name" force
+  # The panel reloads after this returns; then its highlight moves to the new row.
+  $SELF _pos $id $FZF_PORT "$p/$name" >/dev/null 2>&1 &!
+  ;;
+
+_respawn)  # _respawn ID: open a new viewer pane to the right of the panel
+  local id=$2 me=$(<$STATE/$2.me 2>/dev/null)
+  [[ -z $me ]] && exit 0
+  rmdir $STATE/$id.spawn(Nms+10) 2>/dev/null
+  mkdir $STATE/$id.spawn 2>/dev/null || exit 0
+  if [[ $(mode $id) == tmux ]]; then
+    tmux -L lzr1 split-window -h -t $me -P -F '#{pane_id}' "$SELF _viewer $id" >$STATE/$id.vterm.new
+  else
+    ghostty "set cfg to new surface configuration
+      set command of cfg to \"$SELF _viewer $id\"
+      set v to split (terminal id \"$me\") direction right with configuration cfg
+      return id of v" >$STATE/$id.vterm.new
+  fi && mv $STATE/$id.vterm.new $STATE/$id.vterm
+  ;;
+
+_focus)  # _focus ID: move the keyboard to the viewer
+  local vt=$(<$STATE/$2.vterm 2>/dev/null)
+  [[ -z $vt ]] && exit 0
+  if [[ $(mode $2) == tmux ]]; then tmux -L lzr1 select-pane -t $vt
+  else ghostty "focus (terminal id \"$vt\")" >/dev/null; fi
+  ;;
+
+_url)  # _url KEY: the session's Remote Control link
+  split_key $2; [[ -n $KS ]] || exit 0
+  load $KP && on 'tmux show-options -v -t "=$1:" @rc_url 2>/dev/null' $KS
+  ;;
+
+_open_url)  # _open_url KEY
+  local u=$($SELF _url $2)
+  [[ -n $u ]] || exit 0
+  if [[ $OSTYPE == darwin* ]]; then open $u; else xdg-open $u >/dev/null 2>&1; fi
+  ;;
+
+_kill)  # _kill KEY
+  split_key $2; [[ -n $KS ]] || exit 0
+  print -rn -- "End session ${(qq)KS} on $KP? Claude stops there. [y/N] "
+  read -q && { load $KP && on 'tmux kill-session -t "=$1"' $KS }
+  print
+  ;;
+
+_tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: switch the viewer to it)
+  split_key $3; [[ -n $KS ]] || exit 0
+  if [[ $(mode $2) == ghostty ]]; then
+    ghostty "set cfg to new surface configuration
+      set command of cfg to \"$SELF _attach ${(q)3}\"
+      new tab in front window with configuration cfg" >/dev/null
+  else
+    $SELF _select $2 $3 force; $SELF _focus $2
+  fi
+  ;;
+
+_attach)  # _attach KEY
+  split_key $2; load $KP || exit 1
+  on -t 'unset TMUX; exec tmux attach -t "=$1"' $KS
+  ;;
+
+_panel)  # _panel ID
+  local id=$2 me
+  printf '\e]2;lzr1 panel\a'
+  if [[ $(mode $id) == tmux ]]; then
+    me=$TMUX_PANE
+    print -rn -- $me >$STATE/$id.me
+  else
+    repeat 20; do [[ -s $STATE/$id.me ]] && break; sleep 0.1; done
+    me=$(<$STATE/$id.me 2>/dev/null)
+    # Narrow this split to about 36 columns: move the divider, measure, correct once.
+    if [[ -n $me ]] && (( COLUMNS > 40 )); then
+      local c0=$COLUMNS c1
+      ghostty "perform action \"resize_split:left,200\" on (terminal id \"$me\")" >/dev/null; sleep 0.25
+      c1=$(tput cols)
+      (( c0 > c1 && c1 > 36 )) && ghostty "perform action \"resize_split:left,$(( (c1 - 36) * 200 / (c0 - c1) ))\" on (terminal id \"$me\")" >/dev/null
+    fi
+  fi
+  local S=$SELF
+  # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
+  # any other local process from sending commands to it.
+  export FZF_API_KEY=$(openssl rand -hex 16)
+  fzf --ansi --no-input --layout=reverse --no-sort --track --id-nth=1 \
+    --delimiter=$'\t' --with-nth=2 --header-lines=1 \
+    --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
+    --border=none --header-border=bottom --header-label=' lzr1 ' \
+    --footer='[+opus] [+sonnet] [↻] [?]' --footer-border=top \
+    --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
+    --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
+    --bind "focus:execute-silent($S _select $id {1} &)" \
+    --bind "enter:execute-silent($S _select $id {1} force; $S _focus $id)" \
+    --bind "double-click:execute-silent($S _select $id {1} force; $S _focus $id)" \
+    --bind "t:execute-silent($S _tab $id {1})" \
+    --bind "o:execute-silent($S _open_url {1})" \
+    --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
+    --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
+    --bind "x:execute($S _kill {1})+reload-sync($S _list $id)" \
+    --bind "r:reload-sync($S _list $id)" \
+    --bind "?:execute($S keys; read -k1 -s)" \
+    --bind "q:abort,esc:abort" \
+    --bind "click-footer:transform:case \$FZF_CLICK_FOOTER_WORD in
+        *opus*)   echo 'execute($S _new opus $id {1})+reload-sync($S _list $id)' ;;
+        *sonnet*) echo 'execute($S _new sonnet $id {1})+reload-sync($S _list $id)' ;;
+        *↻*)      echo 'reload-sync($S _list $id)' ;;
+        *\?*)     echo 'execute($S keys; read -k1 -s)' ;;
+      esac"
+  ;;
+
+keys)
+  cat <<'EOF'
+
+  lzr1-panel keys
+
+  click / ↑ ↓      show that session in the viewer
+  enter / dbl-click  show it and move the keyboard to the viewer
+  n  or [+opus]    new Opus session on the highlighted row's profile
+  s  or [+sonnet]  new Sonnet session (a repository name opens in its folder)
+  t                open the session in a new Ghostty tab
+  o                open its Remote Control link in the browser
+  x                end the session (asks first)
+  r  or [↻]        refresh now (it refreshes every 15s)
+  q                close the panel
+
+  In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.
+  If Claude exits, its session stays: Enter resumes the conversation.
+
+  glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
+
+  press a key
+EOF
+  ;;
+
+splash) lzr1_splash ${2:+${2#--}} ;;
+
+version|--version) print -r -- "lzr1-panel $VERSION" ;;
+
+*)
+  sed -n '2,13p' $SELF | sed 's/^# \{0,1\}//'
+  [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
+  ;;
+esac

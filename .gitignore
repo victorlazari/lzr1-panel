@@ -1,0 +1,7 @@
+# Profiles hold hosts, usernames and key paths: they live in ~/.config/lzr1-panel and never here.
+*.conf
+profiles/
+*.key
+*.pem
+.env*
+.DS_Store
