@@ -243,6 +243,15 @@ installing on the server.
 
 ## Pull requests
 
+### The heading says `ssh · 0` though you have open PRs
+
+The panel could not use `gh`, so it fell back to your SSH key, which only finds public PRs. This happened when
+`gh` signs in through a `GITHUB_TOKEN` set in your shell's startup files: Ghostty starts the panel's split without
+them. The panel now passes `GITHUB_TOKEN` and `GH_TOKEN` on, and a short `gh` failure keeps the last list.
+
+**Fix:** quit the panel (`q`) and run `lzr1-panel open` again. Still `ssh`? Run `lzr1-panel prs` to see the
+error, or sign gh in for good with `gh auth login` (it then no longer needs the variable).
+
 ### The pull requests section is missing
 
 **Fix:** run `lzr1-panel prs`. It fetches them right now and says what is wrong. Usually:

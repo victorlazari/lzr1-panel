@@ -137,7 +137,7 @@ flowchart LR
 | `o` | its Remote Control link (on a PR: the PR) |
 | `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
 | `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
-| `?` / `q` | all the keys / quit |
+| `?` / `q` | all the keys / quit: closes the panel, the viewer and the window |
 
 ### The viewer
 
