@@ -18,6 +18,7 @@ key=~/.ssh/my-server.key        # ssh only, optional: the private key file
 port=22                         # ssh only, optional
 repos=~/Github/lerian           # the folder holding your repositories
 root=~/Github/lerian            # where sessions that are not a repository open (default: repos)
+only=~/Github/lerian            # optional: list only the sessions whose folder is inside it
 claude=/Users/me/.local/bin/claude   # found automatically when the profile is created
 ```
 
@@ -43,6 +44,11 @@ Ask these questions one at a time, and wait for each answer. Never guess an answ
    `~/lerian/repositories` for a server, and use exactly what they answer.
 4. **Other sessions' folder** (optional). "Where should sessions that are not a repository open? (Enter: the same
    folder.)"
+5. **Only this folder's sessions?** Ask only when the machine already has a profile (`lzr1-panel profile list`
+   shows its type and host): "Should this profile list only the sessions inside that folder?" A profile lists every
+   session on its machine, so two profiles on one machine show the same sessions twice unless each has `--only`.
+   If yes, add `--only` with the repositories folder, and offer `--only` for the other profile too (remove and add
+   it again).
 
 Then show a one-line summary and ask them to confirm before creating anything.
 
@@ -60,6 +66,15 @@ Another machine:
 lzr1-panel profile add oracle-server --ssh ubuntu@203.0.113.10 --key ~/.ssh/my-server.key \
   --repos '~/lerian/repositories' --root '~/lerian'
 ```
+
+Two profiles on one machine, one folder each, every session listed once:
+
+```sh
+lzr1-panel profile add lzr1-personal --local --repos ~/Github/lazari --only ~/Github/lazari
+lzr1-panel profile add lzr1-lerian --local --repos ~/Github/lerian --only ~/Github/lerian
+```
+
+A session in neither folder then appears in neither profile.
 
 Quote remote paths that start with `~` (`'~/lerian'`), so the local shell does not expand them to the local home.
 

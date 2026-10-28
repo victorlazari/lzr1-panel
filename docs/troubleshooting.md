@@ -110,6 +110,24 @@ The panel answers this for you only when the session opens in one of your reposi
 
 **Fix:** answer it in the viewer (click the session, then Enter). It only asks once per folder.
 
+### The same session shows under two profiles
+
+Both profiles point at the same machine, and a profile lists every session on its machine.
+
+**Fix:** give each profile its own folder with `--only`, so it lists just the sessions inside it
+(remove the profile and add it again):
+
+```sh
+lzr1-panel profile remove NAME
+lzr1-panel profile add NAME --local --repos ~/Github/lerian --only ~/Github/lerian
+```
+
+### A session is missing from its profile
+
+A profile with `only=` lists just the sessions whose folder is inside it. `lzr1-panel profile show NAME` shows it.
+
+**Fix:** start the session inside that folder, or add a profile for the folder it runs in.
+
 ### A session opened in the wrong folder
 
 A session opens in a repository only when its name matches a folder in the profile's `repos` exactly

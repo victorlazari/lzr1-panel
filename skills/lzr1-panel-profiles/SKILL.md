@@ -19,11 +19,13 @@ The short version:
      (never ask for passwords or key contents);
    - the **repositories folder** on that machine. Always ask; suggest a path shaped like theirs, such as
      `/Users/<them>/Github/lerian`, and use exactly what they answer;
-   - optionally, the folder for sessions that are not a repository (default: the same).
+   - optionally, the folder for sessions that are not a repository (default: the same);
+   - when the machine already has a profile: whether to list **only the sessions inside the folder** (`--only`),
+     since otherwise both profiles list every session on that machine.
 2. Show a one-line summary and get a yes.
 3. Run one of:
-   - `lzr1-panel profile add NAME --local --repos PATH [--root PATH]`
-   - `lzr1-panel profile add NAME --ssh USER@HOST [--key FILE] [--port N] --repos 'PATH' [--root 'PATH']`
+   - `lzr1-panel profile add NAME --local --repos PATH [--root PATH] [--only PATH]`
+   - `lzr1-panel profile add NAME --ssh USER@HOST [--key FILE] [--port N] --repos 'PATH' [--root 'PATH'] [--only 'PATH']`
      (single-quote remote paths that start with `~`).
 4. Read the `profile test` lines it prints back to the user, and fix anything marked missing with them
    (`docs/profiles.md` lists the fixes).

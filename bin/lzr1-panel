@@ -35,14 +35,15 @@ source ${SELF:h:h}/lib/splash.zsh
 
 # A profile is KEY=value lines, read as data (never sourced):
 #   type=local|ssh  host=user@host  key=~/.ssh/id  port=22  root=~/work  repos=~/work/repos  claude=/path/to/claude
+#   only=~/work  (optional: list only the sessions whose folder is inside it, so profiles can share a machine)
 load() {
   local f=$PROFILES/$1.conf k v
   [[ -n $1 && -r $f ]] || { print -ru2 -- "lzr1-panel: no profile '$1' (see: lzr1-panel profile list)"; return 1 }
-  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE=
+  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE= P_ONLY=
   while IFS='=' read -r k v; do
     case $k in
       type) P_TYPE=$v ;; host) P_HOST=$v ;; key) P_KEY=${v/#\~/$HOME} ;; port) P_PORT=$v ;;
-      root) P_ROOT=$v ;; repos) P_REPOS=$v ;; claude) P_CLAUDE=$v ;;
+      root) P_ROOT=$v ;; repos) P_REPOS=$v ;; claude) P_CLAUDE=$v ;; only) P_ONLY=$v ;;
     esac
   done <$f
   [[ $P_TYPE == (local|ssh) ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs type=local or type=ssh"; return 1 }
@@ -98,12 +99,14 @@ done
 
 # One record per session back to the panel, fields split by \037 (empty fields survive it, unlike a tab):
 # name state attached idle-seconds rc-link model folder task branch changed-files waiting-for
+# $1, when set, is the profile's only= folder: sessions elsewhere are left out.
 LIST_SCRIPT='
-  now=$(date +%s) us=$(printf "\037") host=$(hostname)
+  now=$(date +%s) us=$(printf "\037") host=$(hostname) only=$(exp "$1"); only=${only%/}
   # tmux escapes control characters in -F output, so its fields split on "|"; the task title comes last, where a "|"
   # inside it stays put. Session names cannot contain "|" (lzr1-panel refuses them).
   tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_activity}|#{@rc_url}|#{@lzr1_model}|#{pane_current_path}|#{pane_title}" 2>/dev/null |
   while IFS="|" read -r name att act url model dir title; do
+    if [ -n "$only" ]; then case $dir in "$only"|"$only"/*) ;; *) continue ;; esac; fi
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
     if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
@@ -139,21 +142,23 @@ profile_help() {
 lzr1-panel profile list
 lzr1-panel profile show NAME
 lzr1-panel profile add                                   guided: asks for everything
-lzr1-panel profile add NAME --local --repos PATH [--root PATH] [--claude PATH]
-lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--root PATH] [--claude PATH]
+lzr1-panel profile add NAME --local --repos PATH [--root PATH] [--only PATH] [--claude PATH]
+lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--root PATH] [--only PATH] [--claude PATH]
 lzr1-panel profile test NAME                             reach it, find tmux and claude, check the folders
 lzr1-panel profile remove NAME
 
 NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari).
 --repos: the folder holding your repositories; a session named like one of them opens inside it.
 --root:  where any other session opens (default: --repos).
+--only:  list only the sessions whose folder is inside PATH (usually --repos): two profiles can then share one
+         machine, one folder each, without listing the same sessions twice.
 Paths may start with ~, read on the profile's machine.
 EOF
 }
 
 profile_test() {
   load $1 || return 1
-  print -r -- "profile $1 ($P_TYPE${P_HOST:+ $P_HOST})"
+  print -r -- "profile $1 ($P_TYPE${P_HOST:+ $P_HOST})${P_ONLY:+, only sessions in $P_ONLY}"
   local out
   out=$(on "$EXP"'
     printf "reach=ok\n"
@@ -173,7 +178,7 @@ profile_test() {
 }
 
 profile_add() {
-  local name type host key port repos root claude
+  local name type host key port repos root claude only
   if (( $# == 0 )); then
     # Guided: the same questions an agent asks, then the same command.
     print "New lzr1-panel profile (Claude Code sessions only, for now)"
@@ -190,6 +195,8 @@ profile_add() {
     fi
     read -r "repos?  Folder with your repositories (e.g. ~/Github/lerian): "
     read -r "root?  Folder for sessions that are not a repository (empty: same as above): "
+    read -q "only?  List only the sessions inside the repositories folder (when profiles share this machine)? [y/N] "
+    print; [[ $only == y ]] && only=$repos || only=
   else
     name=$1; shift
     while (( $# )); do
@@ -201,6 +208,7 @@ profile_add() {
         --repos) repos=$2; shift ;;
         --root) root=$2; shift ;;
         --claude) claude=$2; shift ;;
+        --only) only=$2; shift ;;
         *) die "profile add: unknown option $1" ;;
       esac
       shift
@@ -227,6 +235,7 @@ profile_add() {
     [[ -n $port ]] && print -r -- "port=$port"
     print -r -- "repos=$repos"
     print -r -- "root=${root:-$repos}"
+    [[ -n $only ]] && print -r -- "only=$only"
     print -r -- "claude=$claude"
   } >$PROFILES/$name.conf
   chmod 600 $PROFILES/$name.conf
@@ -348,7 +357,7 @@ list_rows() {
     # An offline machine is retried once a minute, so it never slows every refresh.
     down=( $STATE/down-$p(Nms-60) )
     if (( $#down )); then : >$tmp/$p.fail; continue; fi
-    ( if load $p && on "$LIST_SCRIPT" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
+    ( if load $p && on "$EXP$LIST_SCRIPT" "$P_ONLY" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
       else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
   done
   prs_refresh &
@@ -499,7 +508,7 @@ profile)
   case $1 in
     list|ls|'')
       local p; local -a all=( $(profiles) )
-      for p in $all; do load $p && print -r -- "$p  $P_TYPE${P_HOST:+  $P_HOST}  repos=$P_REPOS"; done
+      for p in $all; do load $p && print -r -- "$p  $P_TYPE${P_HOST:+  $P_HOST}  repos=$P_REPOS${P_ONLY:+  only=$P_ONLY}"; done
       (( $#all )) || print "no profiles yet: lzr1-panel profile add"
       ;;
     show) load $2 && { print -r -- "# $PROFILES/$2.conf"; grep -v '^#' $PROFILES/$2.conf } ;;
