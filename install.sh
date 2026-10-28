@@ -185,6 +185,10 @@ if [[ $SHELL_HOOK == 1 ]]; then
       echo '  [ -e "$_p" ] || continue; _p=${_p##*/}; _p=${_p%.conf}'
       echo '  eval "cl-$_p-opus() { lzr1-panel start $_p opus \"\$@\"; }; cl-$_p-sonnet() { lzr1-panel start $_p sonnet \"\$@\"; }"'
       echo 'done; unset _p'
+      echo "# cl-opus / cl-sonnet [claude args]: Claude in a new tmux session in this folder, so the panel lists it."
+      echo "# Your own cl-opus or cl-sonnet, defined earlier in this file, wins."
+      echo 'type cl-opus >/dev/null 2>&1 || cl-opus() { lzr1-panel run --model opus "$@"; }'
+      echo 'type cl-sonnet >/dev/null 2>&1 || cl-sonnet() { lzr1-panel run --model sonnet "$@"; }'
       if [[ $autoopen == 1 && $rc == "$HOME/.zshrc" ]]; then
         echo "# Opens the panel in the first Ghostty shell; LZR1_PANEL=0 (in ~/.zshenv) turns it off."
         echo 'if [[ -o interactive && $TERM_PROGRAM == ghostty && ${LZR1_PANEL:-1} == 1 && -z $TMUX ]] &&'

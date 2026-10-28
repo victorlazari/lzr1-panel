@@ -5,6 +5,9 @@
 #   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
 #   lzr1-panel start PROFILE opus|sonnet NAME [args] start a detached Claude session on PROFILE; a NAME that is a
 #                                                    folder under the profile's repos opens in it, else in its root
+#   lzr1-panel run [--model M] [--effort E] [args]   Claude in a new tmux session in this folder, attached (print
+#                                                    mode, -p, runs plain claude); the panel lists it
+#   lzr1-panel attach PROFILE NAME                   this terminal into a session
 #   lzr1-panel list                                  print every profile's sessions, then your open PRs
 #   lzr1-panel prs                                   your open pull requests (the GitHub account on this machine)
 #   lzr1-panel doctor                                check everything the panel needs, with the fix for what is missing
@@ -495,6 +498,45 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   exit $bad
   ;;
 
+run)  # run [--model ID] [--effort E] [--name NAME] [claude args]: Claude in a new tmux session in this folder, attached
+  shift
+  local model= effort=medium name= fam sock
+  while (( $# )); do
+    case $1 in
+      --model) model=$2; shift 2 ;;
+      --effort) effort=$2; shift 2 ;;
+      --name) name=$2; shift 2 ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
+  local cl=${commands[claude]:-$HOME/.local/bin/claude}
+  # Not a conversation (print mode, help, version, piped input or output), or no tmux: plain claude, here.
+  if (( ${@[(I)(-p|--print|--print=*|-v|--version|-h|--help)]} )) || [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
+    exec $cl ${model:+--model} ${model:+$model} --dangerously-skip-permissions --effort $effort "$@"
+  fi
+  # Named after this folder: lerian-clients, then lerian-clients-2 when that one is taken.
+  local base=${${name:-${PWD:t}}//[.:\/|]/-} n=1
+  name=$base
+  while env -u TMUX tmux has-session -t "=$name" 2>/dev/null; do (( n++ )); name=$base-$n; done
+  local claude="${(q)cl}${model:+ --model ${(q)model}} --dangerously-skip-permissions --effort ${(q)effort} --remote-control ${(q)name}"
+  # As in start: the session outlives Claude and Enter resumes the conversation; your args go to the first run only.
+  local cmd="trap : INT; $claude ${(j: :)${(q)@}}; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
+  env -u TMUX tmux new-session -d -s "$name" -c "$PWD" -x ${COLUMNS:-200} -y ${LINES:-50} "$cmd" || die "cannot start tmux"
+  case $model in *opus*) fam=opus ;; *sonnet*) fam=sonnet ;; *haiku*) fam=haiku ;; *fable*) fam=fable ;; *) fam=$model ;; esac
+  [[ -n $fam ]] && env -u TMUX tmux set-option -t "=$name:" @lzr1_model $fam
+  env -u TMUX sh -c "$CLIP"
+  # Already inside this machine's own tmux: switch to the session; anywhere else, attach to it.
+  sock=$(env -u TMUX tmux display -p -t "=$name:" '#{socket_path}' 2>/dev/null)
+  if [[ -n $TMUX && ${TMUX%%,*} == $sock ]]; then tmux switch-client -t "=$name"
+  else exec env -u TMUX tmux attach -t "=$name"; fi
+  ;;
+
+attach)  # attach PROFILE NAME: this terminal into a session (Ctrl-b d leaves it)
+  [[ -n $3 ]] || die 'usage: lzr1-panel attach PROFILE NAME'
+  exec $SELF _attach "$2/$3"
+  ;;
+
 list)
   local it; for it in "${(@0)$(list_rows)}"; do [[ -n $it ]] && print -r -- ${it#*$'\t'}; done
   ;;
@@ -962,7 +1004,7 @@ splash) lzr1_splash ${2:+${2#--}} ;;
 version|--version) print -r -- "lzr1-panel $VERSION" ;;
 
 *)
-  sed -n '2,15p' $SELF | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' $SELF | sed 's/^# \{0,1\}//'
   [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
   ;;
 esac

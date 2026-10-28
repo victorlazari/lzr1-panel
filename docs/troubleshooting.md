@@ -110,6 +110,20 @@ The panel answers this for you only when the session opens in one of your reposi
 
 **Fix:** answer it in the viewer (click the session, then Enter). It only asks once per folder.
 
+### My Claude session is not in the panel
+
+The panel only lists sessions that run **inside tmux**. A `claude` started straight in a terminal tab is invisible
+to it.
+
+**Fix:** start sessions with `cl-opus` / `cl-sonnet` (installed by `./install.sh`), `lzr1-panel run`, or the
+panel's `n` / `s`. To move a running conversation over, quit it (`/exit`), then in the same folder:
+
+```sh
+lzr1-panel run --model opus --continue
+```
+
+Your own `cl-*` aliases can do the same: make them call `lzr1-panel run --model MODEL --effort EFFORT -- "$@"`.
+
 ### The same session shows under two profiles
 
 Both profiles point at the same machine, and a profile lists every session on its machine.
