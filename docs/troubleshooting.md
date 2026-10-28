@@ -164,6 +164,14 @@ The session is still there.
 
 **Fix:** click a session in the panel. If you left it with `Ctrl-b d`, click it again or press Enter on it.
 
+### The viewer is stuck on "starting NAME ..."
+
+The viewer waits like this only for a session the panel has just created, for up to 30 seconds, and a click on
+another session ends the wait. A session that ended moves the viewer to the first one left by itself.
+
+**Fix:** click another session. Still stuck? You are on an older version: quit the panel (`q`), update
+(`git pull` in the lzr1-panel folder) and run `lzr1-panel open` again.
+
 ### I closed the viewer pane
 
 **Fix:** click another session, or press Enter on one. The viewer comes back.

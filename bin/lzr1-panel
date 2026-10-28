@@ -404,6 +404,17 @@ list_rows() {
   pr_rows $W
 }
 
+# first_key ID SKIP...: the first session in the panel's last list, other than the SKIP keys, into REPLY
+first_key() {
+  local id=$1 it; shift; REPLY=
+  for it in "${(@)${(@0)"$(<$STATE/$id.cache 2>/dev/null)"}[2,-1]}"; do
+    it=${it%%$'\t'*}
+    [[ -z $it || $it == */ || $it == +pr/* || ${@[(Ie)$it]} -gt 0 ]] && continue
+    REPLY=$it; return 0
+  done
+  return 1
+}
+
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
   split_key $2; load $KP 2>/dev/null || return 0
   on 'c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null); [ -n "$c" ] && tmux detach-client -t "$c" 2>/dev/null; true' $1
@@ -599,7 +610,8 @@ open)  # panel on the left, viewer on the right
   ;;
 
 _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothing is picked
-  local id=$2 target
+  local id=$2 target n gone
+  local -a ended hold
   local tfile=$STATE/$id.target
   trap 'rm -f $tfile $tfile.want $tfile.detached $STATE/$id.vpid' EXIT
   print -rn -- $$ >$STATE/$id.vpid; rmdir $STATE/$id.spawn 2>/dev/null
@@ -614,25 +626,43 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
     fi
     clear
     split_key $target
+    gone=
     if load $KP; then
-      # A session the panel just created may still be starting: wait for it (up to 30s), then attach.
-      on -t '
-        mkdir -p "$HOME/.cache/lzr1-panel-viewer" && tty >"$HOME/.cache/lzr1-panel-viewer/$1"
+      # Only a session the panel just created gets waited for (up to 30s), and a click elsewhere ends the wait.
+      hold=( $STATE/$id.hold(Nms-30) )
+      if [[ -n $hold && $(<$hold) == $target ]]; then
         n=0
-        while ! tmux has-session -t "=$2" 2>/dev/null; do
-          [ $n = 0 ] && printf "\n  starting %s ...\n" "$2"
-          n=$((n + 1)); [ $n -gt 150 ] && { printf "  %s did not start\n" "$2"; sleep 3; exit 1; }
-          sleep 0.2
+        until on 'tmux has-session -t "=$1"' $KS 2>/dev/null; do
+          [[ $(<$tfile 2>/dev/null) == $target ]] || continue 2
+          (( n++ == 0 )) && print -r -- $'\n'"  starting $KS ..."
+          (( n > 60 )) && { print -r -- "  $KS did not start"; sleep 2; break }
+          sleep 0.5
         done
+      fi
+      on -t '
+        tmux has-session -t "=$2" 2>/dev/null || exit 3
+        mkdir -p "$HOME/.cache/lzr1-panel-viewer" && tty >"$HOME/.cache/lzr1-panel-viewer/$1"
         '"$CLIP"'
         unset TMUX
-        exec tmux attach -t "=$2"' $id $KS
+        exec tmux attach -t "=$2"' $id $KS || true
+      on 'tmux has-session -t "=$1"' $KS 2>/dev/null || gone=1
     else
       sleep 3
     fi
-    # Detached (Ctrl-b d) or the session ended: wait for the next pick, unless the panel already moved on.
-    # The panel's refreshes re-send its highlighted row; .detached keeps them from reattaching it.
-    if [[ $(<$tfile 2>/dev/null) == $target ]]; then print -rn -- $target >$tfile.detached; : >$tfile; fi
+    [[ $(<$tfile 2>/dev/null) == $target ]] || { ended=(); continue }  # the panel already moved on
+    if [[ -n $gone ]]; then
+      # The session ended (from the menu, x, "end" typed in it, or anywhere else): show the first one left, and
+      # have the panel's ticker move the highlight there.
+      ended+=( $target )
+      if first_key $id $ended; then
+        print -rn -- $REPLY >$tfile; print -rn -- $REPLY >$STATE/$id.follow
+      else ended=(); : >$tfile; fi
+      continue
+    fi
+    # Detached (Ctrl-b d): wait for the next pick. The panel's refreshes re-send its highlighted row; .detached
+    # keeps them from reattaching it.
+    ended=()
+    print -rn -- $target >$tfile.detached; : >$tfile
   done
   ;;
 
@@ -680,7 +710,14 @@ _ticker)  # _ticker ID PORT: show the first session in the viewer, then reload t
       [[ -n $first ]] && { $SELF _select $id $first; break; }
       sleep 0.2
     done
-    while sleep 15; do
+    # Every second: follow the viewer when it moved on by itself (a session ended); every 15s: reload.
+    local n=0 key
+    while sleep 1; do
+      if [[ -s $STATE/$id.follow ]]; then
+        key=$(<$STATE/$id.follow); rm -f $STATE/$id.follow
+        $SELF _pos $id $port $key &
+      fi
+      (( ++n % 15 )) && continue
       curl -sf -m 5 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "reload($SELF _list $id)" || exit 0
     done ) >/dev/null 2>&1 &!
   ;;
@@ -791,13 +828,7 @@ _kill)  # _kill KEY [ID]: end the session (Claude and its tmux session); with ID
   print -rn -- "End ${(qq)KS} on $KP? Claude stops and its tmux session closes. [y/N] "
   read -q || { print; exit 0 }
   print
-  if [[ -n $id ]]; then
-    for it in "${(@)${(@0)"$(<$STATE/$id.cache)"}[2,-1]}"; do
-      it=${it%%$'\t'*}
-      [[ -z $it || $it == */ || $it == +pr/* || $it == $2 ]] && continue
-      next=$it; break
-    done
-  fi
+  [[ -n $id ]] && first_key $id $2 && next=$REPLY
   # The viewer moves first, so it is never left on a session that is gone.
   [[ -n $next ]] && $SELF _select $id $next force
   load $KP && on 'tmux kill-session -t "=$1"' $KS
