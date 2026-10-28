@@ -86,7 +86,7 @@ lzr1_splash() {
   local -a log logc vv
 
   print -n '\e[?1049h\e[?25l'  # alternate screen, hidden cursor
-  trap 'print -n "\e[?25h\e[?1049l"; rm -f $sfile; trap - INT; return 130' INT
+  trap 'print -n "\e[?2026l\e[?25h\e[?1049l"; rm -f $sfile; trap - INT; return 130' INT
 
   while true; do
     t=$(( EPOCHREALTIME - t0 ))
@@ -120,7 +120,9 @@ lzr1_splash() {
     else msg="ready. go build something."; fi
     [[ $mode == install ]] && (( frac >= 0.30 && frac < 0.72 )) && msg="installed: command, Claude skill, shell hook"
 
-    out=''
+    # Each frame is one synchronized update (mode 2026): the terminal shows it whole, never the cleared screen in
+    # between, which flashed in Ghostty. Terminals without the mode ignore it.
+    out='\e[?2026h'
     for y in {1..$rows}; do out+="\e[${y};1H\e[K"; done
 
     if (( t < boot )); then
@@ -217,11 +219,11 @@ lzr1_splash() {
     out+="\e[$(( rows - 2 ));${x0}H${bar} \e[1m${(l:3:)pct}%\e[0m"
     line="$(printf '0x%04x' $RANDOM) · $#names profiles · $nses sessions · $nrep repos · any key skips"
     (( ${#line} > cols - 2 )) && line="any key skips"
-    out+="\e[$(( rows - 1 ));$(( (cols - ${#line}) / 2 + 1 ))H\e[38;5;240m${line}\e[0m"
+    out+="\e[$(( rows - 1 ));$(( (cols - ${#line}) / 2 + 1 ))H\e[38;5;240m${line}\e[0m\e[?2026l"
     print -n -- "$out"
   done
 
-  print -n '\e[?25h\e[?1049l'
+  print -n '\e[?2026l\e[?25h\e[?1049l'
   trap - INT
   rm -f $sfile
   return 0
