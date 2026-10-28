@@ -3,19 +3,27 @@
 Every Claude Code session you run, on every machine you own, in one clickable list.
 
 ```
-┌ lzr1 ───────────────────────┬─ viewer ─────────────────────────────┐
-│ 3 sessions · 1▶ 1⧗ 1·       │                                      │
-│ oracle-server 2             │   the session you picked, live:      │
-│   ▶ lerian-clients   2m ●   │   Claude Code running in tmux on     │
-│   ⧗ midaz-fees      12m     │   that machine                       │
-│ macbook-pro-lazari 1        │                                      │
-│   · lzr1-panel      1h      │                                      │
-│ [+opus] [+sonnet] [↻] [?]   │                                      │
-└─────────────────────────────┴──────────────────────────────────────┘
+┌──────────────────────── lzr1 ────────────────────────┬─ viewer ───────────────────────┐
+│ 3 sessions · 1▶ 1⧗ 1·                                │                                │
+│ oracle-sessions ssh · online · 2 ─────────────────── │  the session you picked, live: │
+│ ▌ ▶ lerian-clients                     opus · 12m ●  │  Claude Code running in tmux   │
+│ ▌   Docker dev data export and import                │  on that machine               │
+│ ▌   ⎇ feat/docker-dev-data +3 · lerian-clients       │                                │
+│   · erebor                            sonnet · 2h    │                                │
+│     Review the tmux layer                            │                                │
+│     ⎇ main · erebor                                  │                                │
+│ macbook-pro-sessions local · online · 1 ──────────── │                                │
+│   ⧗ midaz                               opus · 4m    │                                │
+│     ⧗ Do you want to run make test?                  │                                │
+│     ⎇ feat/fees +7 · midaz                           │                                │
+│ [+opus] [+sonnet] [↻] [?]                            │                                │
+└──────────────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
-- **Profiles** are machines: this computer, or servers over SSH. Each lists its tmux sessions with their state:
-  `▶` working, `⧗` waiting on you, `·` idle, `●` a terminal is attached.
+- **Profiles** are machines: this computer, or servers over SSH. A machine that does not answer is left out.
+- **Each session takes three lines**: its state (`▶` working, `⧗` waiting on you, `·` idle), name, model, age and
+  `●` when a terminal is attached; the task Claude is on, or the question it is waiting on; its git branch with the
+  number of changed files, and its folder.
 - **Click a session** (or use the arrow keys) and the viewer on the right shows it. `enter` moves the keyboard there.
 - **New sessions** (`n` Opus, `s` Sonnet, or the footer buttons) ask for a name. A name matching a folder in the
   profile's repositories opens Claude there; the first-run "trust this folder?" question is answered for you.
@@ -77,7 +85,8 @@ lzr1-panel keys                               # every key
 
 In the viewer, **`Ctrl-b d` leaves a session**. Ctrl-C goes to Claude.
 
-Settings: `LZR1_SPLASH=0` skips the splash, `LZR1_SPLASH_SECONDS=3` shortens it, `LZR1_PANEL=0` stops the panel
+Settings: `LZR1_PANEL_WIDTH` sets the panel's columns (default 56), `LZR1_SPLASH=0` skips the splash,
+`LZR1_SPLASH_SECONDS=3` shortens it, `LZR1_PANEL=0` stops the panel
 opening with Ghostty, `LZR1_CONFIG` moves the profiles folder.
 
 ## Layout
@@ -88,7 +97,7 @@ lib/splash.zsh                  the opening animation
 install.sh                      installer for macOS and Linux
 docs/profiles.md                how to create a profile (for people and AI assistants)
 docs/splash-options.html        the ten splash animations considered (BIOS boot won)
-docs/sidebar-options.html       three wider sidebar layouts (A cards, B table, C list + details)
+docs/sidebar-options.html       three wider sidebar layouts considered (A, cards, won)
 skills/lzr1-panel-profiles/     the Claude Code skill that runs that guide
 AGENTS.md                       pointers for AI assistants working here
 ```

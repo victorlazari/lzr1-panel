@@ -20,6 +20,7 @@ SELF=${0:A}
 CONFIG=${LZR1_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel}
 PROFILES=$CONFIG/profiles
 STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
+PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
 mkdir -p $PROFILES $STATE
 chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
 
@@ -76,10 +77,14 @@ on() {
 EXP='exp() { case $1 in "~"|"~/"*) printf "%s" "$HOME${1#"~"}" ;; *) printf "%s" "$1" ;; esac; }
 '
 
+# One record per session back to the panel, fields split by \037 (empty fields survive it, unlike a tab):
+# name state attached idle-seconds rc-link model folder task branch changed-files waiting-for
 LIST_SCRIPT='
-  now=$(date +%s)
-  tmux list-sessions -F "#{session_name}	#{session_attached}	#{session_activity}	#{@rc_url}" 2>/dev/null |
-  while IFS="	" read -r name att act url; do
+  now=$(date +%s) us=$(printf "\037") host=$(hostname)
+  # tmux escapes control characters in -F output, so its fields split on "|"; the task title comes last, where a "|"
+  # inside it stays put. Session names cannot contain "|" (lzr1-panel refuses them).
+  tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_activity}|#{@rc_url}|#{@lzr1_model}|#{pane_current_path}|#{pane_title}" 2>/dev/null |
+  while IFS="|" read -r name att act url model dir title; do
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
     if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
@@ -88,7 +93,24 @@ LIST_SCRIPT='
     # The newest link on screen wins: a resumed conversation gets a new one.
     new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
     if [ -n "$new" ] && [ "$new" != "$url" ]; then url=$new; tmux set-option -t "=$name:" @rc_url "$url"; fi
-    printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$st" "$att" "$((now - act))" "$url"
+    # Sessions lzr1-panel started carry their model; others show it in Claude Code'"'"'s header.
+    [ -n "$model" ] || model=$(printf "%s\n" "$full" | head -8 | grep -oE "Opus|Sonnet|Haiku|Fable" | head -1 | tr "A-Z" "a-z")
+    # Claude titles the terminal with its current task, after a spinner glyph.
+    title=$(printf "%s" "$title" | sed "s/^[^[:alnum:]]*//")
+    case $title in "$host"|"$host".*|"Claude Code"|"") title= ;; esac
+    branch= changed=
+    if [ -n "$dir" ] && b=$(git -C "$dir" branch --show-current 2>/dev/null); then
+      branch=${b:-detached}; changed=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d " ")
+    fi
+    waitfor=
+    if [ $st = wait ]; then
+      if printf "%s" "$screen" | grep -q "Claude exited"; then waitfor="Claude exited · Enter resumes"
+      else
+        waitfor=$(printf "%s\n" "$screen" | grep -E "Do you want|Would you like|\?[[:space:]│]*$" | tail -1 | sed "s/^[[:space:]│╭╰|]*//; s/[[:space:]│╮╯|]*$//")
+        [ -n "$waitfor" ] || waitfor="waiting on you"
+      fi
+    fi
+    printf "%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s\n" "$name" "$st" "$att" "$((now - act))" "$url" "$model" "$dir" "$title" "$branch" "$changed" "$waitfor"
   done'
 
 # ---- profile management ---------------------------------------------------------------------------------------------
@@ -202,11 +224,17 @@ ghostty() { osascript -e 'tell application "Ghostty"' -e "$1" -e 'end tell' }
 
 mode() { print -rn -- "$(<$STATE/$1.mode)" } 2>/dev/null
 
-list_rows() {  # every profile, listed in parallel; first line is the summary heading
+# _cut TEXT WIDTH: TEXT cut to WIDTH characters with an ellipsis, into REPLY
+_cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
+
+# Every profile's sessions, listed in parallel, as NUL-separated fzf items: "KEY<tab>display". The first item is
+# the summary heading. A session is three lines (layout A): name with model and age; its task, or what it waits
+# for; its branch and repository. Sized to the panel ($FZF_COLUMNS).
+list_rows() {
   local -a names=( $(profiles) )
   if (( ! $#names )); then
-    print -r -- $'\t'"no profiles yet"
-    print -r -- $'-/\t'$'\e[90m'"run: lzr1-panel profile add"$'\e[0m'
+    print -rn -- $'\t'"no profiles yet"$'\0'
+    print -rn -- $'-/\t'$'\e[90m'"run: lzr1-panel profile add"$'\e[0m\0'
     return
   fi
   local tmp=$(mktemp -d) p
@@ -219,31 +247,44 @@ list_rows() {  # every profile, listed in parallel; first line is the summary he
       else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
   done
   wait
-  local -a rows; local n=0 w=0 q=0 i=0 name st att age url glyph line count
+  local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
+  local -a items got; local n=0 w=0 q=0 i=0 line kind glyph right l1 l2 l3
+  local name st att age url model dir title branch changed waitfor
+  local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   for p in $names; do
     # A profile whose machine does not answer is left out until it does.
     [[ -e $tmp/$p.fail ]] && continue
-    local -a got=( ${(f)"$(<$tmp/$p.out)"} )
-    count=$#got
-    rows+=("$p/"$'\t'$'\e[1m'"$p"$'\e[0m \e[90m'"$count"$'\e[0m')
-    for line in ${(f)"$(<$tmp/$p.out)"}; do
-      IFS=$'\t' read -r name st att age url <<<"$line"
+    load $p 2>/dev/null; kind=$P_TYPE
+    got=( ${(f)"$(<$tmp/$p.out)"} )
+    local hd=" $p $kind · online · $#got " fl
+    fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
+    items+=( "$p/"$'\t'" $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$R" )
+    for line in $got; do
+      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
       (( n++ ))
       case $st in
-        work) (( w++ )); glyph=$'\e[36m▶\e[0m' ;;
-        wait) (( q++ )); glyph=$'\e[33m⧗\e[0m' ;;
-        *)    (( i++ )); glyph=$'\e[90m·\e[0m' ;;
+        work) (( w++ )); glyph="$C▶$R" ;;
+        wait) (( q++ )); glyph="$Y⧗$R" ;;
+        *)    (( i++ )); glyph="$D·$R" ;;
       esac
       if   (( age < 60 ));    then age=${age}s
       elif (( age < 3600 ));  then age=$(( age / 60 ))m
       elif (( age < 86400 )); then age=$(( age / 3600 ))h
       else age=$(( age / 86400 ))d; fi
-      rows+=("$p/$name"$'\t'"  $glyph $(printf '%-19.19s %4s' "$name" "$age") $( (( att > 0 )) && print -n $'\e[32m●\e[0m' )")
+      right="${model:+$model · }$age"
+      _cut $name $(( W - 6 - ${#right} )); l1=" $glyph ${(r:W - 6 - ${#right}:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
+      if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( W - 4 )); l2="   $Y$REPLY$R"
+      elif [[ -n $title ]]; then _cut $title $(( W - 4 )); l2="   $M$REPLY$R"
+      else l2="   ${D}no task yet$R"; fi
+      if [[ -n $branch ]]; then _cut "⎇ $branch${changed:#0:+ +$changed} · ${dir:t}" $(( W - 4 ))
+      else _cut "${dir:t}" $(( W - 4 )); fi
+      l3="   $D$REPLY$R"
+      items+=( "$p/$name"$'\t'"$l1"$'\n'"$l2"$'\n'"$l3" )
     done
   done
   rm -rf $tmp
-  print -r -- $'\t'"$n sessions · $w▶ $q⧗ $i·"
-  print -rl -- "${rows[@]}"
+  print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·"$'\0'
+  (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
 }
 
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
@@ -260,8 +301,8 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
   local model=$3 name=$4
   shift 4 2>/dev/null
   [[ $model == (opus|sonnet) && -n $name ]] || die 'usage: lzr1-panel start PROFILE opus|sonnet NAME [claude args]'
-  [[ $name == *[.:/]* ]] && die 'session names cannot contain ".", ":" or "/"'
-  local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --name ${(q)name} --remote-control ${(q)name} ${(j: :)${(q)@}}"
+  [[ $name == *[.:/\|]* ]] && die 'session names cannot contain ".", ":", "/" or "|"'
+  local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --remote-control ${(q)name} ${(j: :)${(q)@}}"
   # If Claude exits (Ctrl-C twice, /exit, a crash) the session stays and Enter resumes the same conversation.
   # Only typing "end" closes it: Ctrl-C and Ctrl-D, easy to hit by accident in a viewer, do not (the trap is a handler, so Claude and its commands still get Ctrl-C).
   local cmd="trap : INT; $claude; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
@@ -274,6 +315,7 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
     [ -d "$dir" ] || dir=$HOME
     echo "folder: $dir"
     tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
+    tmux set-option -t "=$name:" @lzr1_model "$5"
     trusted= i=0
     while [ $i -lt 15 ]; do
       i=$((i + 1)); sleep 1
@@ -286,11 +328,11 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
       url=$(printf "%s" "$screen" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
       if [ -n "$url" ]; then tmux set-option -t "=$name:" @rc_url "$url"; echo "remote control: $url"; exit 0; fi
     done
-    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS"
+    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model"
   ;;
 
 list)
-  local line; list_rows | while IFS= read -r line; do print -r -- ${line#*$'\t'}; done
+  local it; for it in "${(@0)$(list_rows)}"; do [[ -n $it ]] && print -r -- ${it#*$'\t'}; done
   ;;
 
 _list)  # _list ID: rows for fzf, cached for _pos
@@ -339,7 +381,7 @@ open)  # panel on the left, viewer on the right
   vpane=$($T display -p -t $sess '#{pane_id}')
   print -rn -- tmux >$STATE/$id.mode
   print -rn -- $vpane >$STATE/$id.vterm
-  $T split-window -hb -l 38 -t $sess "$SELF _panel $id"
+  $T split-window -hb -l $PANEL_W -t $sess "$SELF _panel $id"
   TMUX= exec $T attach -t $sess
   ;;
 
@@ -436,7 +478,9 @@ _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel list
     $api -XPOST -d "reload($SELF _list $id)" >/dev/null
     sleep 0.5
     i=0
-    for line in "${(@f)$(tail -n +2 $STATE/$id.cache 2>/dev/null)}"; do
+    local -a its=( "${(@0)$(<$STATE/$id.cache)}" )
+    for line in "${(@)its[2,-1]}"; do
+      [[ -n $line ]] || continue
       (( i++ )); [[ ${line%%$'\t'*} == $key ]] || continue
       print -rn -- $key >$STATE/$id.target.want
       $api -XPOST -d "pos($i)" >/dev/null; sleep 0.2
@@ -448,7 +492,7 @@ _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel list
 _new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the background, shows it in the viewer
   local model=$2 id=$3 p=${4%%/*} name
   # Only the machines that answered on the last refresh.
-  local -a all=( ${${(M)${(f)"$(tail -n +2 $STATE/$id.cache 2>/dev/null)"}:#*/$'\t'*}%%/*} )
+  local -a all=( ${${(M)${(@0)"$(<$STATE/$id.cache)"}:#[^/]##/$'\t'*}%%/*} )
   (( $#all )) || all=( $(profiles) )
   [[ -n $p && -e $PROFILES/$p.conf ]] || p=${all[1]}
   if (( $#all > 1 )); then
@@ -471,8 +515,8 @@ _new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the ba
       --bind 'tab:replace-query,left-click:accept,double-click:accept,esc:abort')}" )
   name=${picked[2]:-${picked[1]}}
   [[ -z $name ]] && exit 0
-  if [[ $name == *[.:/]* ]]; then
-    print -r -- 'session names cannot contain ".", ":" or "/" — press a key'; read -k1 -s; exit 0
+  if [[ $name == *[.:/\|]* ]]; then
+    print -r -- 'session names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0
   fi
   $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
   # Back to the list as soon as tmux has the session; the viewer shows Claude starting in it.
@@ -550,19 +594,19 @@ _panel)  # _panel ID
   else
     repeat 20; do [[ -s $STATE/$id.me ]] && break; sleep 0.1; done
     me=$(<$STATE/$id.me 2>/dev/null)
-    # Narrow this split to about 36 columns: move the divider, measure, correct once.
-    if [[ -n $me ]] && (( COLUMNS > 40 )); then
+    # Narrow this split to PANEL_W columns: move the divider, measure, correct once.
+    if [[ -n $me ]] && (( COLUMNS > PANEL_W + 4 )); then
       local c0=$COLUMNS c1
       ghostty "perform action \"resize_split:left,200\" on (terminal id \"$me\")" >/dev/null; sleep 0.25
       c1=$(tput cols)
-      (( c0 > c1 && c1 > 36 )) && ghostty "perform action \"resize_split:left,$(( (c1 - 36) * 200 / (c0 - c1) ))\" on (terminal id \"$me\")" >/dev/null
+      (( c0 > c1 && c1 > PANEL_W )) && ghostty "perform action \"resize_split:left,$(( (c1 - PANEL_W) * 200 / (c0 - c1) ))\" on (terminal id \"$me\")" >/dev/null
     fi
   fi
   local S=$SELF
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
-  fzf --ansi --no-input --layout=reverse --no-sort --track --id-nth=1 \
+  fzf --ansi --read0 --no-input --layout=reverse --no-sort --track --id-nth=1 \
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
