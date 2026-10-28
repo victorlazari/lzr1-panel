@@ -285,7 +285,8 @@ pr_rows() {  # pr_rows WIDTH: the PR section's fzf items, after the sessions (la
   zmodload zsh/datetime; local TZ=UTC  # GitHub's times are UTC
   hd=" pull requests $login · $src · $(( $#got - 1 )) "
   fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
-  print -rn -- "+pr/"$'\t'" ${B}pull requests$R $D$login · $src · $(( $#got - 1 )) ${(l:fl::─:)}$R"$'\0'
+  # The heading's first line is blank: a gap between the sessions and the PRs that the cursor never lands on.
+  print -rn -- "+pr/"$'\t\n'" ${B}pull requests$R $D$login · $src · $(( $#got - 1 )) ${(l:fl::─:)}$R"$'\0'
   for line in "${(@)got[2,-1]}"; do
     IFS=$'\037' read -r repo num title url draft branch review checks updated <<<"$line"
     # One glyph from the draft flag, the latest commit's checks and the review, worst first.
