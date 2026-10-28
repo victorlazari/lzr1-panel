@@ -453,15 +453,22 @@ _new)  # _new opus|sonnet ID KEY: type a name on KEY's profile; starts in the ba
   if (( $#all > 1 )); then
     # Several machines: confirm which one, starting from the highlighted row's.
     p=$(print -rl -- $p ${all:#$p} | fzf --layout=reverse --prompt="new $model on › " --info=hidden \
-          --header='which profile? enter to choose' --header-border=bottom) || exit 0
+          --gutter=' ' --pointer='▌' --highlight-line --color='pointer:yellow,current-fg:bold' \
+          --header='click a machine · esc cancels' --header-border=bottom \
+          --bind 'left-click:accept,double-click:accept') || exit 0
   fi
   [[ -n $p ]] || { print "no profiles yet: lzr1-panel profile add — press a key"; read -k1 -s; exit 0 }
   load $p || { read -k1 -s; exit 0 }
-  name=$(on "$EXP"'ls -1 "$(exp "$1")" 2>/dev/null' $P_REPOS |
+  # Type a name and press enter, or click a repository. Enter with nothing typed takes the highlighted one.
+  local -a picked
+  picked=( "${(@f)$(on "$EXP"'ls -1 "$(exp "$1")" 2>/dev/null' $P_REPOS |
     fzf --layout=reverse --print-query --prompt="new $model on $p › " --info=hidden --no-sort \
-      --header=$'type a session name, enter to start · tab fills the highlighted repo\n'"a repository name opens in $P_REPOS/<name>" \
-      --header-border=bottom --bind 'enter:print-query,tab:replace-query,esc:abort' |
-    head -1)
+      --gutter=' ' --pointer='▌' --highlight-line --color='pointer:yellow,current-fg:bold' \
+      --header=$'type a name ↵ or click a repo\nrepos open in their own folder' \
+      --header-border=bottom \
+      --bind 'enter:transform:[ -n {q} ] && echo print-query || echo accept' \
+      --bind 'tab:replace-query,left-click:accept,double-click:accept,esc:abort')}" )
+  name=${picked[2]:-${picked[1]}}
   [[ -z $name ]] && exit 0
   if [[ $name == *[.:/]* ]]; then
     print -r -- 'session names cannot contain ".", ":" or "/" — press a key'; read -k1 -s; exit 0
