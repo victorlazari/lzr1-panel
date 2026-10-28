@@ -175,14 +175,24 @@ Not copying? See [Copying text](docs/troubleshooting.md#copying-text).
 
 ```sh
 lzr1-panel open                             # the panel
+lzr1-panel run [--model M] [--effort E]     # Claude here, in a new tmux session, attached
 lzr1-panel start PROFILE opus|sonnet NAME   # a session, without the panel
+lzr1-panel attach PROFILE NAME              # this terminal into a session
 lzr1-panel list                             # every session, then your PRs
 lzr1-panel prs                              # your open pull requests
 lzr1-panel doctor                           # check everything, with fixes
 lzr1-panel keys                             # every key
 ```
 
-Each profile also gets two shortcuts in your shell: `cl-<profile>-opus NAME` and `cl-<profile>-sonnet NAME`.
+Your shell also gets shortcuts:
+
+- **`cl-opus`** / **`cl-sonnet`**: Claude in the folder you're in, inside a new tmux session, so the panel lists it.
+  If you already have your own `cl-opus` or `cl-sonnet`, yours stay; point them at `lzr1-panel run` to get the same.
+- **`cl-<profile>-opus NAME`** / **`cl-<profile>-sonnet NAME`**: a session on that profile's machine.
+
+> [!NOTE]
+> The panel only sees sessions that run **inside tmux**. A plain `claude` in a terminal tab never shows up: start
+> it with `cl-opus`, `lzr1-panel run`, or the panel's `n` / `s`.
 
 ---
 
@@ -237,7 +247,8 @@ you if something is missing.
 3. **Copying**: Ctrl-C copies a Shift-selection in Ghostty (it asks first).
 4. **The `lzr1-panel` command**, in `~/.local/bin`.
 5. **The Claude Code skill** that creates profiles.
-6. **A shell hook**: the `cl-*` shortcuts and, if you want, the panel opening with Ghostty.
+6. **A shell hook**: the `cl-*` shortcuts (including `cl-opus` / `cl-sonnet`, unless you have your own) and, if
+   you want, the panel opening with Ghostty.
 7. **GitHub sign-in** (`gh auth login`), so the panel lists your pull requests.
 8. **Your first profile**.
 9. **`lzr1-panel doctor`**, to check it all.
