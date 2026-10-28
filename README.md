@@ -88,6 +88,7 @@ lib/splash.zsh                  the opening animation
 install.sh                      installer for macOS and Linux
 docs/profiles.md                how to create a profile (for people and AI assistants)
 docs/splash-options.html        the ten splash animations considered (BIOS boot won)
+docs/sidebar-options.html       three wider sidebar layouts (A cards, B table, C list + details)
 skills/lzr1-panel-profiles/     the Claude Code skill that runs that guide
 AGENTS.md                       pointers for AI assistants working here
 ```
