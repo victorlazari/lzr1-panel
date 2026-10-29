@@ -420,7 +420,7 @@ or `doctor`.
 
 #### Task 2.2.2: `start … opencode` and `run --opencode`
 
-- [ ] Done
+- [x] Done
 
 **Context:** `start)` builds `claude=…` and the resume loop `cmd` (`trap : INT; …; while :; do printf 'Claude
 exited. Enter: …'; read -r a …; $claude --continue; done`), then runs a POSIX sh script on the machine that picks
@@ -587,3 +587,12 @@ lists the Claude ones.
   also says `--opencode` is optional, and `profile test`'s line says it finds opencode. The verification uses a
   resolved scratch folder, not `/tmp`, and simulates a machine without opencode with a wrapper `sh` whose PATH has no
   opencode, since `bin/lzr1-panel` puts `/opt/homebrew/bin` on PATH itself.
+- Task 2.2.2: `start` and `run` build the session's command with a new `_keep AGENT FIRST RESUME` (in `REPLY`), so
+  the resume loop is written once; Claude's command is byte-identical (verify-222 compares `pane_start_command` for
+  `start` and, with a stub claude in a scratch `HOME`, for `run`). The 2 s check also counts `opencode exited` on
+  screen as an exit, since the resume loop keeps the session alive; it exits 1. `run`'s `--effort` defaults to
+  medium after the option loop, so `--effort` with `--opencode` is refused. A subcommand for passthrough is a first
+  argument matching `[a-z]*` with no `/` that is not a folder here (opencode's positional is a folder). opencode's
+  first run gets your args, then `--prompt`; the resume is `--continue` alone. The header usage gained its own
+  `run --opencode` line. On the unchanged code, verify-222's `run --opencode` started two Claude sessions named
+  after its scratch folder (`unknown option '--opencode'`); they were killed and the script now removes them.

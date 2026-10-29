@@ -3,10 +3,13 @@
 # left, with a viewer on the right that shows the session you pick.
 #
 #   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
-#   lzr1-panel start PROFILE opus|sonnet NAME [args] start a detached Claude session on PROFILE; a NAME that is a
-#                                                    folder under the profile's repos opens in it, else in its root
+#   lzr1-panel start PROFILE opus|sonnet|opencode NAME [args]
+#                                                    start a detached Claude (or opencode, auto-approve on) session
+#                                                    on PROFILE; a NAME that is a folder under the profile's repos
+#                                                    opens in it, else in its root
 #   lzr1-panel run [--model M] [--effort E] [args]   Claude in a new tmux session in this folder, attached (print
 #                                                    mode, -p, runs plain claude); the panel lists it
+#   lzr1-panel run --opencode [args]                 the same with opencode --auto (its subcommands run plain)
 #   lzr1-panel attach PROFILE NAME                   this terminal into a session
 #   lzr1-panel list                                  print every profile's sessions, then your open PRs
 #   lzr1-panel prs                                   your open pull requests (the GitHub account on this machine)
@@ -117,7 +120,7 @@ LIST_SCRIPT='
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
     if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
-    elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|Claude exited"; then st=wait
+    elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|(Claude|opencode) exited"; then st=wait
     else st=idle; fi
     # The newest link on screen wins: a resumed conversation gets a new one.
     new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
@@ -133,7 +136,8 @@ LIST_SCRIPT='
     fi
     waitfor=
     if [ $st = wait ]; then
-      if printf "%s" "$screen" | grep -q "Claude exited"; then waitfor="Claude exited · Enter resumes"
+      ex=$(printf "%s" "$screen" | grep -oE "(Claude|opencode) exited" | tail -1)
+      if [ -n "$ex" ]; then waitfor="$ex · Enter resumes"
       else
         waitfor=$(printf "%s\n" "$screen" | grep -E "Do you want|Would you like|\?[[:space:]│]*$" | tail -1 | sed "s/^[[:space:]│╭╰|]*//; s/[[:space:]│╮╯|]*$//")
         [ -n "$waitfor" ] || waitfor="waiting on you"
@@ -574,7 +578,7 @@ list_rows() {
         # A refresh that started before the one that wrote the file has nothing newer to say.
         if (( pts <= snap )); then
           if [[ -r $f ]]; then
-            if [[ $st == wait && $waitfor != "Claude exited · Enter resumes" && ( $pst != wait || $pwf != "$waitfor" ) ]]
+            if [[ $st == wait && $waitfor != *' exited · Enter resumes' && ( $pst != wait || $pwf != "$waitfor" ) ]]
             then ak=question
             elif [[ $pst == work && $st == idle ]]; then ak=done; fi
           fi
@@ -647,21 +651,34 @@ viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's
   on 'c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null); [ -n "$c" ] && tmux detach-client -t "$c" 2>/dev/null; true' $1
 }
 
+# If the agent exits (Ctrl-C twice, /exit, a crash) its session stays, and Enter runs RESUME: the same conversation.
+# Only typing "end" closes it: Ctrl-C and Ctrl-D, easy to hit by accident in a viewer, do not (the trap is a handler,
+# so the agent and its commands still get Ctrl-C).
+_keep() {  # _keep AGENT FIRST RESUME: the session's command, in REPLY
+  REPLY="trap : INT; $2; while :; do printf '\\n  $1 exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $3; done"
+}
+
 # ---- commands -------------------------------------------------------------------------------------------------------
 
 case $1 in
 
-start)  # start PROFILE opus|sonnet NAME [claude args]
+start)  # start PROFILE opus|sonnet|opencode NAME [claude or opencode args]
   load $2 || exit 1
-  local model=$3 name=$4
+  local model=$3 name=$4 agent=claude REPLY
   shift 4 2>/dev/null
-  [[ $model == (opus|sonnet) && -n $name ]] || die 'usage: lzr1-panel start PROFILE opus|sonnet NAME [claude args]'
+  [[ $model == (opus|sonnet|opencode) && -n $name ]] ||
+    die 'usage: lzr1-panel start PROFILE opus|sonnet|opencode NAME [claude or opencode args]'
   [[ $name == *[.:/\|]* ]] && die 'session names cannot contain ".", ":", "/" or "|"'
-  local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --remote-control ${(q)name} ${(j: :)${(q)@}}"
-  # If Claude exits (Ctrl-C twice, /exit, a crash) the session stays and Enter resumes the same conversation.
-  # Only typing "end" closes it: Ctrl-C and Ctrl-D, easy to hit by accident in a viewer, do not (the trap is a handler, so Claude and its commands still get Ctrl-C).
-  # LZR1_PROMPT is Claude's first message; a resumed conversation does not get it again.
-  local cmd="trap : INT; $claude ${LZR1_PROMPT:+${(q)LZR1_PROMPT}}; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
+  # LZR1_PROMPT is the first message; a resumed conversation does not get it again, nor your args.
+  if [[ $model == opencode ]]; then
+    agent=opencode
+    local oc="${(q)P_OPENCODE} --auto" args=${(j: :)${(q)@}}
+    _keep opencode "$oc${args:+ $args}${LZR1_PROMPT:+ --prompt ${(q)LZR1_PROMPT}}" "$oc --continue"
+  else
+    local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --remote-control ${(q)name} ${(j: :)${(q)@}}"
+    _keep Claude "$claude ${LZR1_PROMPT:+${(q)LZR1_PROMPT}}" "$claude --continue"
+  fi
+  local cmd=$REPLY
   print -r -- "starting: $name on $P_NAME"
   on "$EXP"'
     name=$1 cmd=$2 root=$(exp "$3") repos=$(exp "$4")
@@ -674,6 +691,13 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
     echo "folder: $dir"
     tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
     tmux set-option -t "=$name:" @lzr1_model "$5"
+    # opencode asks no folder trust and has no Remote Control link: started once it outlives its first 2s.
+    if [ "$6" = opencode ]; then
+      tmux set-option -t "=$name:" @lzr1_agent opencode; sleep 2
+      if ! tmux has-session -t "=$name" 2>/dev/null || tmux capture-pane -p -J -t "=$name:" | grep -q "opencode exited"
+      then echo "opencode exited right after start"; exit 1; fi
+      echo started; exit 0
+    fi
     trusted= i=0
     while [ $i -lt 15 ]; do
       i=$((i + 1)); sleep 1
@@ -686,7 +710,7 @@ start)  # start PROFILE opus|sonnet NAME [claude args]
       url=$(printf "%s" "$screen" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
       if [ -n "$url" ]; then tmux set-option -t "=$name:" @rc_url "$url"; echo "remote control: $url"; exit 0; fi
     done
-    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model"
+    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model" $agent
   ;;
 
 prs)  # your open pull requests, fresh
@@ -761,19 +785,33 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   exit $bad
   ;;
 
-run)  # run [--model ID] [--effort E] [--name NAME] [claude args]: Claude in a new tmux session in this folder, attached
+run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or opencode args]: Claude (or opencode) in a new
+     # tmux session in this folder, attached
   shift
-  local model= effort=medium name= fam sock
+  local model= effort= name= oc= fam sock REPLY
   while (( $# )); do
     case $1 in
       --model) model=$2; shift 2 ;;
       --effort) effort=$2; shift 2 ;;
       --name) name=$2; shift 2 ;;
+      --opencode) oc=1; shift ;;
       --) shift; break ;;
       *) break ;;
     esac
   done
   local cl=${commands[claude]:-$HOME/.local/bin/claude}
+  if [[ -n $oc ]]; then
+    [[ -n $model ]] && die 'run --opencode: --model is for Claude'
+    [[ -n $effort ]] && die 'run --opencode: --effort is for Claude'
+    cl=${commands[opencode]:-$HOME/.opencode/bin/opencode}
+    # Not a conversation (help, version, a subcommand such as run or session, piped input or output), or no tmux:
+    # plain opencode, here.
+    if (( ${@[(I)(-v|--version|-h|--help)]} )) || [[ $1 == [a-z]* && $1 != */* && ! -d $1 ]] ||
+       [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
+      exec $cl "$@"
+    fi
+  fi
+  effort=${effort:-medium}
   # Not a conversation (print mode, help, version, piped input or output), or no tmux: plain claude, here.
   if (( ${@[(I)(-p|--print|--print=*|-v|--version|-h|--help)]} )) || [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
     exec $cl ${model:+--model} ${model:+$model} --dangerously-skip-permissions --effort $effort "$@"
@@ -782,11 +820,16 @@ run)  # run [--model ID] [--effort E] [--name NAME] [claude args]: Claude in a n
   local base=${${name:-${PWD:t}}//[.:\/|]/-} n=1
   name=$base
   while env -u TMUX tmux has-session -t "=$name" 2>/dev/null; do (( n++ )); name=$base-$n; done
-  local claude="${(q)cl}${model:+ --model ${(q)model}} --dangerously-skip-permissions --effort ${(q)effort} --remote-control ${(q)name}"
-  # As in start: the session outlives Claude and Enter resumes the conversation; your args go to the first run only.
-  local cmd="trap : INT; $claude ${(j: :)${(q)@}}; while :; do printf '\\n  Claude exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $claude --continue; done"
-  env -u TMUX tmux new-session -d -s "$name" -c "$PWD" -x ${COLUMNS:-200} -y ${LINES:-50} "$cmd" || die "cannot start tmux"
+  # As in start: the session outlives its agent and Enter resumes the conversation; your args go to the first run only.
+  if [[ -n $oc ]]; then
+    _keep opencode "${(q)cl} --auto ${(j: :)${(q)@}}" "${(q)cl} --auto --continue"
+  else
+    local claude="${(q)cl}${model:+ --model ${(q)model}} --dangerously-skip-permissions --effort ${(q)effort} --remote-control ${(q)name}"
+    _keep Claude "$claude ${(j: :)${(q)@}}" "$claude --continue"
+  fi
+  env -u TMUX tmux new-session -d -s "$name" -c "$PWD" -x ${COLUMNS:-200} -y ${LINES:-50} "$REPLY" || die "cannot start tmux"
   case $model in *opus*) fam=opus ;; *sonnet*) fam=sonnet ;; *haiku*) fam=haiku ;; *fable*) fam=fable ;; *) fam=$model ;; esac
+  [[ -n $oc ]] && fam=opencode && env -u TMUX tmux set-option -t "=$name:" @lzr1_agent opencode
   [[ -n $fam ]] && env -u TMUX tmux set-option -t "=$name:" @lzr1_model $fam
   env -u TMUX sh -c "$CLIP"
   # Already inside this machine's own tmux: switch to the session; anywhere else, attach to it.
