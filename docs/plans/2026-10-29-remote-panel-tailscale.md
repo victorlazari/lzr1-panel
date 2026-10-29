@@ -26,7 +26,7 @@ browser), Tailscale 1.104 (`serve`, MagicDNS HTTPS certificates, identity header
 |-------|-----------|-------|--------|
 | 1 | `lzr1-panel remote on` prints a tailnet URL and password; an allowlisted tailnet user opens it in a browser, logs in and drives a working panel; `remote off` removes every trace | 1.1, 1.2 | Complete |
 | 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Complete |
-| 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Epic-level |
+| 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Detailed |
 
 **Decisions already made with the owner (2026-10-29):**
 
@@ -671,10 +671,204 @@ browser gets a usable panel.
 **Goal:** `w` and a `[web]` footer button turn remote on (asking the allowlist in a small popup) and copy the URL;
 when on, the same key opens a menu: copy URL, copy password, who is connected (from the audit log), rotate the
 password (restarts the gateway, ends sessions), turn off; the summary line shows `⇄ web` while it is on.
-**Scope:** `bin/lzr1-panel` (`_panel` binds and footer, `_menu`-style picker, `keys`, `list_rows` summary)
+**Scope:** `bin/lzr1-panel` (`remote` command, `_panel` binds and footer, `_footer`, new `_web`, `clip`, `keys`,
+`list_rows` summary)
 **Dependencies:** Phases 1-2
 **Done when:** every action works from the key, the footer and the menu, in both Ghostty and tmux layouts.
 **Status:** Pending
+
+Decisions for this epic (owner, 2026-10-29, and the elaboration):
+
+- **The key is `w`, the button `[web]`** (`w` is free: the panel binds `m t o n s c x r ? q`). The footer becomes
+  `[+opus] [+sonnet] [+opencode] [web] [↻] [?]`, 43 columns: it fits the 56-column panel and the 46 columns of a
+  phone's narrow layout (Task 2.2.4). The summary line gains ` · ⇄ web` while the remote is on.
+- **Off:** `w` asks the allowlist (prefilled as `remote on` does), turns the remote on and copies the URL, showing
+  `remote on`'s own output (URL, password, expiry) until a key is pressed. **On:** `w` opens a menu: copy the URL,
+  copy the password, who is connected, rotate the password…, turn it off…, cancel.
+- **A browser's own panel** (its layout was opened by ttyd: `$STATE/ID.remote` exists, written by `open`) offers only
+  the two copies and who is connected, and `_web` refuses rotate and off there even if asked directly. The marker is
+  that file, not the `LZR1_REMOTE` variable: `_panel` runs in a pane of the shared `lzr1` server, whose environment
+  is whichever `open` started it, and a variable exported from the panel could leak into a tmux server that `_new`
+  starts, then into every session. The CLI (`lzr1-panel remote off`) is not guarded: anyone with a terminal in a
+  session is already the user (docs/remote.md, "What it does not protect against"), so the guard is about not
+  offering a browser user the switch to the session they are in, not a security boundary.
+- **Copies from a browser's panel go to the browser.** `clip` uses `pbcopy` first (`bin/lzr1-panel:482-488`), so a copy
+  in a browser's panel lands on this Mac today (the row menu's "copy its link" too). In a browser's panel the copy is an
+  OSC 52 written to the pane (`set-clipboard on` forwards it to ttyd; `gateway/client.js` writes the browser's
+  clipboard, or shows Safari's "click to copy" toast).
+- **Rotate** = a new password and a new gateway on the same UUID, URL, ttyd, expiry and idle limit: the old gateway's
+  sessions live only in its memory, so every browser is logged out (its WebSocket closes, its layout ends, the page
+  falls to the login form). The new password is printed and copied (the URL did not change). Also `lzr1-panel remote
+  rotate` and `lzr1-panel remote who` on the command line.
+- **Who is connected** = the logins currently in, from the audit trail: `login` events after the latest gateway
+  `start` whose session (`sid`) has no `logout` or `idle-out` yet, plus the number of browser layouts open now. A
+  browser closed without logging out stays "in" until its idle logout: the list says so.
+
+#### Task 3.1.1: `remote rotate` and `remote who`; one gateway start shared by `on` and `rotate`
+
+- [ ] Done
+
+**Context:** `remote on` (`bin/lzr1-panel:1882-2009`) starts the gateway with the password on stdin and its stdout piped
+to `_remote_keeper` (`:1962-1965`), waits for `ready` in `gw.out` (`:1968-1972`), stores `gwpid`/`port`, waits for
+`serve.pid` and the published route (`:1980-1993`), checks Funnel again (`:1995-1998`) and starts the watcher
+(`:2000-2003`). The keeper (`_remote_keeper`, `:854-871`) ends `serve` when the gateway's stdout closes, so stopping the
+gateway unpublishes the path. The watcher (`_remote_watch`, `:873-897`) reads the audit trail from `RS[auditpos]`
+(`:878`) and runs `_remote_off` when the gateway or `serve` ends, alerting "the gateway stopped". `_remote_status`
+(`:974-1014`) parses login/failure/lockout lines from `auditpos`. The gateway writes `start ttl=… idle=…` when it is
+ready and `shutdown reason=signal` on SIGTERM (`docs/remote.md:97-112`). ttyd and the gateway are started with `&!`
+from `remote on`'s process (`:1950-1965`); only the watcher and the keeper ignore HUP (`:858`, `:2001`).
+
+**Implementation vision:**
+- Extract `_remote_start UUID TTL`: the block from the gateway's start to the watcher's (`:1955-2003`), unchanged in
+  behaviour, using `RS[password]`, `RS[allow]`, `RS[host]`, `RS[idle]`; it removes `gw.out`, `gw.pid`, `serve.out`,
+  `serve.pid` first (a stale `ready` in `gw.out` from the old gateway would pass the wait loop at once) and returns
+  non-zero with the message in `REPLY` instead of dying, so each caller decides (`on`: `_remote_off` then `die`, as
+  today). `remote on` calls it with `$ttl`.
+- `_remote_watch` starts from `${RS[watchpos]:-${RS[auditpos]:-0}}`, so a watcher restarted by `rotate` does not alert
+  the logins it already alerted.
+- `remote rotate`: `_remote_live || die "remote is off"`; `left = RS[expires] - now`; under 60 s → `die "it expires
+  in under a minute: lzr1-panel remote on after it ends"`. Then: `_stop` the watcher (first, so it neither alerts nor
+  turns everything off), the gateway, then `serve` (the keeper normally ends it; `_stop` makes sure); kill the
+  browsers' layouts (`@lzr1_remote == UUID`, as `_remote_off` does at `:825-827`) so none is left on a dead socket; keep
+  ttyd and the `*.last` picks (a browser that logs in again comes back to its session). A new password exactly as `on`
+  makes it (factor the `openssl rand` loop at `:1939-1942` into `_remote_pw`), `RS[watchpos]` = the audit file's size,
+  `RS[rotated]=$EPOCHSECONDS`, `_remote_save`, then `_remote_start $uuid ${left}s`. On failure: `_remote_off` and `die`
+  with the reason ("rotate failed: …; remote is off"): never half on. On success print "rotated: every browser was
+  logged out; the URL is the same", the password line, and `clip` the password.
+- `remote who`: `_remote_live || die "remote is off"`. A helper `_remote_who` reads the audit from `auditpos`
+  (`_remote_audit`), keeps only events after the last `start`, adds `login user= sid=` and removes the `sid` on
+  `logout`/`idle-out`; prints `signed in: N` then one line per session `  LOGIN since HH:MM` (sid not shown: it means
+  nothing to a person), then `browsers open now: N` (the `@lzr1_remote` count, as `_remote_status` does at `:999-1001`)
+  and, when signed-in sessions outnumber open browsers, "(a browser closed without logging out stays signed in until
+  its idle logout, RS[idle])". Values only from the fixed keys, control characters stripped, as `_remote_alert`.
+- HUP: a remote turned on from a panel (Task 3.1.2) must survive that panel closing. Prove it RED first (an isolated
+  tmux pane runs `remote on`, then the pane is killed: `remote status` must still say on). Fix in `_remote_start` and
+  `on`: the gateway's subshell does `trap '' HUP` before its `exec` (the Go runtime keeps an ignored SIGHUP ignored);
+  ttyd must NOT inherit an ignored HUP (ttyd ends a browser's `open` with SIGHUP when the browser leaves, which is
+  how a layout ends), so ttyd is started in its own process group instead (`setsid`, else `perl -e 'setpgrp; exec
+  @ARGV'`, as `list_rows` does at `:681-682`), out of the terminal's foreground group.
+- Usage: the header comment (`:22-26`), the `remote)` comment and the usage `die` (`:2021`) list `rotate` and `who`.
+- Edge cases: rotate while a browser types (its WebSocket closes; ttyd's reconnect hits the new gateway, gets 401, and
+  `client.js` sends the page to `login`); rotate on macOS (the new gateway gets a new 127.0.0.1 port, `serve` gets the
+  new target on the same `/UUID`); rotate while Funnel was turned on meanwhile (the Funnel check in `_remote_start`
+  refuses: the remote ends, with the Funnel message); `who` after a kill switch (remote off → "remote is off"); `who`
+  with no logins ("signed in: none"); an audit file deleted by hand (no events, no error).
+
+**Files:**
+- Modify: `bin/lzr1-panel` (header, `remote on` split into `_remote_start` and `_remote_pw`, new `rotate` and `who`,
+  `_remote_who`, `_remote_watch`'s start position, usage)
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `scratchpad/remote/verify-3.1.1.zsh`, RED on the current code
+(no `rotate`/`who`; the HUP case), then GREEN, in the isolated environment of `scratchpad/remote/p2plan/env.zsh`
+(fresh state file per run), `tmux ls` on the real server recorded before and compared after, a `trap` that runs
+`remote off` and checks `tailscale serve status` says "No serve config" on any exit: `LZR1_REMOTE_TTL=15m remote on
+--allow lazari@lerian.studio`; `curl` the login with the right password and `Origin` (303, cookie A); `remote who` →
+`signed in: 1` with the login; `remote rotate` → the URL in the session file unchanged, `expires` unchanged, the
+password different (compared in the script, never printed), the watcher pid new and `_ours`-recognized; cookie A on
+`/UUID/` → 401 within 3 s; the old password → 401; the new one → 303; `who` → `signed in: 1` (only the new login);
+`audit.log` has no password; no alert for the old login was raised again (a stub `terminal-notifier` first on PATH
+logs its calls). HUP: in an isolated `TMUX_TMPDIR` pane, `remote on --allow lazari@lerian.studio --ttl 15m`, then
+`kill-session` of that pane's session → after 3 s `remote status` is on and the URL answers 303/403, not 502. Ends with
+`remote off`, "No serve config", and `tmux ls` unchanged.
+
+**Done when:** `remote rotate` logs every browser out and keeps the URL and expiry, `remote who` lists the logins in,
+and a remote survives the terminal that turned it on closing.
+
+#### Task 3.1.2: `w` and `[web]`: turn it on from the panel, then its menu
+
+- [ ] Done
+
+**Context:** `_panel` (`bin/lzr1-panel:1759-1817`) builds the fzf call: footer at `:1797`, key binds at `:1798-1814`,
+the footer click is `transform:$S _footer $id` (`:1814`) and `_footer` (`:1572-1582`) prints an action per
+`$FZF_CLICK_FOOTER_WORD`, with any row key left as fzf's `{1}`. The row menu `_menu` (`:1615-1752`) is a child fzf in
+`execute`, with header, `left-click:accept`, and `clip` for copies. `clip` (`:482-488`) prefers `pbcopy`. `open` writes
+`$STATE/$id.remote` (the UUID) only for a browser's layout (`:1281`) and clears it for a reused ID (`:1232`). In the tmux
+layout a row menu opened by a click needs `_unclick` (`:1508-1514`, Task 2.2.2); a footer click runs on the release, so
+`[web]` does not. `remote on` asks the allowlist with `vared` when stdin is a terminal (`:1913-1921`). Builds on Task
+3.1.1 (`rotate`, `who`, a remote that outlives the panel).
+
+**Implementation vision:**
+- `clip`: when the shell variable `CLIP_OSC` is set (not exported), write the OSC 52 to `/dev/tty` and nothing else.
+  `_web` and `_menu` set it when `[[ -r $STATE/$id.remote ]]`, so the row menu's copies in a browser's panel reach the
+  browser too.
+- New internal `_web ID` (`execute`d by `w` and by `[web]`):
+  - **Off** (`_remote_live` false), local panel: `$SELF remote on` in the foreground (its own preflight, its `vared`
+    prompt prefilled from `remote.conf`, its output and clip), then `print -n "press a key"; read -k1 -s`. A refusal
+    (Tailscale off, no ttyd…) shows `remote on`'s message, then the same "press a key". Esc or an empty answer at the
+    prompt leaves it off. In a browser's panel the remote cannot be off; if it is (a race with `remote off`), print
+    "remote is off" and wait for a key.
+  - **On:** a child fzf like `_menu`'s (same options, `left-click:accept`, Esc/q/right-click abort), header ` web · on
+    until HH:MM · N browser(s)`, items `url copy the URL`, `password copy the password`, `who who is connected`, then,
+    only in a local panel, `rotate` in red "rotate the password: logs every browser out…" and `off` in red "turn it
+    off…", then `cancel`. Actions: `clip $RS[url]` / `clip $RS[password]` with a one-line "copied …" and a 1 s pause
+    (no key needed); `who` → `$SELF remote who`, "press a key"; `rotate`/`off` → re-check `$STATE/$id.remote` is absent
+    (refuse with a line otherwise), ask `[y/N]` only when a browser is open (`N browser(s) will be logged out`), then
+    `$SELF remote rotate` / `$SELF remote off`, "press a key".
+- `_panel`: footer `[+opus] [+sonnet] [+opencode] [web] [↻] [?]`; `--bind "w:execute($S _web $id)+reload-sync($S _list
+  $id)"`; `_footer` gains `*web*) print -r -- "execute($SELF _web $2)$more"`. Nothing from the screen or a session name
+  is in the transform's text (the rule of the tap-injection fix).
+- Edge cases: `w` pressed twice fast (the second waits behind `execute`); a Ghostty split (same code: `execute` runs in
+  the panel's own split; only `clip`'s path differs, and a local Ghostty panel is never a browser's); the narrow layout
+  (the menu's 46 columns: labels cut by fzf, the header by `_cut` as `_menu` does); the first footer click after the web
+  menu closed by a click must still work (the panel saw that click's press and release); `remote on` dying inside
+  `execute` returns to the panel, which still works.
+
+**Files:**
+- Modify: `bin/lzr1-panel` (`clip`, `_menu` (sets `CLIP_OSC`), new `_web`, `_footer`, `_panel`)
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `scratchpad/remote/verify-3.1.2.zsh` (isolated as 2.2.2:
+`p2plan/env.zsh`), RED then GREEN: (1) offline, with a stand-in remote (a session file whose `gwpid` is a `sleep`
+started with an `exec -a` name that `_ours` takes for the gateway, `lzr1-remote-gw x --base /UUID/ x`; only that pid is
+stopped at the end): drive an isolated `open` through fzf's `--listen`
+API and mouse bytes: the footer shows `[web]` and fits at 56 and at 46 columns (`capture-pane`); `w` opens the menu with
+5 actions + cancel; "copy the URL" with a stand-in `pbcopy` first on PATH that logs → the URL logged; the same panel
+with `$STATE/ID.remote` present → 3 actions + cancel, `pbcopy` not called, and the isolated `lzr1` server's newest buffer holds the URL
+(with `set-clipboard on` tmux stores an OSC 52 it receives, and sends it on to the client); a `[web]` click → the same menu; after the menu is
+closed with a click, a click on `[?]` shows the keys. (2) Live, once: `LZR1_REMOTE_TTL=15m`, the allowlist answer
+typed into the `vared` prompt as `lazari@lerian.studio` → `remote status` on, the stand-in `pbcopy` holds the URL;
+`w` → "turn it off…" → "No serve config". `tmux ls` on the real server unchanged.
+
+**Done when:** from a local panel `w` and `[web]` turn the remote on and open its menu, every action works, and a
+browser's panel offers only the copies (to the browser's clipboard) and who is connected.
+
+#### Task 3.1.3: `⇄ web` in the summary line, `keys`, and the menu from a real browser
+
+- [ ] Done
+
+**Context:** The summary line is the panel's header row, printed last by `list_rows` (`bin/lzr1-panel:693`): `N sessions
+· w▶ q⧗ i· · a✱`; `lzr1-panel list` prints it too (`:1205`). `list_rows` runs every 15 s and after every
+`reload-sync`, so whatever it adds must be cheap and must not change anything (`_remote_live` runs `_remote_off` on a
+stale session, `:845-850`). `keys` (`:1839-1869`) is a heredoc whose text fills the panel's `[?]` view; Task 2.2.4 found
+one more row pushed its title off a 40-row panel. The browser checks of Tasks 2.2.1-2.2.4 use Playwright with the
+isolated `remote on` (`scratchpad/remote/verify-2.2.4.js`). Builds on Task 3.1.2.
+
+**Implementation vision:**
+- `list_rows`: ` · ⇄ web` at the end of the header when `_remote_read && _ours $RS[gwpid] gw $RS[uuid]` (one `ps`; no
+  cleanup, no Tailscale call). In the colours of the line around it, no new colour.
+- `keys`: one line `  w  or [web]     the panel in a browser: on, copy, who, off`, at most 56 columns, with no more lines
+  in total than today: shorten the two-line `x` entry to one (`x  end the session (asks first); the next one shows`).
+- Browser check (`verify-3.1.3.js`, the `verify-2.2.4.js` pattern): log in through the tailnet URL, press `w` in the
+  browser's panel → the menu has exactly copy URL, copy password, who is connected, cancel; "copy the URL" →
+  `navigator.clipboard.readText()` gives the URL; "who is connected" lists `lazari@lerian.studio`; the header shows
+  `⇄ web`; the local panel's `w` → rotate → the browser's page shows the login form within 5 s, and the new password logs
+  it in again on the session it showed (`.last`).
+- Edge cases: a stale session file (gateway gone) → no `⇄ web` and no cleanup from `list_rows`; the remote turned off
+  from another terminal → the mark goes at the next refresh (15 s) or reload; `LZR1_PRS=0` and no profiles (the
+  header is printed by the no-profiles branch at `:583-586`: no mark there is acceptable, a remote with no profiles
+  lists nothing).
+
+**Files:**
+- Modify: `bin/lzr1-panel` (`list_rows`, `keys`)
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `verify-3.1.3.zsh` (isolated, the stand-in remote of 3.1.2):
+the header row of `_list` ends in `⇄ web` with the stand-in gateway alive and not after its `sleep` is stopped, and the
+session file is still there (no cleanup); `keys` has no more lines than before and none over 56 columns; 2.2.2's footer
+check (`[?]` right after a menu) still passes. Then `verify-3.1.3.js` live as above (allowlist only
+lazari@lerian.studio, `LZR1_REMOTE_TTL=15m`, `remote off` in `finally`), ending with "No serve config" and `tmux ls`
+unchanged.
+
+**Done when:** the panel shows `⇄ web` while the remote is on, `keys` lists `w`, and a real browser's panel gets the
+reduced menu with copies to its own clipboard, and is logged out by a rotate.
 
 ### Epic 3.2: Installer, doctor and docs
 
@@ -686,6 +880,130 @@ troubleshooting and `docs/remote.md` cover setup, use, safety and turning it off
 **Done when:** a fresh `./install.sh` on macOS and Linux leaves `lzr1-panel remote on` working, and `doctor` reports
 each missing piece with its fix.
 **Status:** Pending
+
+#### Task 3.2.1: The installer offers ttyd and Go; `doctor` gets a remote section
+
+- [ ] Done
+
+**Context:** `install.sh` installs ttyd without asking (`install.sh:101-107`) and only builds the gateway when Go is
+already there (`:172-178`, after the command is linked, through `lzr1-panel remote build` with its output thrown
+away). `ask` (`:38`) reads `/dev/tty` and is always yes with `--yes`; `pkg_install` (`:71-82`) covers brew, apt-get,
+dnf, pacman, zypper, apk. The header (`:9`) lists ttyd among the tools. The script must parse on macOS's bash 3.2. `doctor`
+(`bin/lzr1-panel:1076-1144`) prints sections with `_ok` (✓), `_no` (✗, sets `bad`), `_hint` (→) and plain `·` lines
+(informational), and exits `$bad`. `_ts_info` (`:754-761`) dies without jq; `_remote_gw` (`:962-972`) builds when stale;
+`_remote_funnel` (`:797-803`). `gateway/go.mod` says `go 1.26`: an older distribution Go fetches 1.26 itself
+(`GOTOOLCHAIN=auto`, the default) or fails with `GOTOOLCHAIN=local`.
+
+**Implementation vision:**
+- Installer, one optional step after the tools: when ttyd or Go is missing, `ask "Install ttyd and Go for lzr1-panel
+  remote (the panel in a browser on your tailnet)?"`; yes → `pkg_install` each missing one (Go's package: `go` on
+  brew, pacman, zypper and apk, `golang-go` on apt-get, `golang` on dnf; a `case`, no associative arrays), each failure
+  a `warn` that names the package and continues; no → `info "skipped: lzr1-panel remote needs ttyd and Go"`. ttyd leaves
+  the unconditional list and the header says "ttyd and Go if you want the panel in a browser". Tailscale is not
+  installed (a system VPN app): `info` with tailscale.com/download when neither `tailscale` nor the macOS app is found.
+- Build step (`:172-178`): keep it, but on failure show the last line of `remote build`'s output (a Go too old says so
+  there) in the `warn`.
+- `_remote_gw` split: `_remote_gw_state` sets `REPLY` to the path and returns 0 when built and current, 1 when stale or
+  missing; `_remote_gw` uses it, so `doctor` never builds.
+- `doctor`, a section `remote (the panel in a browser: docs/remote.md)` before "profiles". It is informational
+  (`·` lines, `bad` untouched) unless the remote is set up on this computer (`$CONFIG/remote.conf` exists, the gateway
+  is built, or `$RDIR/session` exists): then a piece without which `remote on` cannot work at all is ✗ with its fix.
+  Checks, in order: Tailscale CLI (`$TSBIN`, its version) → "tailscale.com/download"; jq (needed to read Tailscale's
+  status) → `./install.sh installs it`; `BackendState` Running → "open Tailscale, or run tailscale up"; HTTPS
+  certificates (`CertDomains`) → "admin console: DNS → HTTPS Certificates", and the host name when on; Funnel on for
+  `HOST:443` → ✗ always ("remote refuses to publish while Funnel is on: tailscale funnel reset"); ttyd and its version →
+  `brew install ttyd` / `apt install ttyd`; the gateway built and current (✓), else Go present ("built on the first remote
+  on") or neither (✗ when set up: `brew install go`); Linux only: root, or `tailscale debug prefs` `OperatorUser` equal
+  to `$USER` → else `sudo tailscale set --operator=$USER` (a `debug prefs` that fails: `· cannot tell`); the
+  `LZR1_REMOTE_TTL`/`IDLE`/`PWLEN` values (a bad one is ✗ when set up: `remote on` refuses it; the check must not `die`,
+  so the pattern of `_dur` is tested inline); last, the state: on (URL, expiry, logins: never the password), off, or
+  "a path may still be published" (session file without a live gateway → ✗ "lzr1-panel remote off"). Read-only:
+  `doctor` never starts, stops or cleans anything (so it calls neither `_remote_live` nor `_remote_gw`).
+- Edge cases: no jq (the Tailscale checks after the CLI say "needs jq", no `die`); Tailscale logged out
+  (`NeedsLogin`); the macOS app installed but not running (`status --json` fails: "Tailscale is not running");
+  `LZR1_PRS=0` irrelevant; a fresh machine without anything remote (one informational section, `doctor` still "all
+  good").
+
+**Files:**
+- Modify: `install.sh` (header, the ttyd/Go step, the build step), `bin/lzr1-panel` (`doctor`, `_remote_gw_state`)
+
+**Verification:** `bash -n install.sh && /bin/bash -n install.sh && zsh -n bin/lzr1-panel lib/splash.zsh`.
+`scratchpad/remote/verify-3.2.1.zsh`, RED then GREEN. Installer, with a scratch `HOME`, `XDG_CONFIG_HOME`,
+`XDG_CACHE_HOME` and `LZR1_PRS=0`, `--no-shell`, and a scratch `bin` first on PATH holding links to the real zsh, tmux,
+curl, openssl, git, fzf, jq, gh and a stand-in `claude` (never the real installers): (a) no ttyd and no go, a stand-in
+`brew` that logs its arguments and fails → `brew install ttyd` and `brew install go` logged, two warnings, the run
+completes; (b) the stand-in `brew` creates a stand-in `ttyd` and links the real `go` → "remote gateway built" and the
+binary in the scratch cache; (c) a stand-in `uname` printing `Linux`, `apt-get` and `sudo` (which execs its arguments)
+→ `apt-get install -y ttyd` and `golang-go` logged; (d) without `--yes` and no `/dev/tty` answer → "skipped". No
+real package is installed (`brew list` unchanged is not needed: no real `brew` is on that PATH). Doctor, in the
+isolated env with a stand-in `tailscale` first on PATH answering `status --json` and `serve status --json` from fixture
+files: Running with certificates → ✓ lines and the host; `Stopped` → its fix; no `CertDomains` → the HTTPS fix; Funnel
+on → ✗ even when not set up; not set up (no `remote.conf`, no gateway, no session) with ttyd missing → `·` and exit 0;
+set up with ttyd missing → ✗ and exit 1; `LZR1_REMOTE_TTL=8x` set up → ✗; a session file with a dead gateway → ✗
+"remote off", and the file still there afterwards. Then once with the real Tailscale: the section reports Running,
+HTTPS on and the host name.
+
+**Done when:** `./install.sh` offers ttyd and Go and builds the gateway (macOS and Linux package names), and `doctor`
+reports every remote piece with its fix, failing only when a set-up remote cannot work.
+
+#### Task 3.2.2: README, troubleshooting and `docs/remote.md`
+
+- [ ] Done
+
+**Context:** `README.md` says nothing about the remote: "What you get" (`README.md:87-100`), the panel's keys
+(`:131-144`), "From the command line" (`:180-197`), "What the installer does" (`:257-277`), "Settings" (`:280-296`,
+`LZR1_NARROW` is there), "Inside the repository" (`:311-321`, no `gateway/` or `docs/remote.md`).
+`docs/troubleshooting.md` has a contents list (`:12-21`) and sections per area, each problem as "what you see, why,
+the fix"; none for the remote. `docs/remote.md` has the usage block (`:6-13`), the settings table (`:15-20`), "What it
+needs" (`:25-31`), "Turning it off" (`:133-151`) and the fidelity table (`:196-228`), whose Safari and Phone columns
+say "needs a person" and whose closing paragraph (`:226-228`) lists what is left. The owner used the remote in Safari,
+Chrome and Brave on a Mac and on a phone on 2026-10-29 and said it works. Tasks 3.1.1-3.2.1 added `rotate`, `who`, the
+`w` key, the `[web]` button, `⇄ web`, the installer step and the doctor section.
+
+**Implementation vision:**
+- README: a "What you get" row (🌐 **The panel in a browser**: one key publishes it to your tailnet, behind your
+  Tailscale login and a password; docs/remote.md); the keys table gains `w`, or `[web]`; "From the command line" gains
+  `remote on|off|status|url|password|rotate|who`; "Settings" gains `LZR1_REMOTE_TTL` (8h), `LZR1_REMOTE_IDLE` (30m),
+  `LZR1_REMOTE_NOTIFY` (1), `LZR1_REMOTE_PWLEN` (16, at least 12), the same wording as `docs/remote.md:15-20`; the
+  installer list mentions ttyd and Go (asked) and the gateway build; "Inside the repository" lists `gateway/` and
+  `docs/remote.md`; the Contributing block adds `cd gateway && go vet ./... && go test ./... -race`. A short
+  `### In a browser` subsection under "Using it": what it is, `w`, the menu, the browser's own panel offering only
+  copies and who, the safety in one sentence, then the link.
+- `docs/troubleshooting.md`: a `## Remote panel (in a browser)` section and its contents entry, each problem titled by
+  the exact text the user sees (copied from the code, not paraphrased): `remote needs Tailscale`, `Tailscale is not
+  connected`, `turn on HTTPS in the Tailscale admin console`, `Funnel is on for …`, `serve needs root on Linux`,
+  `remote needs ttyd`, `remote needs Go` / `could not build the gateway` (Go too old: `GOTOOLCHAIN`), `the gateway did
+  not start`, the browser's "signed in to Tailscale as X, not allowed here" and "no Tailscale identity" (tagged device,
+  another tailnet), "Too many wrong passwords: locked until", "the remote panel was turned off" (kill switch), back at
+  the login form (idle logout, a rotate), a 502 after login (ttyd stopped: off then on), `could not unpublish` / `remote:
+  off, but its path may still be published`, "`w` in the browser has no turn off" (by design), a copy that does not
+  reach the clipboard (Safari's "click to copy"). The doctor's remote lines point here.
+- `docs/remote.md`: the usage block adds `rotate` and `who`; a `## From the panel` section (`w`/`[web]`, the menu, `⇄
+  web`, the browser's reduced menu and why); a `## Rotating the password` paragraph (what ends, what stays: URL,
+  expiry, ttyd); "What it needs" says `./install.sh` offers ttyd and Go and `lzr1-panel doctor` checks it all;
+  "Turning it off" mentions the menu. Fidelity table: a **Brave** column is added beside Safari, and every Safari,
+  Brave and Phone cell reads "checked by the owner on 2026-10-29: works"; the text above the table says the owner used it
+  by hand in Safari, Chrome and Brave on a Mac and on a phone and reported that it works (a whole check, not item by
+  item); the closing paragraph keeps only what is still true (a click during a reload is dropped; the browser keeps its
+  own shortcuts such as Cmd-W).
+- Edge cases (accuracy): every key, flag, variable, default and message quoted is checked against `bin/lzr1-panel`
+  as it is after Tasks 3.1.1-3.2.1; no password, real URL or tailnet name in an example (`<machine>.<tailnet>.ts.net`,
+  `<uuid>`); README tables stay within the existing style (emoji headings, two-column tables).
+
+**Files:**
+- Modify: `README.md`, `docs/troubleshooting.md`, `docs/remote.md`
+
+**Verification:** `scratchpad/remote/verify-3.2.2.zsh`, RED on the current docs then GREEN: every `LZR1_REMOTE_*`
+variable and every `remote` subcommand in `bin/lzr1-panel`'s usage appears in README and `docs/remote.md`; every
+`die`/`print -ru2` message of `remote` and the doctor's remote section that the troubleshooting section names is found
+verbatim in `bin/lzr1-panel` (a grep per quoted message); the troubleshooting contents link resolves to its heading
+(GitHub's anchor rule); the fidelity table has 4 browser columns and no "needs a person" left in the Safari, Brave and
+Phone columns; no `ts.net` host other than the placeholder and no 16-character password-like string in the three files;
+`zsh -n bin/lzr1-panel lib/splash.zsh` (unchanged code). Read once rendered (`gh markdown-preview` is not needed:
+reading the Markdown is enough).
+
+**Done when:** a reader can set up, use, rotate and turn off the remote from README and `docs/remote.md` alone, every
+remote error has a troubleshooting entry, and the fidelity table records the owner's check.
 
 ## Deviations
 
@@ -892,3 +1210,17 @@ each missing piece with its fix.
   it (`idleEndLocked`, shared by `session`, `touch` and `idleOut`). The terminal-reply filter also recognizes DECRQM
   (`$y`), DECXCPR (`?r;cR`), DECRQSS (`ESC P 0|1 $ r … ST`) and OSC 4 palette replies. Known gap (Low): xterm.js sends
   Shift/Ctrl/Alt+F3 as `ESC [ 1 ; mod R`, the same shape as a cursor report, so those keys alone do not count as input.
+- Phase 3 elaboration (decisions beyond the epic text): the key is `w` and the button `[web]` (the footer is 43
+  columns); `lzr1-panel remote rotate` and `remote who` exist on the command line too, and the panel's menu calls
+  them; rotate keeps the URL, the expiry, the idle limit and ttyd, prints and copies the new password, and turns the
+  remote off rather than leave it half on when the new gateway cannot start. "Who is connected" is the logins whose
+  session has no logout or idle-out since the gateway's last `start`, plus the browsers open now. A browser's own panel
+  is told by `$STATE/ID.remote` (written by `open`), not by an exported `LZR1_REMOTE`, which could leak into a tmux
+  server `_new` starts; it offers only the two copies and who is connected, and the CLI is not guarded (a terminal in
+  a session is the user already). Copies made in a browser's panel (the web menu and the row menu) go to the browser's
+  clipboard through OSC 52, not this Mac's `pbcopy`. A remote turned on from a panel must outlive that panel: the
+  gateway ignores HUP, and ttyd runs in its own process group (an ignored HUP would stop ttyd ending a browser's
+  layout). `doctor`'s remote section is informational unless the remote is set up on the computer (`remote.conf`, a
+  built gateway, or a session file); Funnel on for the machine is always ✗. The installer asks before installing ttyd
+  and Go (ttyd was installed without asking). The fidelity table gains a Brave column; the owner's by-hand check of
+  Safari, Chrome and Brave on a Mac and a phone fills the Safari, Brave and Phone cells.
