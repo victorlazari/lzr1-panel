@@ -35,7 +35,7 @@
 
 ```
  lzr1 ───────────────────────────────────────────────
- 3 sessions · 1▶ 1⧗ 1·
+ 3 sessions · 1▶ 1⧗ 1· · 1✱
  oracle-sessions ssh · online · 2 ───────────────────
  ▌ ▶ lerian-clients                     opus · 12m ●
  ▌   Docker dev data export and import
@@ -44,7 +44,7 @@
      Review the tmux layer
      ⎇ main · erebor
  macbook-pro-sessions local · online · 1 ────────────
-   ⧗ midaz                               opus · 4m
+   ⧗ ✱ midaz                             opus · 4m
      ⧗ Do you want to run make test?
      ⎇ feat/fees +7 · midaz
 
@@ -89,7 +89,7 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 | | |
 |---|---|
 | 🖥 **All your machines** | This computer and any server over SSH, each one a *profile*. A machine that does not answer is left out until it does. |
-| 📋 **Every session, at a glance** | Three lines each: its state (`▶` working, `⧗` waiting on you, `·` idle), name, model and age; what Claude is doing, or the question it is waiting on; its git branch and folder. |
+| 📋 **Every session, at a glance** | Three lines each: its state (`▶` working, `⧗` waiting on you, `·` idle; `✱` finished or asking since you last looked), name, model and age; what Claude is doing, or the question it is waiting on; its git branch and folder. |
 | 🔀 **Your pull requests** | Below the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
 | 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |

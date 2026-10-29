@@ -368,6 +368,7 @@ _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
 # its reply (working → idle) or shows a new question. Each session's last state is kept in $STATE/seen/PROFILE/NAME
 # ("state<US>waitfor"), shared by every open panel, so one change alerts once. An alert marks the session unread
 # ($STATE/unread/PROFILE/NAME holds its kind) and goes to $alerts as "kind<US>profile<US>session<US>text".
+# An unread session shows ✱ after its glyph, and the summary counts them; the one in the viewer is read already.
 list_rows() {
   local -a names=( $(profiles) )
   if (( ! $#names )); then
@@ -387,7 +388,7 @@ list_rows() {
   prs_refresh &
   wait
   local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
-  local -a items got; local n=0 w=0 q=0 i=0 line kind glyph right l1 l2 l3
+  local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur
   local name st att age url model dir title branch changed waitfor
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   local US=$'\037' track= seeded= f pst pwf ak t=0
@@ -400,6 +401,7 @@ list_rows() {
     (( t <= 20 )) && track=1
     # A panel's first refresh only records: one reopened hours later does not alert for everything since.
     [[ -e $STATE/$1.seeded ]] && seeded=1
+    [[ -r $STATE/$1.target ]] && cur=$(<$STATE/$1.target)
   fi
   for p in $names; do
     # A profile whose machine does not answer is left out until it does.
@@ -432,9 +434,13 @@ list_rows() {
         wait) (( q++ )); glyph="$Y⧗$R" ;;
         *)    (( i++ )); glyph="$D·$R" ;;
       esac
+      mk= u=$STATE/unread/$p/$name
+      if [[ -n $1 && $p/$name == "$cur" ]]; then rm -f $u
+      elif [[ -n $1 && -e $u ]]; then mk="$B$Y✱$R "; (( a++ )); fi
       _ago $age; age=$REPLY
       right="${model:+$model · }$age"
-      _cut $name $(( W - 6 - ${#right} )); l1=" $glyph ${(r:W - 6 - ${#right}:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
+      pw=$(( W - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
+      _cut $name $pw; l1=" $glyph $mk${(r:pw:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
       if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( W - 4 )); l2="   $Y$REPLY$R"
       elif [[ -n $title ]]; then _cut $title $(( W - 4 )); l2="   $M$REPLY$R"
       else l2="   ${D}no task yet$R"; fi
@@ -446,7 +452,7 @@ list_rows() {
   done
   rm -rf $tmp
   if [[ -n $track ]]; then [[ -n $seeded ]] || : >$STATE/$1.seeded; rmdir $STATE/seen.lock 2>/dev/null; fi
-  print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·"$'\0'
+  print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
 }
@@ -721,7 +727,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   [[ -z $KP || -z $KS || $KP == +pr ]] && exit 0
   # A click on another row, enter or a new session brings back a viewer pane that was closed.
   if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
-    print -rn -- $key >$tfile
+    print -rn -- $key >$tfile; rm -f $STATE/unread/$KP/$KS
     $SELF _respawn $id
     exit 0
   fi
@@ -736,7 +742,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   sleep 0.35
   [[ $(<$tfile.want 2>/dev/null) == $key ]] || exit 0
   local was=$(<$tfile 2>/dev/null)
-  print -rn -- $key >$tfile
+  print -rn -- $key >$tfile; rm -f $STATE/unread/$KP/$KS
   [[ -z $was ]] && exit 0  # an idle viewer picks the target up by itself
   if [[ ${was%%/*} == $KP ]]; then
     # Same machine: switch the attached client in place.
@@ -1111,6 +1117,7 @@ keys)
   If Claude exits, its session stays: Enter resumes the conversation.
 
   glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
+          ✱ finished or asking since you last looked
   PRs:    ✓ checks passed  ✗ failed or changes requested  ⧗ running or review pending  ◌ draft
 
   press a key

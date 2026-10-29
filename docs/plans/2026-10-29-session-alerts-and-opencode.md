@@ -108,7 +108,7 @@ tmux kill-session -t =alert-t
 
 #### Task 1.1.2: Show the unread mark and clear it when you look
 
-- [ ] Done
+- [x] Done
 
 **Context:** a session's first line is built at `bin/lzr1-panel:408`: state glyph, name padded to
 `W - 6 - ${#right}`, model and age, `●` when attached. The summary heading is `:419`
