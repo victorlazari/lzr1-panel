@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"log"
 	"net"
 	"net/http"
@@ -82,29 +80,6 @@ func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 	return s
 }
 
-// newSession issues a session token bound to login.
-func (s *server) newSession(login string) string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	t := hex.EncodeToString(b)
-	s.mu.Lock()
-	s.sessions[t] = login
-	s.mu.Unlock()
-	return t
-}
-
-// authenticated reports whether r carries a live session cookie.
-func (s *server) authenticated(r *http.Request) bool {
-	ck, err := r.Cookie(cookieName)
-	if err != nil || ck.Value == "" {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, ok := s.sessions[ck.Value]
-	return ok
-}
-
 // underBase reports whether p, once cleaned, is the base itself or below it.
 func (s *server) underBase(p string) bool {
 	c := path.Clean(p)
@@ -124,7 +99,28 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	login, ok := s.identity(w, r)
+	if !ok {
+		return
+	}
+	if !sameOrigin(r) {
+		s.log.Printf("refused %s %s for %s: Origin %q", r.Method, r.URL.Path, login, r.Header.Get("Origin"))
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
+	switch r.URL.Path {
+	case s.base + "login":
+		s.serveLogin(w, r, login)
+		return
+	case s.base + "logout":
+		s.serveLogout(w, r, login)
+		return
+	}
 	if !s.authenticated(r) {
+		if wantsHTML(r) {
+			http.Redirect(w, r, s.base+"login", http.StatusSeeOther)
+			return
+		}
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}

@@ -162,7 +162,7 @@ func TestProxyWebSocket(t *testing.T) {
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	io.WriteString(conn, "GET "+testBase+"ws HTTP/1.1\r\nHost: gw\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"+
 		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: tty\r\n"+
-		"Cookie: "+cookieName+"="+tok+"\r\n\r\n")
+		"Tailscale-User-Login: you@example.com\r\nOrigin: https://gw\r\nCookie: "+cookieName+"="+tok+"\r\n\r\n")
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
@@ -204,6 +204,7 @@ func TestProxyUnauthenticated(t *testing.T) {
 	for _, c := range cases {
 		req, _ := http.NewRequest("GET", "http://gw/", nil)
 		req.URL.Opaque = c.path // keep the path exactly as written
+		req.Header.Set("Tailscale-User-Login", "you@example.com")
 		if c.cookie != "" {
 			req.Header.Set("Cookie", c.cookie)
 		}
@@ -229,7 +230,8 @@ func TestProxyUnauthenticated(t *testing.T) {
 	}
 	defer conn.Close()
 	io.WriteString(conn, "GET "+testBase+"ws HTTP/1.1\r\nHost: gw\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"+
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"+
+		"Tailscale-User-Login: you@example.com\r\nOrigin: https://gw\r\n\r\n")
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil || resp.StatusCode != 401 {
 		t.Fatalf("unauthenticated upgrade: %v %v", resp, err)
@@ -243,6 +245,7 @@ func TestProxyUpstreamDown(t *testing.T) {
 	dir := sockDir(t)
 	s, client, _ := startGateway(t, dir, filepath.Join(dir, "ttyd.sock"))
 	req, _ := http.NewRequest("GET", "http://gw"+testBase, nil)
+	req.Header.Set("Tailscale-User-Login", "you@example.com")
 	req.Header.Set("Cookie", cookieName+"="+s.newSession("you@example.com"))
 	resp, err := client.Do(req)
 	if err != nil {

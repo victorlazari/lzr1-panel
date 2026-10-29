@@ -55,7 +55,7 @@ right password, sets a hardened session cookie, and reverse-proxies HTTP and Web
 **Scope:** `gateway/` (new Go module), `.gitignore`
 **Dependencies:** none
 **Done when:** `cd gateway && go test ./... -count=1` passes the cases in Task 1.1.2 and `go vet ./...` is clean.
-**Status:** Pending
+**Status:** Done
 
 Contract with Epic 1.2 (both epics depend on it, so it is fixed here):
 
@@ -113,7 +113,7 @@ HTTP and WebSocket traffic for authenticated requests.
 
 #### Task 1.1.2: Identity allowlist, password login, session cookie, Origin checks
 
-- [ ] Done
+- [x] Done
 
 **Context:** `tailscale serve` adds `Tailscale-User-Login` (the user's e-mail) and `Tailscale-User-Name` to
 requests from user-owned tailnet devices; requests from tagged devices carry no identity. Only `tailscale serve`
@@ -293,3 +293,9 @@ each missing piece with its fix.
   with 0700/0600 and 0755/0666 modes alike. The macOS app apparently cannot reach a Unix-socket upstream; Task 1.2.1
   must confirm and probably give the gateway a loopback TCP listener (`127.0.0.1:0`, still behind the login).
   Whether `serve` strips the `/UUID` mount path before proxying is still unverified.
+- Task 1.1.2: the 1.1.1 proxy tests now send `Tailscale-User-Login` (and `Origin` on upgrades), since identity is
+  checked before the session; without it they get 403. A request with two `Tailscale-User-Login` headers is 403.
+  Origin is required on every non-GET/HEAD/OPTIONS method and every `Upgrade`, not only POST and WebSocket, and must
+  equal `https://` + the request's `Host` exactly: Task 1.2.1 must confirm `tailscale serve` passes the browser's
+  Host through (if it rewrites it, compare against the published `*.ts.net` name instead). Wrong password re-renders
+  the form with 401; other methods on `login`/`logout` get 405; `logout` only deletes a session bound to the caller.
