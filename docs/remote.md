@@ -7,9 +7,17 @@ as one of the logins you allow, can open the URL, type the password and use the 
 lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h]   publish; prints the URL and the password, copies the URL
 lzr1-panel remote password                                   copy the password
 lzr1-panel remote url                                        copy the URL again
-lzr1-panel remote status                                     on or off, the URL, who is allowed, when it expires
+lzr1-panel remote status                                     on or off, the URL, who is allowed, when it expires,
+                                                             the logins and wrong passwords so far
 lzr1-panel remote off                                        unpublish and stop everything
 ```
+
+| Variable | Default | What it sets |
+|----------|---------|--------------|
+| `LZR1_REMOTE_TTL` | `8h` | How long the remote stays on (`--ttl` wins over it). Hours, minutes or seconds: `8h`, `90m`, `1h30m`. |
+| `LZR1_REMOTE_IDLE` | `30m` | A browser that sends no input for this long is logged out and its panel ends. |
+| `LZR1_REMOTE_NOTIFY` | `1` | `0` turns off the remote's alerts. `LZR1_NOTIFY=0` (the sessions' alerts) does not, so a wrong-password burst is still seen. |
+| `LZR1_REMOTE_PWLEN` | `16` | The password's length, 12 at least. |
 
 Without `--allow`, `remote on` asks for the logins allowed in, prefilled with the last answer (the first time, this
 machine's Tailscale login), and keeps the answer in `~/.config/lzr1-panel/remote.conf`.
@@ -66,16 +74,57 @@ Each request has to pass all of these, in order:
 | A random path, a UUID v4 (122 random bits) | Guessing the address from inside the tailnet; anything else answers 404. |
 | The Tailscale identity (`Tailscale-User-Login`, set by `serve`) on the allowlist | Other people on the tailnet, and tagged devices (they carry no identity), on every request and WebSocket. |
 | The password: 16 characters by default (`LZR1_REMOTE_PWLEN`, 12 at least) from 56 look-alike-free characters, about 93 bits, made by `openssl rand` | Someone using an allowed person's unlocked device without knowing it. The gateway keeps only its SHA-256 and compares in constant time; it is never in a command line or the environment. |
-| A session cookie: 32 random bytes, `HttpOnly; Secure; SameSite=Strict; Path=/<uuid>/`, no expiry (ends with the browser), bound to the login that signed in | Scripts reading it, sending it to another site, or another tailnet user replaying it. |
+| A session cookie: 32 random bytes, `HttpOnly; Secure; SameSite=Strict; Path=/<uuid>/`, no `Expires` (ends with the browser, or earlier at the idle logout), bound to the login that signed in | Scripts reading it, sending it to another site, or another tailnet user replaying it. |
+| A lockout: 5 wrong passwords from one login lock that login out for 15 minutes; attempts while locked are refused unchecked (429) | Guessing the password from one allowed device. |
+| A kill switch: 20 wrong passwords in total (locked attempts included) turn the whole remote off and alert | A slow guess spread over several logins, or one that waits out each lockout. |
+| An idle logout (`LZR1_REMOTE_IDLE`, 30 minutes by default): no key, click, paste or resize from the browser for that long ends the session and its panel; the next request gets the login form | A browser left open and walked away from. ttyd's keep-alive pings do not count as input, so a session that only prints (a long Claude run you are not touching) is logged out too. |
 | `Origin` must be `https://<the machine's name>` on every POST and WebSocket upgrade | Another web page driving the terminal from your browser (cross-site WebSocket hijacking). |
 | Headers on every response: `Cache-Control: no-store`, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, a same-origin `Content-Security-Policy`, `Referrer-Policy: same-origin`, `nosniff` | Caching the terminal, framing it, leaking the URL in a Referer. |
-| An expiry (`--ttl`, 8 hours by default) | A session forgotten on. |
+| An expiry (`--ttl` or `LZR1_REMOTE_TTL`, 8 hours by default) | A remote forgotten on. |
 
 What it does not protect against: anyone who can run programs as you on this computer (they can read the session
 file, password included); on macOS, any local user or process on this Mac, because they can reach the gateway's
 loopback port, send any `Tailscale-User-Login` and `Origin`, and so bypass the e-mail allowlist and the Origin check
 (the password still protects it); and an allowed person who has the password: they get a full terminal as you, on
-every machine your profiles reach. On Linux the gateway's socket is reachable only by you and root. Logins, failures and logouts go to `~/.cache/lzr1-panel/remote/remote.log`, never the password or a cookie.
+every machine your profiles reach. On Linux the gateway's socket is reachable only by you and root. Logins, failures,
+lockouts, logouts and shutdowns go to the audit trail, `~/.cache/lzr1-panel/remote/audit.log` (below), never the
+password or a cookie.
+
+## Audit and alerts
+
+The gateway appends one line per event to `~/.cache/lzr1-panel/remote/audit.log` (mode 0600; a symlink or anything
+but a regular file is refused). It never holds the password, a cookie or a session token; a session is named by the
+first 8 hex characters of the SHA-256 of its token. `remote on` keeps the file's last 2000 lines.
+
+```text
+TIME EVENT key=value...      TIME is RFC 3339 with the local offset; values never hold spaces
+start     ttl=8h0m0s idle=30m0s
+login     user=LOGIN sid=SID
+failure   user=LOGIN fails=N total=T [locked=1]
+lockout   user=LOGIN until=TIME
+logout    user=LOGIN sid=SID
+idle-out  user=LOGIN sid=SID
+shutdown  reason=ttl|signal|killswitch
+```
+
+The watcher reads the new lines every second and raises an OS notification (titled "lzr1 remote", through
+terminal-notifier, `osascript` or `notify-send`, as the sessions' alerts; none when there is no notifier) for:
+
+| Event | Notification |
+|-------|--------------|
+| `login` | LOGIN logged in |
+| `failure` | N wrong passwords (LOGIN, ...): at most one every 30 seconds, later ones added to the next |
+| `lockout` | LOGIN locked out until HH:MM (5 wrong passwords) |
+| `shutdown reason=killswitch` | turned off: 20 wrong passwords |
+| `shutdown reason=ttl` | expired, turned off |
+| the gateway ended without a `shutdown` line (a crash, a kill) | the gateway stopped; turned off |
+| `tailscale serve` ended (Tailscale quit) | tailscale serve ended; turned off |
+| Funnel appeared for the machine | Funnel appeared; turned off |
+
+`logout` and `idle-out` are recorded, not notified, and a `remote off` you type is neither. `remote status` adds the
+remote's logins and wrong passwords so far, and who is locked out until when; after the kill switch it says
+"off: the kill switch turned it off at HH:MM". `~/.cache/lzr1-panel/remote/remote.log` keeps the other messages: start
+errors, upstream errors and refused logins (a login not on the allowlist). Both files stay after `remote off`.
 
 ## Turning it off
 

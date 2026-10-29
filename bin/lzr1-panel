@@ -20,8 +20,11 @@
 #   lzr1-panel keys                                  the panel's keys
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
 #   lzr1-panel remote on [--allow EMAIL] [--ttl 8h]  the panel in a browser on your tailnet: prints a private URL and
-#                                                    password, copies the URL (docs/remote.md)
-#   lzr1-panel remote off|status|url|password        end it, show it, copy the URL or the password again
+#                                                    password, copies the URL (docs/remote.md); LZR1_REMOTE_TTL (8h),
+#                                                    LZR1_REMOTE_IDLE (30m without input logs a browser out),
+#                                                    LZR1_REMOTE_NOTIFY=0 (no login or wrong-password alerts)
+#   lzr1-panel remote off|status|url|password        end it, show it (with its logins and failures), copy the URL or
+#                                                    the password again
 #
 # Profiles live in ~/.config/lzr1-panel/profiles/<name>.conf, outside the repository: hosts, keys and paths are yours.
 emulate -L zsh
@@ -847,21 +850,96 @@ _remote_keeper() {
   _stop $(<$RDIR/serve.pid) serve $u
 }
 
-# _remote_watch UUID: the watcher, a process of its own (`lzr1-panel remote watch UUID`). Turns everything off when the
-# gateway ends (--ttl, a crash) or serve does (Tailscale quit), or when Funnel is on for this address (checked every
-# 10 s; a status Tailscale cannot give counts as on).
+# _remote_watch UUID: the watcher, a process of its own (`lzr1-panel remote watch UUID`). Every second it turns the
+# gateway's new audit lines into alerts (_remote_alert); it turns everything off when the gateway ends (--ttl, the kill
+# switch, a crash) or serve does (Tailscale quit), or when Funnel is on for this address (checked every 10 s; a status
+# Tailscale cannot give counts as on), and says why. A remote off you type stops it first, so that is never alerted.
 _remote_watch() {
-  local u=$1 n=0
+  local u=$1 n=0 pos why= fails=0 lastfail=0 ended= flush=
+  local -a who
   trap '' HUP INT
   _remote_read && [[ $RS[uuid] == $u ]] || return 0
+  pos=${RS[auditpos]:-0}
   while _ours $RS[gwpid] gw $u && _ours $RS[servepid] serve $u; do
     sleep 1
+    _remote_audit $pos; pos=$REPLY; _remote_alert $reply
     if (( ++n % 10 == 0 )) && ! { _remote_funnel $RS[host]; (( $? == 1 )) }; then
       print -r -- "lzr1-panel: Funnel is on for $RS[host]:443 (or Tailscale cannot say): turning remote off"
-      break
+      why=funnel; break
     fi
   done
+  # One last read, so a lockout or shutdown written just before the gateway exited is not lost.
+  flush=1; _remote_audit $pos; _remote_alert $reply
+  if [[ $why == funnel ]]; then _remote_note funnel "Funnel appeared; turned off"
+  elif [[ $ended != (killswitch|ttl) ]]; then
+    if _ours $RS[gwpid] gw $u; then _remote_note stopped "tailscale serve ended; turned off"
+    else _remote_note stopped "the gateway stopped; turned off"; fi
+  fi
   _remote_read && [[ $RS[uuid] == $u ]] && _remote_off
+}
+
+# _remote_audit POS: the complete lines of $RDIR/audit.log after byte POS into reply, the position after them into
+# REPLY. A line still being written (no final newline yet) waits for the next call; a missing file has no lines.
+_remote_audit() {
+  setopt local_options no_multibyte  # $#c counts bytes
+  local c
+  reply=(); REPLY=$1
+  [[ -r $RDIR/audit.log ]] || return 0
+  c=$(tail -c +$(( $1 + 1 )) $RDIR/audit.log 2>/dev/null; print -n .); c=${c%.}
+  [[ $c == *$'\n'* ]] || return 0
+  c=${c%$'\n'*}$'\n'
+  REPLY=$(( $1 + $#c ))
+  reply=( ${(f)c} )
+}
+
+# _remote_note KIND TEXT: one remote alert (LZR1_REMOTE_NOTIFY=0: none; LZR1_NOTIFY does not silence these). A group
+# per kind, so a later alert never replaces one of another kind (terminal-notifier keeps one per group).
+_remote_note() { [[ ${LZR1_REMOTE_NOTIFY:-1} == 0 ]] || _notify_one "lzr1 remote" "${RS[host]%%.*}" "$2" lzr1-remote-$1 }
+
+# _remote_alert LINE...: the watcher's audit lines as alerts: a login, a lockout, the kill switch, the TTL; wrong
+# passwords as one "N wrong passwords (LOGIN, ...)" at most every 30 s (later ones wait for the next, or for the last
+# read, flush). logout and idle-out are recorded only. Only the fixed event names and keys are read, control characters
+# are dropped, and values reach the notifier as arguments only. Uses the watcher's fails, who, lastfail, ended, flush.
+_remote_alert() {
+  zmodload zsh/datetime
+  local l kv user reason until; local -a w
+  for l in "$@"; do
+    w=( ${(s: :)${l//[[:cntrl:]]/}} ); user= reason= until=
+    for kv in $w[3,-1]; do
+      case $kv in
+        user=*) user=${kv#*=} ;;
+        reason=*) reason=${kv#*=} ;;
+        until=*) until=${kv#*=} ;;
+      esac
+    done
+    case $w[2] in
+      login) _remote_note login "$user logged in" ;;
+      failure) (( ++fails )); (( ${who[(Ie)$user]} )) || who+=( $user ) ;;
+      lockout) [[ $until == (#b)*T([0-9][0-9]:[0-9][0-9])* ]] && until=$match[1]
+        _remote_note lockout "$user locked out until $until (5 wrong passwords)" ;;
+      shutdown) ended=$reason
+        case $reason in
+          killswitch) _remote_note killswitch "turned off: 20 wrong passwords" ;;
+          ttl) _remote_note ttl "expired, turned off" ;;
+        esac ;;
+    esac
+  done
+  if (( fails && ( flush || EPOCHSECONDS - lastfail >= 30 ) )); then
+    _cut "${(j:, :)who}" 80
+    _remote_note failure "$fails wrong password${${fails:#1}:+s} ($REPLY)"
+    fails=0 lastfail=$EPOCHSECONDS; who=()
+  fi
+}
+
+# _dur VALUE NAME: VALUE (like 8h, 90m or 1h30m) in seconds into REPLY; dies naming NAME, the flag or variable it came
+# from, when it is not one or is 0
+_dur() {
+  local a=$1; REPLY=0
+  [[ $a == ([0-9]##[hms])## ]] || die "$2 takes hours, minutes or seconds, like 8h, 90m or 1h30m (got ${(q-)1})"
+  while [[ $a == (#b)([0-9]##)([hms])(*) ]]; do
+    REPLY=$(( REPLY + match[1] * ${${${match[2]/h/3600}/m/60}/s/1} )); a=$match[3]
+  done
+  (( REPLY > 0 )) || die "$2 must be more than 0"
 }
 
 # _remote_gw: builds the gateway into $RDIR when it is missing or older than its source; its path in REPLY
@@ -879,11 +957,29 @@ _remote_gw() {
 
 _remote_status() {
   zmodload zsh/datetime
+  local n=0 s m l t u logins=0 last= fails=0 now left; local -a w lk; local -A locked
   if ! _remote_live; then
     [[ -e $RDIR/session ]] && { print "remote: off, but its path may still be published (above)"; return 1 }
-    print "remote: off"; return 0
+    # Why it is off, when the kill switch did it (the last shutdown in the audit trail).
+    [[ -r $RDIR/audit.log ]] && l=$(grep -E '^[^ ]+ shutdown ' $RDIR/audit.log | tail -1)
+    if [[ $l == *" reason=killswitch" ]]; then
+      print -r -- "remote: off: the kill switch turned it off at ${l[12,16]} (20 wrong passwords; $RDIR/audit.log)"
+    else print "remote: off"; fi
+    return 0
   fi
-  local n=0 s m left=$(( ${RS[expires]:-0} - EPOCHSECONDS ))
+  # This remote's logins, failures and lockouts, from its part of the audit trail.
+  _remote_audit ${RS[auditpos]:-0}
+  for l in $reply; do
+    w=( ${(s: :)${l//[[:cntrl:]]/}} ); u=${${(M)w:#user=*}[1]#user=}
+    case $w[2] in
+      login) (( ++logins )); last=$u t=$w[1] ;;
+      failure) (( ++fails )) ;;
+      lockout) locked[$u]=${${(M)w:#until=*}[1]#until=} ;;
+    esac
+  done
+  now=$(strftime '%Y-%m-%dT%H:%M:%S' $EPOCHSECONDS)
+  for u in ${(ko)locked}; do [[ ${locked[$u][1,19]} > $now ]] && lk+=( "$u until ${locked[$u][12,16]}" ); done
+  left=$(( ${RS[expires]:-0} - EPOCHSECONDS ))
   tmux -L lzr1 list-sessions -F '#{session_name} #{@lzr1_remote}' 2>/dev/null | while read -r s m; do
     [[ $m == $RS[uuid] ]] && (( n++ ))
   done
@@ -891,6 +987,9 @@ _remote_status() {
   print -r -- "  url:      $RS[url]"
   print -r -- "  allowed:  ${RS[allow]//,/, }"
   print -r -- "  expires:  $(strftime '%H:%M' $RS[expires]) (in $(( left / 3600 ))h$(( left % 3600 / 60 ))m)"
+  print -r -- "  idle:     a browser is logged out after ${RS[idle]:-30m} without input"
+  if (( logins )); then print -r -- "  logins:   $logins (last $last at ${t[12,16]})"; else print -r -- "  logins:   none yet"; fi
+  (( fails )) && print -r -- "  failures: $fails${lk:+; locked: ${(j:, :)lk}}"
   print -r -- "  gateway:  pid $RS[gwpid], ${${RS[port]:+127.0.0.1:$RS[port]}:-$RDIR/gw.sock}"
   print -r -- "  serve:    pid $RS[servepid] (the path ends with it; it ends with the gateway)"
   if _ours "$RS[ttydpid]" ttyd $RS[uuid]; then print -r -- "  ttyd:     pid $RS[ttydpid], $n browser(s) connected"
@@ -1652,23 +1751,21 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
   case $1 in
     on)
       shift
-      local allow= ttl=8h a gw uuid pw port n=${LZR1_REMOTE_PWLEN:-16} secs=0 i out
+      local allow= ttl=${LZR1_REMOTE_TTL:-8h} from=LZR1_REMOTE_TTL idle=${LZR1_REMOTE_IDLE:-30m} a gw uuid pw port
+      local n=${LZR1_REMOTE_PWLEN:-16} secs i out
+      local use="usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h] (or LZR1_REMOTE_TTL=8h; LZR1_REMOTE_IDLE=30m)"
       while (( $# )); do
         case $1 in
-          --allow|--ttl) (( $# >= 2 )) || die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h] ($1 needs a value)"
-            [[ $1 == --allow ]] && allow=$2 || ttl=$2; shift 2 ;;
+          --allow|--ttl) (( $# >= 2 )) || die "$use ($1 needs a value)"
+            [[ $1 == --allow ]] && allow=$2 || ttl=$2 from=--ttl; shift 2 ;;
           --allow=*) allow=${1#*=}; shift ;;
-          --ttl=*) ttl=${1#*=}; shift ;;
-          *) die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h]" ;;
+          --ttl=*) ttl=${1#*=} from=--ttl; shift ;;
+          *) die $use ;;
         esac
       done
       [[ $n == <-> ]] && (( n >= 12 )) || die "LZR1_REMOTE_PWLEN must be 12 or more (got $n)"
-      [[ $ttl == ([0-9]##[hms])## ]] || die "--ttl takes hours, minutes or seconds, like 8h, 90m or 1h30m"
-      # The TTL in seconds, for the expiry shown.
-      a=$ttl; while [[ $a == (#b)([0-9]##)([hms])(*) ]]; do
-        secs=$(( secs + match[1] * ${${${match[2]/h/3600}/m/60}/s/1} )); a=$match[3]
-      done
-      (( secs > 0 )) || die "--ttl must be more than 0"
+      _dur $ttl $from; secs=$REPLY  # the TTL in seconds, for the expiry shown
+      _dur $idle LZR1_REMOTE_IDLE
       if _remote_live; then _remote_status; die "remote is already on (lzr1-panel remote off turns it off)"; fi
       [[ -e $RDIR/session ]] && die "remote on: the last remote is still published (above)"
       # Tailscale first: nothing starts unless it can publish.
@@ -1700,6 +1797,11 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       _remote_gw; gw=$REPLY
       mkdir -p $RDIR && chmod 700 $RDIR
       rm -f $RDIR/*.sock(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid
+      # The audit trail the gateway appends to (0600): its last 2000 lines kept. This remote's events start at auditpos,
+      # where the watcher and status read from. Trimmed only here, while no remote runs.
+      ( umask 077
+        if [[ -f $RDIR/audit.log ]]; then tail -n 2000 $RDIR/audit.log >$RDIR/audit.tmp && mv -f $RDIR/audit.tmp $RDIR/audit.log
+        else : >$RDIR/audit.log; fi ) || die "remote on: cannot write $RDIR/audit.log"
       if (( $+commands[uuidgen] )); then uuid=$(uuidgen); else uuid=$(</proc/sys/kernel/random/uuid); fi
       uuid=${uuid:l}
       [[ $uuid == [0-9a-f](#c8)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c12) ]] || die "could not make a UUID"
@@ -1710,9 +1812,9 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       pw=${pw[1,n]}
       zmodload zsh/datetime
       RS=(uuid $uuid url https://$TS_HOST/$uuid/ password $pw allow $allow started $EPOCHSECONDS
-          expires $(( EPOCHSECONDS + secs )) host $TS_HOST)
+          expires $(( EPOCHSECONDS + secs )) host $TS_HOST idle $idle auditpos $(( $(wc -c <$RDIR/audit.log) )))
       _remote_save
-      ( umask 077; : >$RDIR/ttyd.log; : >>$RDIR/remote.log )  # logs hold logins and paths, never the password
+      ( umask 077; : >$RDIR/ttyd.log; : >>$RDIR/remote.log )  # errors, refused logins and paths, never the password
       # A browser gets its own panel in the tmux layout (a Ghostty split cannot be shown in a browser), splash off;
       # LZR1_REMOTE marks its tmux session so it ends with the browser and with remote off.
       ttyd -i $RDIR/ttyd.sock -b /$uuid -W -m 4 -t titleFixed=lzr1 \
@@ -1729,7 +1831,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       zmodload zsh/system
       print -r -- $pw | ( print $sysparams[pid] >$RDIR/gw.pid
           exec $gw $listen --host $TS_HOST --upstream $RDIR/ttyd.sock --base /$uuid/ --allow $allow --ttl $ttl \
-            --log $RDIR/remote.log 2>>$RDIR/remote.log ) |
+            --log $RDIR/remote.log --audit $RDIR/audit.log --idle $idle 2>>$RDIR/remote.log ) |
         _remote_keeper $uuid >>$RDIR/remote.log 2>&1 &!
       # gw.pid is written just before the exec, so until then its command line is still this shell's: only a pid that
       # is gone means the gateway died (and after 5 s it has long exec'd, so _remote_off recognizes it to stop it).
@@ -1769,7 +1871,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       ( trap '' HUP INT; exec $SELF remote watch $uuid ) </dev/null >>$RDIR/remote.log 2>&1 &!
       RS[watchpid]=${!}
       _remote_save
-      print -r -- "remote: on, for $allow until $(strftime '%H:%M' $RS[expires])"
+      print -r -- "remote: on, for $allow until $(strftime '%H:%M' $RS[expires]); idle browsers log out after $idle"
       print -r -- "  url:      $RS[url]"
       print -r -- "  password: $pw"
       clip $RS[url]
@@ -1785,7 +1887,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
     build) _remote_gw; print -r -- "gateway: $REPLY" ;;
     watch) [[ $2 == [0-9a-f](#c8)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c12) ]] || die "usage: lzr1-panel remote watch UUID (internal)"
       _remote_watch $2 ;;
-    *) die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h] | off | status | url | password" ;;
+    *) die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h] | off | status | url | password (LZR1_REMOTE_TTL, LZR1_REMOTE_IDLE, LZR1_REMOTE_NOTIFY: docs/remote.md)" ;;
   esac
   ;;
 

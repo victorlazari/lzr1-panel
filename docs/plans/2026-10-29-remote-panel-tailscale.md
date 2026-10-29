@@ -245,7 +245,7 @@ reads the audit log; notifications), `docs/remote.md`
 **Dependencies:** Phase 1
 **Done when:** gateway tests cover each rule; a real wrong-password burst locks out and then triggers the kill
 switch, with notifications on this computer.
-**Status:** Pending
+**Status:** Done
 
 Contract additions to Epic 1.1's (Tasks 2.1.1 and 2.1.2 build them; Task 2.1.3 uses them):
 
@@ -377,7 +377,7 @@ SIGTERM with an open WebSocket → `run` returns and the client sees EOF.
 
 #### Task 2.1.3: `remote` uses them: TTL and idle settings, audit trail, alerts
 
-- [ ] Done
+- [x] Done
 
 **Context:** `remote on` (`bin/lzr1-panel:1653-1776`) defaults `ttl=8h` (`:1655`) and starts the gateway at
 `:1729-1733` with `--log $RDIR/remote.log`; it has no `--audit`/`--idle`. The watcher `_remote_watch`
@@ -777,3 +777,17 @@ each missing piece with its fix.
   input. `authenticated` is gone: `ServeHTTP` uses `session`, since an upgrade needs the token. Test hooks:
   `server.track(tok, conn)`, `idleOut`, `closeAll`, and `runGatewayWith(t, upstream, args...)` in `idle_test.go`. No
   live or browser run: Task 2.1.3 does it; `docs/remote.md` (the cookie row says "no expiry") is also its to update.
+- Task 2.1.3: alerts use a terminal-notifier group per kind (`lzr1-remote-login`, `-failure`, `-lockout`,
+  `-killswitch`, `-ttl`, `-stopped`, `-funnel`), not one `lzr1-remote`: terminal-notifier keeps one notification per
+  group, so a later alert would have replaced a login or a lockout. The subtitle is the machine's short name. Wrong
+  passwords still waiting for their 30 s window are sent on the watcher's last read, so a burst's tail is reported when
+  the remote ends. Beyond the plan's list: `serve` ending while the gateway still runs alerts "tailscale serve ended;
+  turned off", and a `shutdown reason=signal` the watcher sees (something other than `remote off` stopped the gateway)
+  alerts as "the gateway stopped; turned off". `remote on` checks `LZR1_REMOTE_TTL`/`LZR1_REMOTE_IDLE` (shared `_dur`)
+  before Tailscale, prints the idle limit, and keeps `idle` and `auditpos` in the session file; `status` adds an
+  `idle:` line and says "logins: none yet" before the first. There is no `--idle` flag (the variable only, as planned).
+  Verification: the kill switch counts failures only, so the burst is the right password (303), 5 wrong (5th 429), the
+  right password while locked (429, counted), then 14 wrong: the 20th failure answered 503 and the route was gone at
+  once. Notifications were checked through a stub `terminal-notifier` first on PATH (as the plan says), with
+  `LZR1_NOTIFY=0` to show remote alerts ignore it; the real notifier path is `_notify_one`, unchanged. The RED run
+  passed `--ttl 15m` explicitly, since the 2.1.2 code ignores `LZR1_REMOTE_TTL` and would have published for 8 h.
