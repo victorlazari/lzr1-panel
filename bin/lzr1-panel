@@ -748,6 +748,10 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   v=$(fzf --version 2>/dev/null); v=${v%% *}
   if [[ -n $v ]] && is-at-least 0.74 $v; then _ok "fzf $v"
   else _no "fzf ${v:-is missing} (0.74 or newer is needed)"; _hint "./install.sh installs it"; fi
+  # Optional, like run --opencode finds it: without it only opencode sessions are unavailable.
+  v=${commands[opencode]:-$HOME/.opencode/bin/opencode}
+  if [[ -x $v ]]; then v=${${=$($v --version 2>/dev/null)}[-1]}; _ok "opencode${v:+ ${v#v}}"
+  else print "  · no opencode: opencode sessions unavailable"; _hint "brew install sst/tap/opencode, or see opencode.ai"; fi
   if [[ $OSTYPE == darwin* ]]; then
     if [[ -d /Applications/Ghostty.app ]]; then
       _ok "Ghostty"

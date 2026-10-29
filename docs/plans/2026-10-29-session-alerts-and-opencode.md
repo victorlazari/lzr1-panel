@@ -500,7 +500,7 @@ command away, documented wherever the Claude ones are.
 `docs/troubleshooting.md`
 **Dependencies:** Epic 2.2
 **Done when:** Tasks 2.3.1-2.3.2 pass; `bash -n install.sh` passes on bash 3.2.
-**Status:** Pending
+**Status:** Done
 
 #### Task 2.3.1: Panel: `c`, `[+opencode]` and menus
 
@@ -529,7 +529,7 @@ binds `n`/`s` and the footer `[+opus] [+sonnet] [↻] [?]` with `click-footer` m
 
 #### Task 2.3.2: Shell shortcuts, doctor and docs
 
-- [ ] Done
+- [x] Done
 
 **Context:** `install.sh` writes a shell hook (lines ~180-200) with `cl-<profile>-opus/sonnet` (eval loop) and
 `cl-opus`/`cl-sonnet` (`type … || …`); it must parse on bash 3.2. `doctor` checks tools under "this computer".
@@ -609,3 +609,12 @@ lists the Claude ones.
   says "stop Claude" on an opencode row (left to the docs task if wanted). verify-231 starts sessions with a stub
   opencode (`opencode=` on the profile) and drives both menus in a tmux pane; one real `_new opencode 1 t/ alert-oc6`
   was also run (listed with model `opencode`, then killed).
+- Task 2.3.2: the profile shortcut is a second `eval` line in the hook's loop (`cl-$_p-opencode`), and the hook's
+  comments name opencode. Doctor finds opencode the way `run --opencode` does (`$commands[opencode]`, then
+  `~/.opencode/bin/opencode`) and prints the last word of `opencode --version` without its `v`. The README also
+  names opencode in the "How it works" diagram, the session menu row, the heading menu text, `profile test`'s row,
+  the SSH machine note and the installer's step 6; troubleshooting's "My Claude session is not in the panel" and
+  "I closed Claude by accident" mention it too. The session menu's `end` label still says "stop Claude" on opencode
+  rows. verify-232 runs the installer's hook section alone under `/bin/bash` with a scratch `HOME` (an old block is
+  replaced, your lines kept), sources the result in zsh and bash 3.2 with a stub `lzr1-panel`, and hides opencode
+  from doctor with a copy of the script without `/opt/homebrew/bin` on its PATH.

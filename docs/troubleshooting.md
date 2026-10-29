@@ -116,8 +116,8 @@ The panel answers this for you only when the session opens in one of your reposi
 The panel only lists sessions that run **inside tmux**. A `claude` started straight in a terminal tab is invisible
 to it.
 
-**Fix:** start sessions with `cl-opus` / `cl-sonnet` (installed by `./install.sh`), `lzr1-panel run`, or the
-panel's `n` / `s`. To move a running conversation over, quit it (`/exit`), then in the same folder:
+**Fix:** start sessions with `cl-opus` / `cl-sonnet` / `cl-opencode` (installed by `./install.sh`), `lzr1-panel
+run`, or the panel's `n` / `s` / `c`. To move a running conversation over, quit it (`/exit`), then in the same folder:
 
 ```sh
 lzr1-panel run --model opus --continue
@@ -156,6 +156,39 @@ The session is still there.
 
 **Fix:** press **Enter** in it to resume the same conversation. To really close it, type `end` and Enter, or press
 `x` in the panel.
+
+The same goes for opencode: its session waits on `opencode exited. Enter: resume this conversation`.
+
+### opencode sessions do not start on a machine
+
+`c` or `[+opencode]` shows nothing new, or `start` says `opencode exited right after start`.
+
+**Fix:** run `lzr1-panel profile test NAME`. Its `opencode:` line shows the opencode the panel starts there, or
+`not installed`:
+
+- **Not installed.** Install it on that machine (`brew install sst/tap/opencode`, or see
+  [opencode.ai](https://opencode.ai)), then add the profile again: `profile add` finds it, or takes
+  `--opencode /path/to/opencode`. tmux starts it with a bare PATH, so the profile needs its full path.
+- **Installed, but it exits.** Start it from a terminal and view the session: opencode's error shows above its
+  resume prompt. Usually it has no provider yet: run `opencode auth login` on that machine.
+
+```sh
+lzr1-panel start PROFILE opencode NAME
+```
+
+### An opencode session shows the wrong state
+
+The panel reads opencode's screen: `esc interrupt` in its bottom bar is working (`▶`), its question dialog
+(`enter submit`) or `opencode exited` is waiting on you (`⧗`), anything else is idle (`·`). These markers follow
+opencode **2.0.32**'s screen; a newer version may change them, and the row (and its alerts) then go wrong.
+`Permission required` also counts as waiting, but is unverified: with auto-approve on, 2.0.32 never showed it.
+
+**Fix:**
+
+- Check `opencode --version` on that machine. If it is newer and the glyphs are wrong, look at its screen
+  (`tmux capture-pane -p -t '=NAME:'`) and update the markers in `LIST_SCRIPT` (`bin/lzr1-panel`).
+- An opencode started by hand inside tmux is read as Claude, so it mostly shows idle. Start opencode sessions with
+  `c`, `cl-opencode` or `lzr1-panel run --opencode`.
 
 ---
 
