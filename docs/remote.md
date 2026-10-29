@@ -59,7 +59,7 @@ Each request has to pass all of these, in order:
 | The password: 16 characters by default (`LZR1_REMOTE_PWLEN`, 12 at least) from 56 look-alike-free characters, about 93 bits, made by `openssl rand` | Someone using an allowed person's unlocked device without knowing it. The gateway keeps only its SHA-256 and compares in constant time; it is never in a command line or the environment. |
 | A session cookie: 32 random bytes, `HttpOnly; Secure; SameSite=Strict; Path=/<uuid>/`, no expiry (ends with the browser), bound to the login that signed in | Scripts reading it, sending it to another site, or another tailnet user replaying it. |
 | `Origin` must be `https://<the machine's name>` on every POST and WebSocket upgrade | Another web page driving the terminal from your browser (cross-site WebSocket hijacking). |
-| Headers on every response: `Cache-Control: no-store`, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, a same-origin `Content-Security-Policy`, `Referrer-Policy: no-referrer`, `nosniff` | Caching the terminal, framing it, leaking the URL in a Referer. |
+| Headers on every response: `Cache-Control: no-store`, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, a same-origin `Content-Security-Policy`, `Referrer-Policy: same-origin`, `nosniff` | Caching the terminal, framing it, leaking the URL in a Referer. |
 | An expiry (`--ttl`, 8 hours by default) | A session forgotten on. |
 
 What it does not protect against: anyone who can run programs as you on this computer (they could read the session
@@ -76,3 +76,37 @@ cleans the stale session file.
 
 If something is left over, by hand: `tailscale serve status`, then `tailscale serve --https=443 --set-path /<uuid>
 off`; `pkill -f lzr1-panel/remote/` stops the gateway and ttyd.
+
+## Fidelity in a browser
+
+Measured on 2026-10-29 through the real tailnet URL, with ttyd 1.7.7 (xterm.js in the page), tmux 3.8 and fzf 0.74.
+Playwright 1.64 drove headless Chromium (build 1248, macOS) with real mouse events at xterm cell coordinates and real
+key presses; results were read back from xterm.js's screen, `tmux capture-pane` of the test sessions and a stand-in
+`pbcopy`. The sessions ran a stand-in for Claude that echoes each line, reports Ctrl-C and copies with OSC 52. Safari
+and phones were out of the automation's reach: their cells say **needs a person** until someone measures them. "Also
+in a terminal" marks a failure reproduced in the tmux layout in a plain terminal: a panel bug, not the browser's.
+
+| Item | Chrome (headless Chromium, automated) | Safari | Phone |
+|------|---------------------------------------|--------|-------|
+| **Login** | pass: the URL shows the password form; the panel lists sessions 0.7 s after Enter. Needed one fix first: with `Referrer-Policy: no-referrer` Chrome sent `Origin: null` on the form's POST and every login was refused; it is `same-origin` now. | needs a person | needs a person |
+| **Listing** sessions | pass: every session listed with its summary line; the first one shows in the viewer by itself. | needs a person | needs a person |
+| **Selecting** with ↑ ↓ | pass: each arrow shows that session in the viewer. | needs a person | needs a person |
+| **Typing** in a session | pass, once the keyboard is in the viewer (Enter on the row, or a click in the viewer): the session read every character. | needs a person | needs a person |
+| **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | needs a person | needs a person |
+| **Right-click** menu | partial: the row's menu opens and its actions work, but the page does not cancel the `contextmenu` event, so a headed Chrome shows its own menu over it (confirm by a person). | needs a person | needs a person (no right button: long-press) |
+| **Double-click** a row | fail, also in a terminal: the keyboard reaches the viewer for about 0.2 s, then tmux's own `DoubleClick1Pane` binding (`select-pane -t =`) puts it back on the panel. Enter works. | needs a person | needs a person |
+| **Footer** buttons | partial, also in a terminal: `[?]`, `[+opus]` and `[+sonnet]` work; the first footer click right after a row's menu is lost (`[↻]` did nothing; the next click worked). | needs a person | needs a person |
+| **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there (once in four runs that click did not start it). | needs a person | needs a person |
+| **Ctrl-C** to Claude | pass: the agent got SIGINT. | needs a person | needs a person (no Ctrl key on the keyboard) |
+| **Ctrl-b d** leaves a session | fail, also in a terminal: after a click switched the viewer to another session of the same machine, Ctrl-b d detaches and the viewer attaches again at once (its loop still holds the old target). Works when the viewer attached the session itself. | needs a person | needs a person |
+| **Copy** (OSC 52, drag) | fail: nothing reaches the browser's clipboard. ttyd 1.7.7's xterm.js ignores OSC 52 (written straight into it: nothing), and both Claude's OSC 52 copy and a tmux drag-select go to `pbcopy` on the Mac running the panel instead, overwriting that Mac's clipboard. xterm.js's own selection (Shift- or Option-drag) selected nothing while the panel has the mouse. | needs a person | needs a person |
+| **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | needs a person | needs a person |
+| **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel shrinks with the window (56 → 38 columns) rather than keeping its width. | needs a person | needs a person |
+| **Phone-width** layout | fail (Chromium at 390×844 px): 52 columns, narrower than the 56-column panel, so tmux squeezes the panel to 1 column and the list disappears. | needs a person | needs a person |
+| **Reconnect** after the laptop sleeps | partial (simulated by closing the WebSocket; a real sleep needs a person): the old layout ends and ttyd reconnects by itself, but its new panel fails with "server exited unexpectedly / cannot start tmux" (the dying layout was the last on the `lzr1` server); a second Enter gives a fresh panel, with the earlier selection gone. | needs a person | needs a person |
+| **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person: headless Chromium has no browser shortcuts. What reaches the page works: Ctrl-W arrives as the terminal's word erase. | needs a person | needs a person |
+
+For Phase 2 (Epic 2.2): copy to the browser (an xterm.js clipboard handler, and no `pbcopy` on the host in a remote
+layout); a narrower or single-pane layout under about 80 columns; cancel the browser's context menu; double-click and
+Ctrl-b d in the tmux layout; the first footer click after a menu; reconnect without the `lzr1` server race; then the
+Safari and phone columns, measured by a person.

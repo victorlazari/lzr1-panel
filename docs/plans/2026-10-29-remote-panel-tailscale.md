@@ -156,7 +156,7 @@ above and 303; the cookie with a different `Tailscale-User-Login` → refused; W
 **Dependencies:** Epic 1.1 (its contract above)
 **Done when:** from a phone or another computer on the tailnet, the URL plus password opens a panel that lists the
 sessions and attaches a viewer; `remote off` leaves no serve config, socket, process or secret behind.
-**Status:** Pending
+**Status:** Done
 
 #### Task 1.2.1: Find Tailscale, build the gateway, start and stop the pieces
 
@@ -211,7 +211,7 @@ gives 303 (to login) or 403 (no identity for this device), never 200 without a c
 
 #### Task 1.2.2: Fidelity spike from a real browser
 
-- [ ] Done
+- [x] Done
 
 **Context:** The browser terminal is xterm.js inside ttyd. The panel relies on fzf mouse clicks (left, right,
 double, footer), tmux's mouse, OSC 52 copies, Ctrl-C/Ctrl-b, and a 56-column panel next to a viewer.
@@ -313,3 +313,9 @@ each missing piece with its fix.
   (0600, no secrets) stay after `off`. The live check (only lazari@lerian.studio allowed, `--ttl 10m`) did not open a
   WebSocket, since that starts `lzr1-*` sessions on the real `lzr1` tmux server: a browser's panel and its cleanup
   are first exercised by Task 1.2.2.
+- Task 1.2.2: measured with headless Chromium only (Playwright, real mouse events at cell coordinates); Safari and phone
+  cells say "needs a person", and the laptop sleep was simulated by closing the WebSocket. It ran in an isolated HOME,
+  TMUX_TMPDIR, config and cache, with a stand-in `claude` and `pbcopy`. Not docs-only: login never worked in Chrome,
+  which sends `Origin: null` on the form's POST under `Referrer-Policy: no-referrer`, so the gateway (and `login.html`)
+  now send `same-origin` (`TestLoginForm` checks it). Double-click, Ctrl-b d after a switch in place and the first
+  footer click after a menu fail in a plain terminal's tmux layout too: panel bugs, listed for Epic 2.2.

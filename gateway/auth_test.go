@@ -176,6 +176,14 @@ func TestLoginForm(t *testing.T) {
 		}
 	}
 	checkSecurityHeaders(t, resp.Header)
+	// no-referrer makes Chrome send "Origin: null" on the form's POST, which the Origin check refuses: login never
+	// works. same-origin keeps the Origin and still sends no Referer to another site.
+	if got := resp.Header.Get("Referrer-Policy"); got != "same-origin" {
+		t.Errorf("Referrer-Policy = %q, want same-origin", got)
+	}
+	if strings.Contains(body, "no-referrer") {
+		t.Errorf("form sets no-referrer, which makes its POST carry Origin: null")
+	}
 	if resp, _ := do(t, client, req("PUT", testBase+"login", "you@example.com", "https://gw", "", nil)); resp.StatusCode != 405 {
 		t.Errorf("PUT login: %d", resp.StatusCode)
 	}

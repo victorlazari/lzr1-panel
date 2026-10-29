@@ -14,11 +14,12 @@ import (
 const cookieName = "lzr1_remote"
 
 // Applied to every response, the gateway's own and ttyd's. ttyd's page bootstraps with inline
-// script and style; it loads nothing from another origin.
+// script and style; it loads nothing from another origin. Referrer-Policy is same-origin, not no-referrer: with
+// no-referrer, browsers send "Origin: null" on the login form's POST and the Origin check refuses it.
 var securityHeaders = map[string]string{
 	"Cache-Control":           "no-store",
 	"X-Frame-Options":         "DENY",
-	"Referrer-Policy":         "no-referrer",
+	"Referrer-Policy":         "same-origin",
 	"X-Content-Type-Options":  "nosniff",
 	"Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 }
