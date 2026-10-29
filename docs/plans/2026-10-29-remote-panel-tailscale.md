@@ -72,7 +72,7 @@ lzr1-remote-gw --listen SOCKET --upstream SOCKET --base /UUID/ --allow EMAIL[,EM
 
 #### Task 1.1.1: Module, flags, sockets and the authenticated proxy
 
-- [ ] Done
+- [x] Done
 
 **Context:** The repo is zsh only (`bin/lzr1-panel`, `lib/splash.zsh`, `install.sh`); there is no Go yet. Go 1.26
 is on this machine. ttyd will listen on a Unix socket (Epic 1.2), and `tailscale serve` will send requests to the
@@ -280,3 +280,16 @@ troubleshooting and `docs/remote.md` cover setup, use, safety and turning it off
 **Done when:** a fresh `./install.sh` on macOS and Linux leaves `lzr1-panel remote on` working, and `doctor` reports
 each missing piece with its fix.
 **Status:** Pending
+
+## Deviations
+
+- Task 1.1.1: no `login`/`logout` routes yet (Task 1.1.2); until then every path under `--base` needs a session or
+  gets 401. A minimal session store (`newSession`, `authenticated`) lives in `server.go` for 1.1.2 to extend.
+- Task 1.1.1: `ready` is printed only once ttyd's socket answers (the contract's "both sockets usable"); SIGTERM or
+  `--ttl` before that exits 0 without `ready`. `/UUID` redirects 308 to `/UUID/`; an unclean or percent-encoded path
+  is 404. The CSP also sets `frame-ancestors 'none'; base-uri 'none'; form-action 'self'`.
+- Task 1.1.1 live finding for Task 1.2.1: on this Mac (Tailscale.app 1.104) `tailscale serve --set-path /UUID
+  unix:SOCK` was accepted but every request answered 502, for sockets in `$TMPDIR`, `/private/tmp` and `~/.cache`,
+  with 0700/0600 and 0755/0666 modes alike. The macOS app apparently cannot reach a Unix-socket upstream; Task 1.2.1
+  must confirm and probably give the gateway a loopback TCP listener (`127.0.0.1:0`, still behind the login).
+  Whether `serve` strips the `/UUID` mount path before proxying is still unverified.
