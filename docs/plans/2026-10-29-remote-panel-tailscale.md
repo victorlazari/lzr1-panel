@@ -706,7 +706,7 @@ Decisions for this epic (owner, 2026-10-29, and the elaboration):
 
 #### Task 3.1.1: `remote rotate` and `remote who`; one gateway start shared by `on` and `rotate`
 
-- [ ] Done
+- [x] Done
 
 **Context:** `remote on` (`bin/lzr1-panel:1882-2009`) starts the gateway with the password on stdin and its stdout piped
 to `_remote_keeper` (`:1962-1965`), waits for `ready` in `gw.out` (`:1968-1972`), stores `gwpid`/`port`, waits for
@@ -1224,3 +1224,17 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   built gateway, or a session file); Funnel on for the machine is always ✗. The installer asks before installing ttyd
   and Go (ttyd was installed without asking). The fidelity table gains a Brave column; the owner's by-hand check of
   Safari, Chrome and Brave on a Mac and a phone fills the Safari, Brave and Phone cells.
+- Task 3.1.1: ignoring HUP was not enough for `serve`: the HUP check (a pane running `remote on` under `sh`, then
+  `kill-session`) stayed RED after the gateway's `trap '' HUP`, with the watcher alerting "tailscale serve ended". The
+  Tailscale CLI ends on SIGHUP even when it starts ignored, so `serve` (started by the keeper) also runs in a process
+  group of its own, through `RDET` (`setsid`, else `perl -e 'setpgrp; exec @ARGV'`), the prefix ttyd uses too; the
+  gateway, the keeper and the watcher ignore HUP. A new `_remote_browsers UUID [kill]` (count, or end, the browsers'
+  layouts) replaces the loops in `_remote_off` and `_remote_status` and serves `rotate` and `who`; since it sets
+  `REPLY`, `on` and `rotate` keep `_remote_start`'s reason before `_remote_off`. Beyond the plan, `rotate` checks
+  `LZR1_REMOTE_PWLEN` and `openssl` and rebuilds a stale gateway before it stops anything (a failed build dies with the
+  remote still on), waits up to 5 s for Tailscale to drop the old path before publishing it again, and prints "copied
+  the password". `who` lists the logins in login order and skips a `login` line whose `sid` is not hex. Verified by
+  `verify-3.1.1.zsh` (live, only lazari@lerian.studio, `--ttl 15m`; also a stand-in browser layout ended by `rotate`
+  with its `.last` kept, `rotate` refused in the last minute, and a stub `tailscale` whose `serve` fails, after which
+  `rotate` turns the remote off) and `verify-3.1.1-onfail.zsh` (`on` still names why it failed); each ended with "No
+  serve config" and the real tmux sessions unchanged.
