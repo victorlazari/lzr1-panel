@@ -947,7 +947,7 @@ _remote_gw() {
   local src=${SELF:h:h}/gateway f stale=
   REPLY=$RDIR/lzr1-remote-gw
   [[ -x $REPLY ]] || stale=1
-  for f in $src/*.(go|mod|html)(N); do [[ $f -nt $REPLY ]] && stale=1; done
+  for f in $src/*.(go|mod|html|js)(N); do [[ $f -nt $REPLY ]] && stale=1; done
   [[ -z $stale ]] && return 0
   (( $+commands[go] )) || die "remote needs Go to build its gateway: brew install go (Linux: your distribution's golang package)"
   mkdir -p $RDIR && chmod 700 $RDIR
@@ -1232,7 +1232,8 @@ open)  # panel on the left, viewer on the right
   local -a T=(tmux -L lzr1 -f /dev/null)
   local sess=lzr1-$id vpane clip=
   # Copies made inside (Claude Code's own, or a session's tmux on any machine) arrive here as OSC 52: put them on
-  # this computer's clipboard ourselves, since not every terminal does.
+  # this computer's clipboard ourselves, since not every terminal does. This layout's own hook, not the server's: a
+  # browser's layout (remote) on the same server sends them on to the browser's clipboard (gateway/client.js) only.
   if (( $+commands[pbcopy] )); then clip=pbcopy
   elif [[ -n $WAYLAND_DISPLAY ]] && (( $+commands[wl-copy] )); then clip=wl-copy
   elif [[ -n $DISPLAY ]] && (( $+commands[xclip] )); then clip='xclip -selection clipboard'; fi
@@ -1240,7 +1241,7 @@ open)  # panel on the left, viewer on the right
   $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
      \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' \
      \; set -s set-clipboard on \; set -s 'terminal-features[90]' '*:clipboard' >/dev/null  # copies reach the terminal
-  [[ -n $clip ]] && $T set-hook -g pane-set-clipboard "run-shell -b 'tmux save-buffer - | $clip'"
+  [[ -n $clip && -z $LZR1_REMOTE ]] && $T set-hook -t $sess pane-set-clipboard "run-shell -b 'tmux save-buffer - | $clip'"
   vpane=$($T display -p -t $sess '#{pane_id}')
   print -rn -- tmux >$STATE/$id.mode
   print -rn -- $TERM_PROGRAM >$STATE/$id.term

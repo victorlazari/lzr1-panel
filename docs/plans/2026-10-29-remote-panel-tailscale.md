@@ -456,7 +456,7 @@ table → 2.2.4. Safari, phone and browser-key cells stay "needs a person" unles
 
 #### Task 2.2.1: A small client script in ttyd's page: copy to the browser, no browser menu on the terminal
 
-- [ ] Done
+- [x] Done
 
 **Context:** ttyd 1.7.7's page bundles xterm.js and exposes it as `window.term` (checked: the index holds
 `window.term=t`, one `</head>`, one `</body>`, and registers OSC handlers of its own, but none for 52). It serves the
@@ -791,3 +791,15 @@ each missing piece with its fix.
   once. Notifications were checked through a stub `terminal-notifier` first on PATH (as the plan says), with
   `LZR1_NOTIFY=0` to show remote alerts ignore it; the real notifier path is `_notify_one`, unchanged. The RED run
   passed `--ttl 15m` explicitly, since the 2.1.2 code ignores `LZR1_REMOTE_TTL` and would have published for 8 h.
+- Task 2.2.1: `client.js` hooks ttyd's terminal through a `window.term` setter defined before ttyd's bundle runs, not by
+  polling (it falls back to polling 50 ms for 10 s only if something defined `term` first): each terminal ttyd sets is
+  hooked once, with no time limit. The `open` hook is now the layout session's own (`set-hook -t lzr1-ID`), not the
+  `lzr1` server's (`-g`): a terminal's tmux layout and a browser's share that server, so a global hook from a local
+  layout would still have piped the browsers' copies to `pbcopy`. A `-g` hook set by an older version on an `lzr1`
+  server still running is not removed; it goes when that server exits. `remote` rebuilds the gateway when a `.js` in
+  `gateway/` changed too. The page request also drops `If-None-Match`/`If-Modified-Since`, so ttyd always answers
+  200 with the whole page. A page over 4 MiB passes through unchanged; a gzipped one over it is passed through decoded.
+  `lzr1-client.js` answers GET and HEAD (405 otherwise); unauthenticated it is 401 (a browser navigation to it still
+  gets the login redirect, as any path). The verify's "second (stand-in remote) profile" is a `type=ssh` profile with
+  a stand-in `ssh` first on PATH that runs its scripts here with their own `TMUX_TMPDIR` and their own logging
+  `pbcopy`. In the fidelity table only the Copy and Right-click Chrome cells changed (Task 2.2.4 re-measures the rest).

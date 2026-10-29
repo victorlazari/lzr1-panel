@@ -98,6 +98,12 @@ func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 					pr.Out.AddCookie(ck)
 				}
 			}
+			if s.isPage(pr.In) {
+				// ttyd's index gets lzr1-client.js (inject.go): ask for it plain and whole.
+				pr.Out.Header.Del("Accept-Encoding")
+				pr.Out.Header.Del("If-None-Match")
+				pr.Out.Header.Del("If-Modified-Since")
+			}
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -109,6 +115,9 @@ func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 		FlushInterval: -1,
 		ModifyResponse: func(r *http.Response) error {
 			setSecurityHeaders(r.Header)
+			if s.isPage(r.Request) {
+				return s.injectClient(r)
+			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -175,6 +184,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == s.base+clientPath {
+		serveClient(w, r)
 		return
 	}
 	if r.Header.Get("Upgrade") != "" {
