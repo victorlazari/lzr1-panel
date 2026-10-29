@@ -25,7 +25,7 @@ browser), Tailscale 1.104 (`serve`, MagicDNS HTTPS certificates, identity header
 | Phase | Milestone | Epics | Status |
 |-------|-----------|-------|--------|
 | 1 | `lzr1-panel remote on` prints a tailnet URL and password; an allowlisted tailnet user opens it in a browser, logs in and drives a working panel; `remote off` removes every trace | 1.1, 1.2 | Complete |
-| 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Epic-level |
+| 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Detailed |
 | 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Epic-level |
 
 **Decisions already made with the owner (2026-10-29):**
@@ -240,21 +240,427 @@ browsers). This is a measured spike, not a fix: every failure becomes a Phase 2 
 30 idle minutes; the whole remote session ends at its TTL (default 8 h, `LZR1_REMOTE_TTL`); every login, failure,
 lockout and shutdown is written to `$STATE/remote/audit.log` (0600) and raises an OS notification through the
 existing `_notify` path.
-**Scope:** `gateway/auth.go`, `gateway/audit.go`, `bin/lzr1-panel` (`remote` reads the audit log; notifications)
+**Scope:** `gateway/` (`audit.go`, `idle.go`, `auth.go`, `server.go`, `main.go`), `bin/lzr1-panel` (`remote`
+reads the audit log; notifications), `docs/remote.md`
 **Dependencies:** Phase 1
 **Done when:** gateway tests cover each rule; a real wrong-password burst locks out and then triggers the kill
 switch, with notifications on this computer.
 **Status:** Pending
+
+Contract additions to Epic 1.1's (Tasks 2.1.1 and 2.1.2 build them; Task 2.1.3 uses them):
+
+```text
+lzr1-remote-gw ... [--audit FILE] [--idle 30m]
+  exit:    3 when the kill switch fired (20 wrong passwords in total); 0, 1 and 2 as before
+  --audit: append-only, 0600; one line per event, never the password, a cookie or a session token:
+           TIME EVENT key=value...      TIME is RFC 3339 with the local offset; values never hold spaces
+           start     ttl=8h0m0s idle=30m0s
+           login     user=LOGIN sid=SID                 SID: first 8 hex of SHA-256(token), never the token
+           failure   user=LOGIN fails=N total=T [locked=1]
+           lockout   user=LOGIN until=TIME
+           logout    user=LOGIN sid=SID
+           idle-out  user=LOGIN sid=SID
+           shutdown  reason=ttl|signal|killswitch
+```
+
+#### Task 2.1.1: Audit log, lockout and kill switch in the gateway
+
+- [ ] Done
+
+**Context:** The password is checked in `serveLogin` (`gateway/auth.go:105-130`); a wrong one is only logged
+(`auth.go:123`, `s.log` is `remote.log`) and re-renders the form with 401. There is no per-login or total counter.
+Sessions are `map[string]string` token → login (`gateway/server.go:42-43`, `auth.go:59-80`). `run`
+(`gateway/main.go:176-241`) ends on SIGTERM/SIGINT or `--ttl` (`main.go:215-218`) through `srv.Shutdown` and returns 0;
+it has no way to be told to stop by the handler. Identity is checked before the password (`server.go:117-120`), so
+only allowlisted logins ever reach `serveLogin`. The flags live in `parseFlags` (`main.go:39-93`), the config in
+`config` (`main.go:27-34`).
+
+**Implementation vision:**
+- New `gateway/audit.go`: `type auditLog struct{ mu sync.Mutex; w io.Writer; now func() time.Time }` and
+  `func (a *auditLog) event(name string, kv ...string)` writing `TIME NAME k=v ...\n` in one `Write`. A nil
+  `*auditLog` is a no-op (no `--audit`). Values are passed through `strings.Fields`-safe sanitizing: any byte outside
+  printable ASCII, a space or `=` becomes `_`, so a crafted login can never forge a second event or field.
+  `sid(token)` = first 8 hex characters of SHA-256 of the token.
+- `--audit FILE`: opened in `run` with `O_WRONLY|O_CREATE|O_APPEND`, 0600, then `f.Chmod(0600)` (an existing
+  file with wider modes is narrowed); refused (exit 1) when it is a symlink (`os.Lstat` first) or not a regular file.
+  A write error later is logged once to `s.log` and the gateway keeps serving (the audit file is a record, not a
+  gate). `start` is written right before `ready` is printed.
+- Lockout, in `server`: `fails map[string]int`, `lockedUntil map[string]time.Time`, `total int`, all under `s.mu`;
+  `now func() time.Time` (tests set it) and the limits as config fields with the decided defaults: `lockAfter = 5`,
+  `lockFor = 15*time.Minute`, `killAfter = 20` (no flags: tests build `config` directly).
+- `serveLogin` POST order: (1) still locked (`now < lockedUntil[login]`) → `total++`, audit `failure ... locked=1`,
+  429 with the form saying "Too many wrong passwords: locked until HH:MM." and the password is not checked;
+  (2) wrong password → `fails[login]++`, `total++`, audit `failure`; when `fails` reaches `lockAfter`, set
+  `lockedUntil = now + lockFor`, reset `fails` to 0, audit `lockout`, answer 429 with the locked message; else 401 as
+  today; (3) right password → `fails[login] = 0` (the total never resets), session, audit `login`. In every case,
+  when `total` reaches `killAfter`: audit `shutdown reason=killswitch`, answer 503 "too many wrong passwords: the remote
+  panel was turned off", and close `s.kill` (a `chan struct{}` closed through a `sync.Once`).
+- A lock expires by time only: the next POST after `lockedUntil` is checked normally (expired entries are deleted
+  then). `GET login` while locked renders the locked message with 200 (no counting). Attempts while locked count toward
+  the total on purpose: a brute force on one login cannot outlast the kill switch by waiting out lockouts one at a time.
+- `run`: selects on `served`, `ctx.Done()` and `s.kill`. The reason goes to the audit log once: `ttl` when the
+  `--ttl` timer fired (`context.Cause`/`DeadlineExceeded`), `signal` on SIGTERM/SIGINT, `killswitch` (already written by
+  the handler). Kill switch → `srv.Close()` (not `Shutdown`: nothing should finish gracefully) and exit 3.
+- `serveLogout`: audit `logout user=… sid=…` (replaces the `s.log` line; `s.log` keeps "refused …" lines for
+  non-allowlisted logins and upstream errors only).
+- Edge cases: two logins failing at once (separate `fails`, shared `total`); the right password during a lockout
+  (refused, counted, still locked); the 20th attempt is the right password while locked (kill switch still fires,
+  since it counted); concurrent POSTs racing past 20 (the `Once` closes `kill` once; every later POST gets 503);
+  `--audit` path in a missing directory (exit 1 with the error); a login with a space or `=` cannot occur after
+  identity but is sanitized anyway.
+
+**Files:**
+- Create: `gateway/audit.go`, `gateway/audit_test.go`
+- Modify: `gateway/auth.go` (`serveLogin`, `serveLogout`, the locked message), `gateway/server.go` (`server`
+  fields, `newServer`), `gateway/main.go` (`config`, `--audit`, `run`'s exit paths), `gateway/login.html` (an
+  `{{if .Locked}}` variant of the error line, nothing else)
+- Test: `gateway/audit_test.go`, `gateway/auth_test.go` (`TestLockout*`, `TestKillSwitch*`)
+
+**Verification:** RED first: `scratchpad/remote/verify-2.1.1.zsh` runs the tests below against the unchanged code
+(they do not compile or fail). Then `cd gateway && gofmt -l . && go vet ./... && go test ./... -count=1 -race`:
+5 wrong passwords from `a@x` → the 5th answers 429 and the right password then gets 429 too; `b@x` still logs in;
+`now` moved past 15 min → `a@x` logs in and its counter is back to 0; 20 failures across `a@x` and `b@x` (locked
+attempts included) → `run` returns 3 and the socket stops answering; the audit file is 0600 (also when it existed as
+0644), holds exactly the events in order, and `grep` finds neither the password nor any session token in it; a symlink
+`--audit` is refused with exit 1; SIGTERM writes `shutdown reason=signal`, `--ttl 200ms` writes `reason=ttl`.
+
+**Done when:** the gateway enforces 5→15 min per login and 20→exit 3 in total, and writes every event above to a 0600
+audit file without secrets.
+
+#### Task 2.1.2: Idle logout from real browser input
+
+- [ ] Done
+
+**Context:** A session lives as long as the browser keeps its cookie (`auth.go:88-91`, no `Expires`); nothing tracks
+activity. WebSockets pass through `httputil.ReverseProxy` (`server.go:49-82`), which hijacks the client connection;
+`http.Server.Shutdown` does not close hijacked connections, so closing a session today leaves its terminal running.
+ttyd pings the browser every 5 s (`ttyd -P`, default 5) and the browser answers with pong frames, so "bytes read from
+the browser" is never idle; only data frames are user input (ttyd's client sends keystrokes, mouse and resizes as
+binary/text frames). Builds on Task 2.1.1's session code and audit log, so it follows it.
+
+**Implementation vision:**
+- Sessions become `map[string]*session` with `login string`, `last time.Time` and `conns map[net.Conn]struct{}`.
+  `session(r)` (`auth.go:70-80`) also refreshes `last` when it succeeds: any authenticated HTTP request is activity.
+- New `gateway/idle.go`: for an `Upgrade` request that passed authentication, `ServeHTTP` hands the proxy a
+  `ResponseWriter` wrapper whose `Hijack` calls the real one (through `http.NewResponseController`) and wraps the
+  returned `net.Conn` in `activityConn`, registered under the session; `Close` unregisters it. `activityConn.Read`
+  feeds the bytes to a small incremental RFC 6455 frame-header parser (client frames: FIN/opcode byte, masked length
+  7/16/64-bit, 4-byte mask, payload skipped by count across reads). A frame with opcode 0, 1 or 2 and a non-empty
+  payload marks the session active; ping, pong and close (8, 9, 10) do not. A malformed header stops parsing for
+  that connection and counts nothing further (the upstream decides what to do with it). Before writing it, read
+  `$(go env GOROOT)/src/net/http/httputil/reverseproxy.go` (`handleUpgradeResponse`): if bytes already buffered in
+  the hijacked `bufio.ReadWriter` reach the backend, they go through the same parser.
+- `--idle 30m` (`config.idle`, must be > 0, default 30 min). A sweeper goroutine started in `run` ticks every
+  `min(idle/4, 30s)`: each session with `now - last > idle` is deleted, its conns closed, `idle-out user=… sid=…`
+  audited. The cookie is not cleared (it no longer matches anything); the next request gets the login form or 401.
+- Logout closes the session's conns too (its terminal ends with it). Shutdown (ttl, signal, kill switch) closes every
+  registered conn after `srv.Shutdown`/`srv.Close`, so `run` never returns with a terminal still proxied.
+- Edge cases: two tabs on one session (both conns closed together); a WebSocket whose session was deleted while the
+  upgrade was in flight (closed right after registration when the session is gone); output-only sessions (a long
+  Claude run printing for an hour with no key pressed) idle out by design, and the docs say so; clock moves are
+  irrelevant (`time.Now` monotonic).
+
+**Files:**
+- Create: `gateway/idle.go`, `gateway/idle_test.go`
+- Modify: `gateway/auth.go` (session struct, `session`, `serveLogout`), `gateway/server.go` (wrap upgrades),
+  `gateway/main.go` (`--idle`, sweeper, closing conns on every exit path)
+- Test: `gateway/idle_test.go`
+
+**Verification:** RED first (`verify-2.1.2.zsh` runs the new tests on the 2.1.1 code). `cd gateway && gofmt -l . &&
+go vet ./... && go test ./... -count=1 -race`: the frame parser on frames split at every byte boundary, 16- and 64-bit
+lengths, masked payloads; through the real proxy with `--idle 300ms` and the fake ttyd sending a ping every 50 ms that
+the test client answers with pongs → the session idles out, the WebSocket is closed, `idle-out` is audited, the
+cookie then gets 401; the same with a data frame every 100 ms → still alive after 1 s; logout closes the WebSocket;
+SIGTERM with an open WebSocket → `run` returns and the client sees EOF.
+
+**Done when:** a browser that sends no input for `--idle` loses its session and its terminal, pings notwithstanding.
+
+#### Task 2.1.3: `remote` uses them: TTL and idle settings, audit trail, alerts
+
+- [ ] Done
+
+**Context:** `remote on` (`bin/lzr1-panel:1653-1776`) defaults `ttl=8h` (`:1655`) and starts the gateway at
+`:1729-1733` with `--log $RDIR/remote.log`; it has no `--audit`/`--idle`. The watcher `_remote_watch`
+(`:853-865`) polls the gateway, `serve` and Funnel every second, then runs `_remote_off`. OS notifications go through
+`_notify_one TITLE SUBTITLE BODY GROUP` (`:529-545`: terminal-notifier, osascript or notify-send; silent without
+one); `notify_alerts` (`:492-509`) gates it on `LZR1_NOTIFY`. `_remote_status` (`:880-898`) prints the session.
+`_remote_off` (`:797-823`) stops the watcher first, so a `remote off` you typed yourself is never seen by it.
+
+**Implementation vision:**
+- `remote on`: `ttl=${LZR1_REMOTE_TTL:-8h}` and `idle=${LZR1_REMOTE_IDLE:-30m}`, both through the existing
+  `([0-9]##[hms])##` check (the error names the variable when the value came from it); `--ttl` still wins. Pass
+  `--audit $RDIR/audit.log --idle $idle`. Before starting the gateway: create `audit.log` 0600 if missing, keep only its
+  last 2000 lines (`tail` into a `umask 077` temp file, `mv`), and store its size in bytes as `RS[auditpos]` so the
+  watcher and `status` read only this remote's events. The usage line, `die` messages and the header comment name the
+  two variables.
+- `_remote_audit`: reads complete lines after a byte offset (`tail -c +$((pos + 1))`, cut at the last newline, the
+  offset advanced by the bytes consumed) into `reply`. Each line is split with `${(s: :)}`; only the fixed event names
+  are acted on, values are stripped of control characters and passed to `_notify_one` as arguments only (never in a
+  script), like `notify_alerts`.
+- `_remote_watch`: every tick, after the existing checks, `_remote_audit` from its offset and `_remote_alert` each
+  event; when the loop ends (the gateway or `serve` gone), one final read before `_remote_off`, so `lockout` and
+  `shutdown` written just before the exit are not lost. Notifications (title `lzr1 remote`, group `lzr1-remote`):
+  `login` → "LOGIN logged in"; failures of one tick → one "N wrong passwords (LOGIN, …)", at most one per 30 s, the
+  rest added to the next; `lockout` → "LOGIN locked out until HH:MM (5 wrong passwords)"; `shutdown
+  reason=killswitch` → "turned off: 20 wrong passwords"; `reason=ttl` → "expired, turned off"; gateway gone without a
+  `shutdown` line → "the gateway stopped; turned off"; the Funnel case (`:859-862`) → "Funnel appeared; turned off".
+  `logout` and `idle-out` are recorded, not notified. They follow `LZR1_REMOTE_NOTIFY` (default 1), not
+  `LZR1_NOTIFY`: turning off session alerts must not silence a brute-force alert.
+- `_remote_status`: two more lines from the audit since `auditpos`: "logins: N (last LOGIN at HH:MM)" and, when any,
+  "failures: N; locked: LOGIN until HH:MM". After the kill switch the remote is off, and `status` says why ("off: the
+  kill switch turned it off at HH:MM", from the last `shutdown` line in the file).
+- `remote.log` keeps start errors, upstream errors and refused logins; the audit trail is `audit.log`. Both stay after
+  `off`.
+- `docs/remote.md`: the usage block and environment (`LZR1_REMOTE_TTL`, `LZR1_REMOTE_IDLE`, `LZR1_REMOTE_NOTIFY`);
+  rows in "Safety layers" for the lockout, the kill switch and the idle logout; an "Audit and alerts" section with the
+  line format of the contract above; the sentence at `docs/remote.md:78` points to `audit.log`.
+- Edge cases: the audit file trimmed under a running watcher cannot happen (trim only in `on`, which refuses while on);
+  an audit line without a final newline is left for the next tick; a missing audit file (deleted by hand) → no
+  events, no error; no notifier on the machine → silent (as `_notify_one` already is); a killed watcher → the keeper
+  still unpublishes, and the next `status` reports the kill switch from the file.
+
+**Files:**
+- Modify: `bin/lzr1-panel` (header and usage, `remote on`, `_remote_watch`, new `_remote_audit` and `_remote_alert`,
+  `_remote_status`), `docs/remote.md`
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `scratchpad/remote/verify-2.1.3.zsh`, RED on the 2.1.2
+code, then GREEN: in an isolated `HOME`, `TMUX_TMPDIR`, `LZR1_CONFIG`, `XDG_CACHE_HOME` with `LZR1_PRS=0` and a stub
+`terminal-notifier` first on `PATH` that appends its arguments to a file, `tmux ls` recorded before, a `trap` running
+`remote off` and checking `tailscale serve status` on any exit: `LZR1_REMOTE_TTL=15m bin/lzr1-panel remote on --allow
+lazari@lerian.studio`; `status` shows the expiry 15 min ahead; `curl` POSTs to `https://<host>/<uuid>/login` with
+`Origin: https://<host>`: the right password once (303), then 5 wrong (the 5th 429), then 14 more → the 20th answers
+503; within 3 s `tailscale serve status` says "No serve config", `remote status` says the kill switch turned it off,
+the stub recorded a login, at least one wrong-password, a lockout and a kill-switch notification, `audit.log` is 0600
+and holds no password. Then the idle rule with a real browser: `LZR1_REMOTE_IDLE=1m remote on` again, headless Chromium
+logs in (the spike's `lib122.mjs` pattern), the page sits idle 80 s → `idle-out` in `audit.log`, the browser's `lzr1-*`
+session gone from the isolated `lzr1` server, a reload shows the login form; then `remote off`. Both runs end with "No
+serve config", and `tmux ls` on the real server unchanged.
+
+**Done when:** a real wrong-password burst locks out, then triggers the kill switch, with notifications on this
+computer; an idle browser is logged out; `LZR1_REMOTE_TTL` sets the expiry.
 
 ### Epic 2.2: Terminal fidelity fixes
 
 **Goal:** every failure in Phase 1's fidelity table is fixed or documented with a workaround (likely candidates:
 right-click reaching fzf instead of the browser menu via ttyd's client options, OSC 52 copy to the browser
 clipboard, a narrower layout for phone widths, `t` new-tab action hidden when remote).
-**Scope:** `bin/lzr1-panel` (`open`, `_panel` in remote mode), ttyd client options in `remote on`, `docs/remote.md`
-**Dependencies:** Phase 1 (Task 1.2.2's table)
+**Scope:** `gateway/` (a client script injected into ttyd's page), `bin/lzr1-panel` (`open`, `_viewer`, `_select`,
+`_ticker`, `_focus`, `_menu`, `_new`, `_panel`, `keys`, new `_fit`/`_back`), `docs/remote.md`, `README.md`
+**Dependencies:** Phase 1 (Task 1.2.2's table); after Epic 2.1, since Task 2.2.1 changes the same gateway files
 **Done when:** the fidelity table is all pass or documented workaround, re-measured on the same browsers.
 **Status:** Pending
+
+Which task fixes which row of the fidelity table (`docs/remote.md:109-127`): **Copy** and **Right-click** → 2.2.1;
+**Ctrl-b d** and **Footer** → 2.2.2; **Double-click** and **Reconnect** → 2.2.3; **Phone-width** and the re-measured
+table → 2.2.4. Safari, phone and browser-key cells stay "needs a person" unless one is available.
+
+#### Task 2.2.1: A small client script in ttyd's page: copy to the browser, no browser menu on the terminal
+
+- [ ] Done
+
+**Context:** ttyd 1.7.7's page bundles xterm.js and exposes it as `window.term` (checked: the index holds
+`window.term=t`, one `</head>`, one `</body>`, and registers OSC handlers of its own, but none for 52). It serves the
+page uncompressed (730 KB, `content-type: text/html`, no `content-encoding`) when the request has no
+`Accept-Encoding: gzip`, gzipped otherwise. The gateway proxies it (`gateway/server.go:49-82`; `ModifyResponse`
+`:73-76` only sets headers). Copies inside reach the `lzr1` tmux server as OSC 52 and are forwarded to its client
+(`set-clipboard on` and `terminal-features *:clipboard`, `bin/lzr1-panel:1141-1143`), i.e. ttyd's pty, where xterm.js
+drops them; in a browser's layout `open` also installs a `pane-set-clipboard` hook piping every copy to `pbcopy` on
+this Mac (`:1137-1139`, `:1144`). The page does not cancel `contextmenu`, so Chrome draws its own menu over the panel's.
+xterm.js forces its own selection over an app's mouse mode only with Option on macOS when
+`macOptionClickForcesSelection` is set (default off), Shift elsewhere.
+
+**Implementation vision:**
+- **Gateway injection, not `ttyd -I`.** `-I` would serve a copy of ttyd's generated 730 KB index kept in this repo,
+  which must match the ttyd binary's client protocol: a `brew upgrade ttyd` would silently break it. The gateway
+  already sits in front of the page; adding one `<script>` tag to ttyd's own index keeps ttyd's client and server in
+  step, and the script stays a small file under review in `gateway/`.
+- `gateway/client.js` (embedded with `//go:embed`), served at `GET /UUID/lzr1-client.js` (same identity, Origin and
+  session checks as any proxied path, `Content-Type: text/javascript`). For `GET /UUID/` exactly, the proxy request
+  drops `Accept-Encoding`, and `ModifyResponse` (status 200, `text/html`) reads the body (refusing more than 4 MiB:
+  passed through unchanged, logged), inserts `<script src="lzr1-client.js"></script>` right after the first `<head>`
+  (or at the very start when there is none), fixes `Content-Length`, removes `ETag`. A gzipped answer (a future
+  ttyd ignoring the missing header) is decoded with `compress/gzip` first and sent plain. The CSP already allows
+  same-origin scripts.
+- `client.js` runs before ttyd's bundle: (1) wraps `window.WebSocket` to see ttyd's socket; on its `close`, a
+  `HEAD lzr1-client.js` that answers 401 means the session is gone (logout, idle-out, kill switch) → `location =
+  'login'`; otherwise ttyd's own reconnect proceeds. (2) Polls for `window.term` (50 ms, 10 s) and then:
+  `term.parser.registerOscHandler(52, …)`: the payload `PC;BASE64` with any `Pc`; `?` (a read request) is ignored, so
+  no program can read the browser's clipboard; base64 is decoded to UTF-8 with `TextDecoder`; more than 1 MiB is
+  dropped; `navigator.clipboard.writeText` first; when the browser refuses (Safari wants a user gesture), a small
+  fixed toast "Copied text ready — click to copy" whose click calls `writeText` and which disappears after 15 s or the
+  next copy; returns `true`. `term.options.macOptionClickForcesSelection = true` (Option-drag selects in xterm.js on a
+  Mac; Cmd-C copies it). (3) `document.addEventListener('contextmenu', e => { if (e.target.closest?.('.xterm'))
+  e.preventDefault() }, true)`: the right button still reaches xterm.js and so fzf.
+- `open`: in a browser's layout (`LZR1_REMOTE` set) no `clip` hook on the `lzr1` server: copies reach the browser
+  through OSC 52, not this Mac's `pbcopy`. The session's own tmux keeps `CLIP`'s hook (`:102-112`): it is shared with
+  the panel on this screen, so a copy in a browser's viewer of a session on this Mac still also reaches this Mac's
+  clipboard; `docs/remote.md` says so (the fidelity row's "overwriting that Mac's clipboard" becomes a documented
+  limit for local sessions, gone for sessions on other machines).
+- Edge cases: an OSC 52 split across reads (xterm.js's parser handles it); empty payload (clears nothing, ignored);
+  invalid base64 (ignored); a login page or error page (not ttyd's index) is never modified; `HEAD` of the script
+  unauthenticated → 401, not a redirect; the script must not throw when `window.term` never appears (the 502 page).
+
+**Files:**
+- Create: `gateway/client.js`, `gateway/inject.go`, `gateway/inject_test.go`
+- Modify: `gateway/server.go` (route, `Rewrite` dropping `Accept-Encoding` for the page, `ModifyResponse`),
+  `bin/lzr1-panel` (`open`: no `clip` hook when `LZR1_REMOTE` is set), `docs/remote.md` (how copy works remotely)
+
+**Verification:** RED first: `verify-2.2.1.js` (Playwright, the spike's isolated `remote on` through the tailnet URL,
+allowlist only lazari@lerian.studio, `--ttl 15m`, `remote off` in `finally`) fails on the current code. Then
+`cd gateway && gofmt -l . && go vet ./... && go test ./... -count=1 -race` (the tag inserted once after `<head>`;
+`Content-Length` right; a gzipped upstream page decoded; a non-HTML or non-200 answer untouched; the script route
+needs a session); and the browser run: the stand-in Claude's `copy` → `navigator.clipboard.readText()` gives
+`osc52-from-<name>`; a tmux drag-select in the viewer → the clipboard holds the dragged text; the stand-in `pbcopy`
+of the `lzr1` layer is not called for a session on a second (stand-in remote) profile; a right-click on the panel →
+`window.__ctx` shows `defaultPrevented` true and the row's menu opens; Alt-drag over the viewer → `term.getSelection()`
+non-empty; logging out from another tab → the page goes to `login` within 2 s. Ends with "No serve config" and `tmux
+ls` unchanged.
+
+**Done when:** copies made in the panel or a session land on the browser's clipboard, and the right button opens only
+the row's menu.
+
+#### Task 2.2.2: Ctrl-b d after an in-place switch; the first footer click after a menu
+
+- [ ] Done
+
+**Context:** Both fail in a plain terminal too. **Ctrl-b d:** `_viewer` (`bin/lzr1-panel:1156-1211`) attaches
+`$target`; `_select` (`:1213-1246`), for another session on the same machine, switches the attached client in place
+(`:1237-1241`) and writes the new key to `$tfile`. When the attach then ends (Ctrl-b d), the viewer sees
+`$tfile != $target` and takes it as "the panel moved on" (`:1196`), so it attaches `$tfile`'s session again at once.
+**Footer:** reproduced with `scratchpad/remote/p2plan/footer-probe3.zsh` (isolated tmux, mouse bytes typed in): after a
+row's menu, the first click on any footer button is lost, whether the menu was opened by right-click or `m`, closed by
+a click or Esc, and whether the click comes 0.5 s or 8 s later or after a row click; a key (`?`) right after the menu
+works, and the second footer click works. The menu is `execute($S _menu …)+reload-sync(…)` (`:1555`), a child `fzf`
+(`:1453-1456`); `_new`'s pickers (`:1296`, `:1305`) are children the same way. The footer handler is a `transform`
+on `$FZF_CLICK_FOOTER_WORD` (`:1580-1586`).
+
+**Implementation vision:**
+- **Ctrl-b d:** the viewer writes `$tfile.on` (the key its client is on) before each attach; `_select`'s in-place
+  branch writes it too, only when `switch-client` succeeded (the remote script prints `switched`; `true` today hides a
+  failure); `_menu`'s rename updates it with `$tfile`. After the attach returns, the viewer reads `.on`: when it
+  equals `$tfile`, the client was on the current pick, so this was a detach (or the session ended) of that session:
+  `target` becomes it and the existing gone/detached path runs (`:1197-1209`). Only when `.on` differs from `$tfile`
+  did the panel move on (a cross-machine pick, `viewer_detach`). The `EXIT` trap removes `.on`.
+- **Footer:** root cause first, then fix where the cause is. The probe narrows it in this order, each a few minutes:
+  (1) log `$FZF_CLICK_FOOTER_WORD` from the transform: if the first click arrives with an empty or stale word, the
+  transform falls through `case`: the fix is a default branch that maps by column (`$FZF_CLICK_FOOTER_COLUMN`, or
+  the word nearest to it), kept in `_panel`; (2) if the transform is not run at all, drain `/dev/tty` for 100 ms
+  after the child `fzf` in `_menu` exits, logging what it reads: if stray terminal replies left by the child (cursor
+  position, mode reports) show up and the click then works, keep the drain in `_menu` and in both `_new` pickers; (3) if neither,
+  it is fzf's (a bare `fzf --footer` with `execute(fzf …)` reproduces it): file it upstream at junegunn/fzf with the
+  reduced script, and the workaround is documented: the footer row of the fidelity table and `keys` say "after a
+  menu, the first footer click only wakes the footer: click again". The task records which of the three it was under
+  Deviations.
+- Edge cases: Ctrl-b d in a session the viewer attached itself (works today, must keep working); a switch in place to
+  a session that ended meanwhile (`switch-client` fails: `.on` keeps the old key, the viewer reattaches `$tfile`, as
+  today); a detach right after a cross-machine pick (`.on` is the old machine's: the panel moved on, attach the new one).
+
+**Files:**
+- Modify: `bin/lzr1-panel` (`_viewer`, `_select`, `_menu`, `_new`, `_panel` only if the cause is (1), `keys` only if
+  (3)); `docs/troubleshooting.md` (the footer, if (3))
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `verify-2.2.2.zsh` (an isolated `HOME`, `TMUX_TMPDIR`,
+config and cache as `scratchpad/remote/p2plan/env.zsh`; sessions it made killed by exact name; `tmux ls` on the real
+server compared before and after), RED on the current code then GREEN: two sessions on one profile; click the first
+(viewer attaches), click the second (switched in place), `Ctrl-b d` typed into the viewer pane → after 2 s the viewer
+pane shows "← pick a session" and no client is attached to either session; the same after an Enter-attach; then
+`footer-probe3.zsh 1 menu` → "[?] works" (or, in case (3), the reduced upstream script reproduces it in bare fzf).
+
+**Done when:** Ctrl-b d always leaves the session, and a footer click right after a menu works (or is documented as
+fzf's with its workaround).
+
+#### Task 2.2.3: Double-click focuses the viewer; reconnect gets a working panel on the same session
+
+- [ ] Done
+
+**Context:** Both in the tmux layout `open` makes (`bin/lzr1-panel:1114-1153`), on the `lzr1` server started with
+`-f /dev/null`, so tmux's default mouse bindings apply. **Double-click:** fzf's `double-click` runs `_go` (`:1569`),
+which focuses the viewer (`_focus`, `:1344-1349`); then tmux's default `DoubleClick1Pane` (`select-pane -t = ; …`),
+which fires after the double-click delay, puts the keyboard back on the panel. `local-dblclick.zsh` (spike) shows it
+in a plain terminal. **Reconnect:** when a browser's WebSocket closes, its layout ends (`destroy-unattached`,
+`:1151-1152`); if it was the last session, the `lzr1` server exits while ttyd's reconnect already runs a new `open`,
+whose `new-session` (`:1140`) fails with "server exited unexpectedly" → `die "cannot start tmux"`. The new panel also
+starts on the first session (`_ticker`, `:1248-1266`), not the one the browser was showing.
+
+**Implementation vision:**
+- `open`, with the other `$T set …` (it runs for every layout, idempotent): rebind `DoubleClick1Pane` and
+  `TripleClick1Pane` on the `lzr1` server to tmux's defaults minus `select-pane`: `if -F
+  '#{||:#{pane_in_mode},#{mouse_any_flag}}' { send -M } { copy-mode -H ; send -X select-word ; run -d0.3 ; send -X
+  copy-pipe-and-cancel }` (and `select-line` for the triple). A single click still selects the pane
+  (`MouseDown1Pane` untouched), so clicking the viewer still moves the keyboard there.
+- `open`: `new-session` is retried up to 20 times, 0.25 s apart, when it fails, then checked with `has-session`
+  after the `set` commands (a session made on a server that died in between is made again, at most 3 rounds); only
+  then `die`. No `exit-empty off`: the server still exits when nothing uses it.
+- Last pick per browser remote: `open` writes `$STATE/$id.remote` (the UUID) in a browser's layout; `_select` writes
+  the key it shows to `$RDIR/$uuid.last` when that file exists (`$RDIR` is 0700); `_ticker`'s first pick prefers that
+  key when the panel lists it, else the first row as today, and moves the highlight there with `_pos`. `_remote_off`
+  removes `$RDIR/*.last`. Shared by the browsers of one remote (at most 4): the last one wins, which is what a
+  reconnecting browser wants.
+- Edge cases: a local panel opened while a browser's layout is dying (same retry); `new-session` failing for a real
+  reason (no tmux, a bad socket dir) still dies after ~5 s with tmux's own message; a `.last` key whose session ended
+  (falls back to the first row); `_select` in a local layout never writes `.last`.
+
+**Files:**
+- Modify: `bin/lzr1-panel` (`open`, `_select`, `_ticker`, `_remote_off`)
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `verify-2.2.3.zsh` (isolated as in 2.2.2), RED then GREEN:
+the double-click of `local-dblclick.zsh` → the active pane is the viewer for the whole 2.5 s sampled after it; a
+triple-click on the viewer does not move the keyboard; the reconnect: an isolated `open` with `LZR1_REMOTE=<uuid>`
+attached from a throwaway outer session, a second session picked; kill the outer session (the browser leaving) and at
+once start a new `open` with the same `LZR1_REMOTE` → it starts (no "cannot start tmux") and its viewer shows the second
+session. Then `verify-2.2.3.js` through the tailnet (as in 2.2.1): close the page's WebSocket → ttyd reconnects
+without a second Enter and the viewer shows the session picked before.
+
+**Done when:** a double-click leaves the keyboard in the viewer, and a reconnecting browser gets a working panel on
+the session it was showing.
+
+#### Task 2.2.4: A narrow layout for phones; the fidelity table measured again
+
+- [ ] Done
+
+**Context:** The tmux layout is a `PANEL_W`-column panel (`bin/lzr1-panel:36`, default 56) split left of the viewer
+(`:1149`); tmux squeezes it when the window is narrower, and at 390 px (52 columns) the panel is 1 column wide and the
+list disappears. `list_rows` sizes rows to `$FZF_COLUMNS` (minimum 40, `:595`). `_focus` (`:1344-1349`) selects the
+viewer pane; the viewer's idle screen (`:1166-1170`) says to pick in the panel. The `lzr1` server's options are set by
+every `open` (`:1141-1143`); hooks and status are per session. Tasks 2.2.1-2.2.3 changed `open`, `_viewer` and
+`_select` before this one.
+
+**Implementation vision:**
+- Narrow when the window is under `LZR1_NARROW` columns (default `PANEL_W + 30` = 86), in every tmux layout (a narrow
+  plain terminal had the same broken list; Ghostty splits are untouched). `open` sets on its session the hooks
+  `client-attached` and `client-resized` → `run-shell -b "$SELF _fit $id"`.
+- `_fit ID`: reads `#{window_width}` of `lzr1-ID`. Narrow: touch `$STATE/$id.narrow`; when the window is not zoomed,
+  zoom the panel (`select-pane` it, `resize-pane -Z`); `status on` for that session with `status-left` " ◀ panel ·
+  tap here" (`status-right ''`). Wide: remove `.narrow`, unzoom, `status off`, `resize-pane -t <panel> -x $PANEL_W`.
+  Idempotent; a resize while the viewer is zoomed keeps the viewer zoomed.
+- On the `lzr1` server, `bind -n MouseDown1Status run-shell "$SELF _back '#{session_name}'"`: `_back` takes the ID from
+  `lzr1-ID`, selects the panel pane and zooms it (only when `.narrow`; else nothing). `_focus` in narrow mode selects
+  the viewer and zooms it. The viewer, in narrow mode, calls the same as `_back` when it goes idle (Ctrl-b d, the
+  session ended, nothing picked).
+- `_panel`: `--bind "resize:reload-sync($S _list $id)"` so rows are re-cut to the new width; `left-click` in narrow
+  mode acts as Enter (`transform: [ -e $STATE/$id.narrow ] && echo "execute-silent($S _go $id {1})"`), since the viewer
+  is hidden and a tap that only moves the highlight would show nothing; wide, unchanged.
+- `docs/remote.md`: re-run the spike's Chromium script (`spike-1.2.2.mjs`, updated for the fixes) on the same items and
+  rewrite the table with the new results (Safari and phone columns stay "needs a person" unless one is measured);
+  replace the "For Phase 2" paragraph with what is left, if anything. `keys` gains a line on the narrow layout.
+- Edge cases: rotating a phone (narrow ↔ wide back and forth, zoom state follows); `LZR1_NARROW=0` turns it off;
+  `LZR1_PANEL_WIDTH` changed (the default threshold follows it); several browsers at different widths (hooks and
+  status are per session: each layout decides alone); the status line takes a row (`list_rows` already re-cuts on
+  `resize`); a tap on the status line of a wide layout does nothing.
+
+**Files:**
+- Modify: `bin/lzr1-panel` (`open`, new `_fit` and `_back`, `_focus`, `_viewer`, `_panel`, `keys`), `docs/remote.md`
+  (fidelity table, narrow layout), `README.md` (the `LZR1_NARROW` variable, next to `LZR1_PANEL_WIDTH`)
+
+**Verification:** `zsh -n bin/lzr1-panel lib/splash.zsh`. `verify-2.2.4.zsh` (isolated as in 2.2.2), RED then GREEN:
+an outer session 52×30 running `open` → the panel pane is zoomed and lists every session with its name readable; a
+tap (mouse bytes) on a row → the viewer zoomed with that session; a tap on the status line → the panel back;
+`resize-window -x 180` → unzoomed, panel 56 wide, status off. `verify-2.2.4.js`: Chromium at 390×844 through the
+tailnet URL (as in 2.2.1) → the list is readable, a tap shows the session, the status line brings the panel back;
+then the full spike re-run, whose results are the new table. Ends with "No serve config" and `tmux ls` unchanged.
+
+**Done when:** the fidelity table is all pass or documented workaround in Chromium, re-measured, and a phone-width
+browser gets a usable panel.
 
 ---
 
@@ -345,3 +751,13 @@ each missing piece with its fix.
   so a URL typed without the final slash gets the page with broken relative links; the URL given always has it. The
   allowlist accepts any single-`@` login without spaces (`user@github`, `name@passkey`). `--allow`/`--ttl` without a
   value die with the usage.
+- Phase 2 elaboration (decisions beyond the epic text): attempts made while a login is locked are refused unchecked but
+  count toward the kill switch's 20, so waiting out lockouts cannot outlast it; the gateway exits 3 on the kill switch;
+  the audit trail is `audit.log` (the events of Epic 2.1, a fixed line format) beside `remote.log`, which keeps
+  errors and refused logins; idle means no data frame from the browser (ttyd's pings and their pongs do not count),
+  so a session that only prints idles out; idle is `LZR1_REMOTE_IDLE` (default 30m); remote alerts follow
+  `LZR1_REMOTE_NOTIFY`, not `LZR1_NOTIFY`, and a `remote off` you typed is not notified. Epic 2.2 reaches into
+  `gateway/`: the copy and right-click fixes are a script the gateway adds to ttyd's own page, not ttyd client options
+  or `ttyd -I` (Task 2.2.1 says why); the `t` key was already a viewer switch in the tmux layout, so it stays. The
+  narrow layout applies to every tmux layout, not only a browser's. The footer click after a menu was reproduced
+  without a browser and is not explained yet: Task 2.2.2 starts with its root cause.
