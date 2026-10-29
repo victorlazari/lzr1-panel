@@ -39,21 +39,23 @@ source ${SELF:h:h}/lib/splash.zsh
 
 # A profile is KEY=value lines, read as data (never sourced):
 #   type=local|ssh  host=user@host  key=~/.ssh/id  port=22  root=~/work  repos=~/work/repos  claude=/path/to/claude
+#   opencode=/path/to/opencode  (optional: without it, opencode from the machine's PATH)
 #   only=~/work  (list only the sessions whose folder is inside it, so profiles can share a machine).
 #   profile add writes root= and only= equal to repos=; older profiles may differ.
 load() {
   local f=$PROFILES/$1.conf k v
   [[ -n $1 && -r $f ]] || { print -ru2 -- "lzr1-panel: no profile '$1' (see: lzr1-panel profile list)"; return 1 }
-  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE= P_ONLY=
+  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE= P_ONLY= P_OPENCODE=
   while IFS='=' read -r k v; do
     case $k in
       type) P_TYPE=$v ;; host) P_HOST=$v ;; key) P_KEY=${v/#\~/$HOME} ;; port) P_PORT=$v ;;
       root) P_ROOT=$v ;; repos) P_REPOS=$v ;; claude) P_CLAUDE=$v ;; only) P_ONLY=$v ;;
+      opencode) P_OPENCODE=$v ;;
     esac
   done <$f
   [[ $P_TYPE == (local|ssh) ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs type=local or type=ssh"; return 1 }
   [[ $P_TYPE == local || -n $P_HOST ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs host="; return 1 }
-  : ${P_CLAUDE:=claude}
+  : ${P_CLAUDE:=claude} ${P_OPENCODE:=opencode}
   return 0
 }
 
@@ -147,15 +149,16 @@ profile_help() {
 lzr1-panel profile list
 lzr1-panel profile show NAME
 lzr1-panel profile add                                   guided: asks for everything
-lzr1-panel profile add NAME --local --repos PATH [--claude PATH]
-lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH]
+lzr1-panel profile add NAME --local --repos PATH [--claude PATH] [--opencode PATH]
+lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH] [--opencode PATH]
 lzr1-panel profile edit NAME                             the same questions, each showing its current value
-lzr1-panel profile test NAME                             reach it, find tmux and claude, check the folders
+lzr1-panel profile test NAME                             reach it, find tmux, claude and opencode, check the folders
 lzr1-panel profile remove NAME
 
 NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari); a _ becomes a dash.
 --repos: the folder holding your repositories. A profile opens and lists only the sessions inside --repos, so two
          profiles can share one machine, one folder each, without listing the same sessions twice.
+--opencode: optional; without it, add looks for opencode there and the profile works without it.
 Paths may start with ~, read on the profile's machine.
 EOF
 }
@@ -169,9 +172,11 @@ profile_test() {
     printf "tmux=%s\n" "$(command -v tmux || echo missing)"
     c=$(exp "$1"); case $c in */*) [ -x "$c" ] || c=missing ;; *) c=$(command -v "$c" || echo missing) ;; esac
     printf "claude=%s\n" "$c"
+    c=$(exp "$4"); case $c in */*) [ -x "$c" ] || c= ;; *) c=$(command -v "$c") ;; esac
+    printf "opencode=%s\n" "${c:-not installed (opencode sessions unavailable)}"
     r=$(exp "$2"); [ -d "$r" ] && printf "repos=%s (%s folders)\n" "$r" "$(ls -1 "$r" | wc -l | tr -d " ")" || printf "repos=%s missing\n" "$r"
     o=$(exp "$3"); [ -d "$o" ] && printf "root=%s\n" "$o" || printf "root=%s missing\n" "$o"
-  ' "$P_CLAUDE" "${P_REPOS:-~}" "${P_ROOT:-${P_REPOS:-~}}" 2>&1) || { print -r -- "  cannot reach it: $out"; return 1 }
+  ' "$P_CLAUDE" "${P_REPOS:-~}" "${P_ROOT:-${P_REPOS:-~}}" "$P_OPENCODE" 2>&1) || { print -r -- "  cannot reach it: $out"; return 1 }
   local bad=0 line
   for line in ${(f)out}; do
     print -r -- "  ${line/=/: }"
@@ -192,7 +197,7 @@ profile_name() {
 }
 
 profile_add() {
-  local name type host key port repos claude REPLY WHY
+  local name type host key port repos claude opencode REPLY WHY
   # One guided answer: the prompt shows even when the answers are piped in; the end of input stops the questions.
   ask() { print -rnu2 -- "$2"; IFS= read -r $1 || { print -u2; die "profile add: no answer" } }
   if (( $# == 0 )); then
@@ -225,6 +230,7 @@ profile_add() {
         --port) port=$2; shift ;;
         --repos) repos=$2; shift ;;
         --claude) claude=$2; shift ;;
+        --opencode) opencode=$2; shift ;;
         --root|--only) die "profile add: --root and --only are gone: a profile opens and lists sessions inside --repos" ;;
         *) die "profile add: unknown option $1" ;;
       esac
@@ -238,12 +244,14 @@ profile_add() {
   [[ -n $repos ]] || die "profile add: --repos PATH is required"
   [[ $key == \~* ]] && key=$HOME${key#\~}
   [[ -z $key || -r $key ]] || die "SSH key not readable: $key"
-  # Store a path to claude that works without a login shell: tmux starts it with a bare PATH.
+  # Store paths to claude and opencode that work without a login shell: tmux starts them with a bare PATH.
+  P_TYPE=$type P_HOST=$host P_KEY=$key P_PORT=$port
   if [[ -z $claude ]]; then
-    P_TYPE=$type P_HOST=$host P_KEY=$key P_PORT=$port
     claude=$(on 'command -v claude 2>/dev/null || { [ -x "$HOME/.local/bin/claude" ] && echo "$HOME/.local/bin/claude"; }' 2>/dev/null)
     [[ -n $claude ]] || die "Claude Code not found on that machine (install it there, or pass --claude PATH)"
   fi
+  # opencode is optional: a machine without it still gets a profile, with no opencode= line.
+  [[ -n $opencode ]] || opencode=$(on 'command -v opencode 2>/dev/null || { [ -x "$HOME/.opencode/bin/opencode" ] && echo "$HOME/.opencode/bin/opencode"; }' 2>/dev/null)
   {
     print -r -- "# lzr1-panel profile: $name (written $(date +%Y-%m-%d)). Keep it out of git."
     print -r -- "type=$type"
@@ -254,6 +262,7 @@ profile_add() {
     print -r -- "root=$repos"
     print -r -- "only=$repos"
     print -r -- "claude=$claude"
+    [[ -n $opencode ]] && print -r -- "opencode=$opencode"
   } >$PROFILES/$name.conf
   chmod 600 $PROFILES/$name.conf
   print -r -- "saved $PROFILES/$name.conf"

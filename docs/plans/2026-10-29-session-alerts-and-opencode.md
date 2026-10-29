@@ -391,7 +391,7 @@ folder-trust prompt.
 
 #### Task 2.2.1: The profile knows its opencode
 
-- [ ] Done
+- [x] Done
 
 **Context:** `load` (`bin/lzr1-panel`, "profiles" section) reads `KEY=value` lines into `P_*` and defaults
 `P_CLAUDE` to `claude`. `profile_add` finds Claude's path on the machine (`command -v claude ||
@@ -581,3 +581,9 @@ lists the Claude ones.
   session shows under two profiles") now says `profile edit NAME`. The task's verification line
   `print -l '' '' ~/x` has one answer too many for a local profile (name, repositories folder); verify-212 uses the
   right count and a resolved scratch folder, and drives `vared` and the menu in tmux panes.
+- Task 2.2.1: `profile add` also writes `opencode=` from `--opencode` as given, without checking it (like
+  `--claude`); `profile test` then reports a path that does not run as `not installed`. The test checks the path or
+  `command -v` on the machine, so a profile with no `opencode=` falls back to `opencode` from that PATH. `profile help`
+  also says `--opencode` is optional, and `profile test`'s line says it finds opencode. The verification uses a
+  resolved scratch folder, not `/tmp`, and simulates a machine without opencode with a wrapper `sh` whose PATH has no
+  opencode, since `bin/lzr1-panel` puts `/opt/homebrew/bin` on PATH itself.
