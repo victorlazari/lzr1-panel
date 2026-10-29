@@ -114,22 +114,31 @@ LIST_SCRIPT='
   now=$(date +%s) us=$(printf "\037") host=$(hostname) only=$(exp "$1"); only=${only%/}
   # tmux escapes control characters in -F output, so its fields split on "|"; the task title comes last, where a "|"
   # inside it stays put. Session names cannot contain "|" (lzr1-panel refuses them).
-  tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_activity}|#{@rc_url}|#{@lzr1_model}|#{pane_current_path}|#{pane_title}" 2>/dev/null |
-  while IFS="|" read -r name att act url model dir title; do
+  tmux list-sessions -F "#{session_name}|#{session_attached}|#{session_activity}|#{@rc_url}|#{@lzr1_model}|#{pane_current_path}|#{@lzr1_agent}|#{pane_title}" 2>/dev/null |
+  while IFS="|" read -r name att act url model dir agent title; do
     if [ -n "$only" ]; then case $dir in "$only"|"$only"/*) ;; *) continue ;; esac; fi
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
-    if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
-    elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|(Claude|opencode) exited"; then st=wait
-    else st=idle; fi
-    # The newest link on screen wins: a resumed conversation gets a new one.
-    new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
-    if [ -n "$new" ] && [ "$new" != "$url" ]; then url=$new; tmux set-option -t "=$name:" @rc_url "$url"; fi
-    # Sessions lzr1-panel started carry their model; others show it in Claude Code'"'"'s header.
-    [ -n "$model" ] || model=$(printf "%s\n" "$full" | head -8 | grep -oE "Opus|Sonnet|Haiku|Fable" | head -1 | tr "A-Z" "a-z")
-    # Claude titles the terminal with its current task, after a spinner glyph.
-    title=$(printf "%s" "$title" | sed "s/^[^[:alnum:]]*//")
-    case $title in "$host"|"$host".*|"Claude Code"|"") title= ;; esac
+    if [ "$agent" = opencode ]; then
+      # opencode shows "esc interrupt" in its bottom bar while it works, and its question dialog ends in "enter
+      # submit". It titles the terminal "OC | <session title>", or "OpenCode" before it has one.
+      if printf "%s" "$screen" | grep -q "esc interrupt"; then st=work
+      elif printf "%s" "$screen" | grep -qE "enter submit|Permission required|opencode exited"; then st=wait
+      else st=idle; fi
+      title=${title#"OC | "}; [ "$title" = OpenCode ] && title=
+    else
+      if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
+      elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|(Claude|opencode) exited"; then st=wait
+      else st=idle; fi
+      # The newest link on screen wins: a resumed conversation gets a new one.
+      new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
+      if [ -n "$new" ] && [ "$new" != "$url" ]; then url=$new; tmux set-option -t "=$name:" @rc_url "$url"; fi
+      # Sessions lzr1-panel started carry their model; others show it in Claude Code'"'"'s header.
+      [ -n "$model" ] || model=$(printf "%s\n" "$full" | head -8 | grep -oE "Opus|Sonnet|Haiku|Fable" | head -1 | tr "A-Z" "a-z")
+      # Claude titles the terminal with its current task, after a spinner glyph.
+      title=$(printf "%s" "$title" | sed "s/^[^[:alnum:]]*//")
+      case $title in "$host"|"$host".*|"Claude Code"|"") title= ;; esac
+    fi
     branch= changed=
     if [ -n "$dir" ] && b=$(git -C "$dir" branch --show-current 2>/dev/null); then
       branch=${b:-detached}; changed=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d " ")
@@ -138,6 +147,12 @@ LIST_SCRIPT='
     if [ $st = wait ]; then
       ex=$(printf "%s" "$screen" | grep -oE "(Claude|opencode) exited" | tail -1)
       if [ -n "$ex" ]; then waitfor="$ex · Enter resumes"
+      elif [ "$agent" = opencode ]; then
+        # The question is the dialog'"'"'s last non-empty line above its first option, inside a "┃" border.
+        if printf "%s" "$screen" | grep -q "┃[[:space:]]*1\. "; then
+          waitfor=$(printf "%s\n" "$screen" | sed -n "/┃[[:space:]]*1\. /q; p" | sed "s/┃//g; s/^[[:space:]]*//; s/[[:space:]]*$//" | grep . | tail -1)
+        fi
+        [ -n "$waitfor" ] || waitfor="waiting on you"
       else
         waitfor=$(printf "%s\n" "$screen" | grep -E "Do you want|Would you like|\?[[:space:]│]*$" | tail -1 | sed "s/^[[:space:]│╭╰|]*//; s/[[:space:]│╮╯|]*$//")
         [ -n "$waitfor" ] || waitfor="waiting on you"

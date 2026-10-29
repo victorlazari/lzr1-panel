@@ -381,7 +381,7 @@ working / waiting / idle state, so Phase 1's alerts work for it.
 **Scope:** `bin/lzr1-panel` (`load`, profile commands, `start`, `run`, `LIST_SCRIPT`, alert exclusion)
 **Dependencies:** Epic 2.1 (both touch `profile_add`)
 **Done when:** Tasks 2.2.1-2.2.3 pass; Claude sessions behave exactly as before.
-**Status:** Pending
+**Status:** Done
 
 Spike (2026-10-29, opencode 2.0.32 in tmux 200x50): working shows `esc interrupt` in the bottom bar; the question
 tool shows a dialog (question line, `1. …` options, `↑↓ select  enter submit  esc dismiss`); idle shows neither;
@@ -462,7 +462,7 @@ before.
 
 #### Task 2.2.3: List opencode sessions with the right state
 
-- [ ] Done
+- [x] Done
 
 **Context:** `LIST_SCRIPT` reads tmux fields split on `|` (title last), decides `st` from Claude's markers (`esc to
 interrupt` → work; `Enter to select|Do you want to|Would you like to proceed|…exited` → wait), the model from
@@ -596,3 +596,10 @@ lists the Claude ones.
   first run gets your args, then `--prompt`; the resume is `--continue` alone. The header usage gained its own
   `run --opencode` line. On the unchanged code, verify-222's `run --opencode` started two Claude sessions named
   after its scratch folder (`unknown option '--opencode'`); they were killed and the script now removes them.
+- Task 2.2.3: opencode rows skip Claude's Remote Control grep and header model lookup (their model is
+  `@lzr1_model`). The question is looked for only when a `┃ 1. ` option line is on screen, so a `?` in an idle reply
+  never becomes one. `Permission required` stays unverified on 2.0.32; noting it in `docs/troubleshooting.md` is left
+  to Task 2.3.2, which owns the docs. verify-223 reads each record from `$STATE/raw-t`, and also checks the exited
+  screen, an opencode screen in a session without `@lzr1_agent` (read as Claude: idle), that `opencode exited` makes
+  no alert, and a question alert carrying the question; its real `start t opencode alert-oc2` went work, then idle,
+  with the task title shown without `OC | `.
