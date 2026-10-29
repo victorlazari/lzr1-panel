@@ -169,36 +169,52 @@ this Mac's clipboard, for sessions on other machines. A session on this Mac is t
 with the panel on this screen, and pipes every copy to `pbcopy` too (as it does for that panel), so a copy made in it
 from a browser lands on both clipboards.
 
+## A phone, or any narrow window
+
+A tmux layout narrower than `LZR1_NARROW` columns (86 by default: the panel's 56 plus 30) shows one pane at a time: a
+phone's browser (390 px is about 46 columns), a narrow terminal or a split. The panel fills the window, with a yellow
+bar at the bottom, "◀ panel · tap here".
+
+- **A tap on a session's row** shows that session alone, with the keyboard in it (what Enter does on a wide layout).
+  A tap on a machine's line or a pull request moves nothing.
+- **A tap on the yellow bar** brings the panel back. So does leaving the session (Ctrl-b d), or the session ending.
+- **Turning the phone** (or resizing the window) switches between the two layouts at once; the panel's rows are cut
+  again for the new width. Wide again, the panel is back at its `LZR1_PANEL_WIDTH` beside the viewer.
+- Each browser decides alone: a phone and a laptop on the same remote each get the layout that fits them.
+
+`LZR1_NARROW=0` keeps the side-by-side layout at any width. A Ghostty split is never narrowed.
+
 ## Fidelity in a browser
 
-Measured on 2026-10-29 through the real tailnet URL, with ttyd 1.7.7 (xterm.js in the page), tmux 3.8 and fzf 0.74.
-Playwright 1.64 drove headless Chromium (build 1248, macOS) with real mouse events at xterm cell coordinates and real
-key presses; results were read back from xterm.js's screen, `tmux capture-pane` of the test sessions and a stand-in
-`pbcopy`. The sessions ran a stand-in for Claude that echoes each line, reports Ctrl-C and copies with OSC 52. Safari
-and phones were out of the automation's reach: their cells say **needs a person** until someone measures them. "Also
-in a terminal" marks a failure reproduced in the tmux layout in a plain terminal: a panel bug, not the browser's.
+Measured again on 2026-10-29 after the fixes of Tasks 2.2.1-2.2.4, through the real tailnet URL, with ttyd 1.7.7
+(xterm.js in the page), tmux 3.8 and fzf 0.74.2. Playwright 1.64 drove headless Chromium (build 1248, macOS) with real
+mouse events at xterm cell coordinates and real key presses; results were read back from xterm.js's screen, the
+`lzr1` server's panes and `tmux capture-pane` of the test sessions, and the browser's clipboard. The sessions ran a
+stand-in for Claude that echoes each line, reports Ctrl-C and copies with OSC 52. Safari and phones were out of the
+automation's reach: their cells say **needs a person** until someone measures them (the phone column's layout was
+measured in Chromium at a phone's width, see Phone-width).
 
 | Item | Chrome (headless Chromium, automated) | Safari | Phone |
 |------|---------------------------------------|--------|-------|
-| **Login** | pass: the URL shows the password form; the panel lists sessions 0.7 s after Enter. Needed one fix first: with `Referrer-Policy: no-referrer` Chrome sent `Origin: null` on the form's POST and every login was refused; it is `same-origin` now. | needs a person | needs a person |
+| **Login** | pass: the URL shows the password form; the panel lists sessions 0.7 s after Enter. | needs a person | needs a person |
 | **Listing** sessions | pass: every session listed with its summary line; the first one shows in the viewer by itself. | needs a person | needs a person |
 | **Selecting** with ↑ ↓ | pass: each arrow shows that session in the viewer. | needs a person | needs a person |
-| **Typing** in a session | pass, once the keyboard is in the viewer (Enter on the row, or a click in the viewer): the session read every character. | needs a person | needs a person |
+| **Typing** in a session | pass, once the keyboard is in the viewer (Enter or a double-click on the row, or a click in the viewer): the session read every character. | needs a person | needs a person |
 | **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | needs a person | needs a person |
-| **Right-click** menu | pass (2.2.1): the row's menu opens and its actions work; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | needs a person | needs a person (no right button: long-press) |
-| **Double-click** a row | pass (2.2.3): the row shows in the viewer and the keyboard moves there and stays. It used to go back to the panel after about 0.2 s, also in a terminal, because tmux's own `DoubleClick1Pane` binding ran `select-pane -t =`. The layout's server now binds the double and triple click without `select-pane`; a single click still moves the keyboard to the pane clicked. | needs a person | needs a person |
-| **Footer** buttons | `[?]`, `[+opus]` and `[+sonnet]` work. The first footer click right after a row's menu was lost, also in a terminal; fixed in 2.2.2 and checked in a terminal's tmux layout (Task 2.2.4 measures it again in Chrome). | needs a person | needs a person |
-| **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there (once in four runs that click did not start it). | needs a person | needs a person |
+| **Right-click** menu | pass (2.2.1): the row's menu opens and "view it here" works; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | needs a person | needs a person (no right button: long-press) |
+| **Double-click** a row | pass (2.2.3): the row shows in the viewer and the keyboard moves there within 0.5 s and stays. | needs a person | needs a person |
+| **Footer** buttons | pass (2.2.2): right after a row's menu closed with Esc, the first click on `[?]` shows the keys; `[↻]` lists a session started a moment before. | needs a person | needs a person |
+| **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there. | needs a person | needs a person |
 | **Ctrl-C** to Claude | pass: the agent got SIGINT. | needs a person | needs a person (no Ctrl key on the keyboard) |
-| **Ctrl-b d** leaves a session | After a click switched the viewer to another session of the same machine, Ctrl-b d detached and the viewer attached again at once, also in a terminal. Fixed in 2.2.2 and checked in a terminal's tmux layout, after a click, an Enter and a rename (Task 2.2.4 measures it again in Chrome). | needs a person | needs a person |
-| **Copy** (OSC 52, drag) | pass (2.2.1): Claude's OSC 52 copy, in a session on this Mac and on another machine (a stand-in reached through `ssh`), and a tmux drag-select both land on the browser's clipboard; the browser's layout no longer calls this Mac's `pbcopy` (a session on this Mac still does, from its own tmux: see "Copy, select and the right button"). Option-drag selects in xterm.js over the panel's mouse mode. | needs a person | needs a person |
+| **Ctrl-b d** leaves a session | pass (2.2.2): after a click switched the viewer in place to another session of the same machine, Ctrl-b d leaves it; the viewer waits for a pick and no client is left on the session. | needs a person | needs a person |
+| **Copy** (OSC 52, drag) | pass (2.2.1): Claude's OSC 52 copy and a tmux drag-select in the session both land on the browser's clipboard; Option-drag selects in xterm.js itself over the panel's mouse mode. The session ran on this Mac, so its own tmux also put the copies on this Mac's clipboard (see "Copy, select and the right button"). | needs a person | needs a person |
 | **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | needs a person | needs a person |
-| **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel shrinks with the window (56 → 38 columns) rather than keeping its width. | needs a person | needs a person |
-| **Phone-width** layout | fail (Chromium at 390×844 px): 52 columns, narrower than the 56-column panel, so tmux squeezes the panel to 1 column and the list disappears. | needs a person | needs a person |
-| **Reconnect** after the laptop sleeps | pass (2.2.3; simulated by closing the WebSocket, a real sleep needs a person): ttyd reconnects by itself to a working panel that shows the session the browser showed before, with the highlight on it. Before, the new panel could fail with "server exited unexpectedly / cannot start tmux" when the dying layout was the last on the `lzr1` server, and it started on the first session. `open` now retries tmux for about 5 s, and each remote keeps its browsers' last pick. | needs a person | needs a person |
-| **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person: headless Chromium has no browser shortcuts. What reaches the page works: Ctrl-W arrives as the terminal's word erase. | needs a person | needs a person |
+| **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel keeps its 56 columns (2.2.4; it used to shrink with the window). | needs a person | needs a person |
+| **Phone-width** layout | pass (2.2.4; Chromium at 390×844 px, 46 columns): the panel fills the window and lists every session by name; a tap on a row shows that session alone; a tap on the yellow bar brings the panel back; back at 1400×900 the panel is 56 columns beside the viewer again. | needs a person | needs a person (touch, the on-screen keyboard) |
+| **Reconnect** after the laptop sleeps | pass (2.2.3; simulated by closing the WebSocket, a real sleep needs a person): ttyd reconnects by itself to a working panel that shows the session the browser showed before. | needs a person | needs a person |
+| **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person for Cmd-W and Cmd-T: headless Chromium has no browser shortcuts. Ctrl-W reaches the session as the terminal's word erase. | needs a person | needs a person |
 
-Copy and the right button were fixed after this measurement (Task 2.2.1, measured again the same way). Ctrl-b d and
-the first footer click after a menu were fixed in Task 2.2.2 and checked in a terminal. Double-click and reconnect
-were fixed in Task 2.2.3 and measured again in Chrome. Still for Phase 2 (Epic 2.2): a narrower or single-pane layout
-under about 80 columns; then the Safari and phone columns, measured by a person.
+Every item Chromium can reach passes. What is left needs a person: the Safari and phone columns (Safari's clipboard
+falls back to the "click to copy" note, never exercised in a browser; a phone's touch and on-screen keyboard), and
+the browser's own shortcuts, which a page cannot see. A click made while the panel reloads (every 15 seconds, after a
+menu, after a resize) is dropped: click again (see docs/troubleshooting.md).

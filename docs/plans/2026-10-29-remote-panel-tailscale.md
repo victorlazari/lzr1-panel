@@ -25,7 +25,7 @@ browser), Tailscale 1.104 (`serve`, MagicDNS HTTPS certificates, identity header
 | Phase | Milestone | Epics | Status |
 |-------|-----------|-------|--------|
 | 1 | `lzr1-panel remote on` prints a tailnet URL and password; an allowlisted tailnet user opens it in a browser, logs in and drives a working panel; `remote off` removes every trace | 1.1, 1.2 | Complete |
-| 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Detailed |
+| 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Complete |
 | 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Epic-level |
 
 **Decisions already made with the owner (2026-10-29):**
@@ -448,7 +448,7 @@ clipboard, a narrower layout for phone widths, `t` new-tab action hidden when re
 `_ticker`, `_focus`, `_menu`, `_new`, `_panel`, `keys`, new `_fit`/`_back`), `docs/remote.md`, `README.md`
 **Dependencies:** Phase 1 (Task 1.2.2's table); after Epic 2.1, since Task 2.2.1 changes the same gateway files
 **Done when:** the fidelity table is all pass or documented workaround, re-measured on the same browsers.
-**Status:** Pending
+**Status:** Done
 
 Which task fixes which row of the fidelity table (`docs/remote.md:109-127`): **Copy** and **Right-click** → 2.2.1;
 **Ctrl-b d** and **Footer** → 2.2.2; **Double-click** and **Reconnect** → 2.2.3; **Phone-width** and the re-measured
@@ -616,7 +616,7 @@ the session it was showing.
 
 #### Task 2.2.4: A narrow layout for phones; the fidelity table measured again
 
-- [ ] Done
+- [x] Done
 
 **Context:** The tmux layout is a `PANEL_W`-column panel (`bin/lzr1-panel:36`, default 56) split left of the viewer
 (`:1149`); tmux squeezes it when the window is narrower, and at 390 px (52 columns) the panel is 1 column wide and the
@@ -837,3 +837,23 @@ each missing piece with its fix.
   viewer, which kept the keyboard before the change too. A triple-click on a row still ends on the panel, since its
   third press is a plain `MouseDown1Pane`. The live run allowed only lazari@lerian.studio with `--ttl 15m`, and it
   ended with "No serve config".
+- Task 2.2.4: `_fit` runs one at a time (a `$STATE/ID.fit` lock folder), each reading the width when its turn comes:
+  `client-attached` and `client-resized` fire together, and the attach's run, at the session's creation width, undid
+  the zoom of the resize's. `open` writes the panel's pane id to `.me` itself (`split-window -P`), so `_fit` does not
+  wait on `_panel`. The hooks and the status binds carry `LZR1_CONFIG`, `XDG_CACHE_HOME`, `LZR1_PANEL_WIDTH` and
+  `LZR1_NARROW` in their `run-shell` command, since the `lzr1` server's environment is whichever `open` started it.
+  The text is `status-left`, so the tap is bound on `MouseDown1Status`, `-StatusLeft`, `-StatusRight` and
+  `-StatusDefault` (the plan named only the first); the bar is yellow and hides the window list. `LZR1_NARROW=0` sets
+  no hooks at all, and a value that is not a number falls back to the default. Wide, `_fit` puts the panel back at
+  `PANEL_W` on every resize (the Resize row now says the panel keeps 56 columns), and never unzooms a zoom it did not
+  make. Beyond the plan: the viewer also goes back to the panel when its session ended; a tap on a machine's line or a
+  PR row does nothing in narrow mode (a PR would have opened in this Mac's browser); with `LZR1_MENU_BUTTON=left` the
+  left button keeps opening the menu, so there is no narrow tap. The `resize` bind is a transform that skips the
+  reload while the panel is hidden behind the zoomed viewer (1 column). `keys` gains one line of at most 56 columns,
+  and "Enter resumes the conversation" became "Enter resumes it": the `[?]` text fills a 40-row, 56-column panel
+  exactly, and one more row pushed its title off (2.2.2's footer check caught it). Chromium at 390 px has 46 columns
+  here, not the 52 of Task 1.2.2. The table was measured with a new `verify-2.2.4.js` (the spike's items, updated for
+  the fixes, plus Option-drag) instead of re-running `spike-1.2.2.mjs`, whose environment and teardown (a tmux
+  `kill-server`) are not allowed any more. Copy was measured on a session on this Mac only, not again through 2.2.1's
+  `ssh` stand-in. Every Chrome cell passes; Safari, phone and the browser's own shortcuts stay "needs a person". The
+  live runs allowed only lazari@lerian.studio with `--ttl 15m`, and each ended with "No serve config".

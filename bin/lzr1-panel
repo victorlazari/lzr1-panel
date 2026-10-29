@@ -37,6 +37,8 @@ CONFIG=${LZR1_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel}
 PROFILES=$CONFIG/profiles
 STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
 PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
+NARROW=${LZR1_NARROW:-$(( PANEL_W + 30 ))}  # a tmux layout under this many columns shows one pane at a time; 0: never
+[[ $NARROW == <-> ]] || NARROW=$(( PANEL_W + 30 ))
 MENU_BUTTON=${LZR1_MENU_BUTTON:-right}  # the mouse button that opens a row's menu: right or left
 mkdir -p $PROFILES $STATE
 chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
@@ -711,6 +713,13 @@ remote_last() {
   [[ $u == [0-9a-f-]## && -d $RDIR ]] && print -rn -- $2 >$RDIR/$u.last
 }
 
+# zoom_pane PANE: PANE alone in its window (the narrow layout, _fit), with the keyboard
+zoom_pane() {
+  local -a T=(tmux -L lzr1)
+  $T select-pane -Z -t $1 2>/dev/null || return 0  # -Z: a zoomed window stays zoomed, on PANE now
+  [[ $($T display -p -t $1 '#{window_zoomed_flag}') == 1 ]] || $T resize-pane -Z -t $1 2>/dev/null
+}
+
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
   split_key $2; load $KP 2>/dev/null || return 0
   on 'c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null); [ -n "$c" ] && tmux detach-client -t "$c" 2>/dev/null; true' $1
@@ -1219,7 +1228,8 @@ profile)
 
 open)  # panel on the left, viewer on the right
   local id=$$ term
-  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded  # a reused ID is a new panel: its first refresh only records
+  # A reused ID is a new panel: its first refresh only records, and it starts wide.
+  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded $STATE/$id.narrow $STATE/$id.fit
   lzr1_splash open
   if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
     # Ghostty: split this pane; it becomes the viewer.
@@ -1273,7 +1283,18 @@ open)  # panel on the left, viewer on the right
   print -rn -- tmux >$STATE/$id.mode
   print -rn -- $TERM_PROGRAM >$STATE/$id.term
   print -rn -- $vpane >$STATE/$id.vterm
-  $T split-window -hb -l $PANEL_W -t $sess "$SELF _panel $id"
+  $T split-window -hb -l $PANEL_W -t $sess -P -F '#{pane_id}' "$SELF _panel $id" >$STATE/$id.me
+  # Narrow (a phone in a browser, a small terminal): one pane at a time, the panel first (_fit, on every attach and
+  # resize, so a phone turned sideways follows). A tap on the status line it shows brings the panel back (_back).
+  if (( NARROW )); then
+    local envs="LZR1_CONFIG=${(q)CONFIG} XDG_CACHE_HOME=${(q)STATE:h} LZR1_PANEL_WIDTH=$PANEL_W LZR1_NARROW=$NARROW"
+    $T set-hook -t $sess client-attached "run-shell -b '$envs $SELF _fit $id'" \
+       \; set-hook -t $sess client-resized "run-shell -b '$envs $SELF _fit $id'" \
+       \; bind -n MouseDown1Status "run-shell '$envs $SELF _back #{session_name}'" \
+       \; bind -n MouseDown1StatusLeft "run-shell '$envs $SELF _back #{session_name}'" \
+       \; bind -n MouseDown1StatusRight "run-shell '$envs $SELF _back #{session_name}'" \
+       \; bind -n MouseDown1StatusDefault "run-shell '$envs $SELF _back #{session_name}'" >/dev/null 2>&1
+  fi
   # A browser's panel (lzr1-panel remote): its layout ends when the browser goes, and remote off finds it by the mark.
   [[ -n $LZR1_REMOTE ]] &&
     TMUX= exec $T attach -t $sess \; set -t $sess destroy-unattached on \; set -t $sess @lzr1_remote $LZR1_REMOTE
@@ -1290,6 +1311,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
   while true; do
     target=$(<$tfile 2>/dev/null)
     if [[ -z $target ]]; then
+      [[ -e $STATE/$id.narrow ]] && zoom_pane $(<$STATE/$id.me)  # narrow: nothing to show, so the panel
       clear; print -P '\n  %F{8}← pick a session in the panel: click it, or use the arrow keys%f'
       print -P '  %F{8}inside a session, Ctrl-b d leaves it (Ctrl-C goes to Claude)%f'
       until [[ -s $tfile ]]; do sleep 0.3; done
@@ -1334,6 +1356,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
       if first_key $id $ended; then
         print -rn -- $REPLY >$tfile; print -rn -- $REPLY >$STATE/$id.follow; remote_last $id $REPLY
       else ended=(); : >$tfile; fi
+      [[ -e $STATE/$id.narrow ]] && zoom_pane $(<$STATE/$id.me)  # narrow: back to the list
       continue
     fi
     # Detached (Ctrl-b d): wait for the next pick. The panel's refreshes re-send its highlighted row; .detached
@@ -1490,11 +1513,42 @@ _unclick)  # _unclick ID PANE: after a row's menu in the tmux layout (see _panel
   } >/dev/null 2>&1 &!
   ;;
 
-_focus)  # _focus ID: move the keyboard to the viewer
+_focus)  # _focus ID: move the keyboard to the viewer (narrow: the viewer alone)
   local vt=$(<$STATE/$2.vterm 2>/dev/null)
   [[ -z $vt ]] && exit 0
-  if [[ $(mode $2) == tmux ]]; then tmux -L lzr1 select-pane -t $vt
+  if [[ $(mode $2) == tmux ]]; then
+    if [[ -e $STATE/$2.narrow ]]; then zoom_pane $vt; else tmux -L lzr1 select-pane -t $vt; fi
   else ghostty "focus (terminal id \"$vt\")" >/dev/null; fi
+  ;;
+
+_fit)  # _fit ID: the tmux layout's hooks (open): under NARROW columns the panel or the viewer alone, with a status line
+       # to come back to the panel; wide, the panel PANEL_W columns beside the viewer
+  local id=$2 s=lzr1-$2 me w z
+  local -a T=(tmux -L lzr1)
+  [[ -r $STATE/$id.me ]] && me=$(<$STATE/$id.me)
+  [[ -n $me ]] || exit 0
+  # One at a time (an attach and a resize come together), each reading the width when its turn comes: the last wins.
+  repeat 40; do mkdir $STATE/$id.fit 2>/dev/null && break; sleep 0.05; done
+  trap 'rmdir $STATE/$id.fit 2>/dev/null' EXIT
+  w=$($T display -p -t "=$s:" '#{window_width} #{window_zoomed_flag}' 2>/dev/null) || exit 0
+  z=${w#* } w=${w% *}
+  if (( NARROW && w < NARROW )); then
+    : >$STATE/$id.narrow
+    $T set -t $s status on \; set -t $s status-position bottom \; set -t $s status-style 'fg=black,bg=yellow' \
+       \; set -t $s status-left ' ◀ panel · tap here' \; set -t $s status-left-length 40 \; set -t $s status-right '' \
+       \; set -t $s window-status-format '' \; set -t $s window-status-current-format '' 2>/dev/null
+    (( z )) || zoom_pane $me  # already zoomed (the panel, or the viewer showing a session): keep it
+  else
+    [[ -e $STATE/$id.narrow ]] || (( ! z )) || exit 0  # never unzoom what this did not zoom
+    rm -f $STATE/$id.narrow
+    (( z )) && $T resize-pane -Z -t $me 2>/dev/null
+    $T set -t $s status off \; resize-pane -t $me -x $PANEL_W 2>/dev/null
+  fi
+  ;;
+
+_back)  # _back SESSION: a tap on a narrow layout's status line: the panel alone again
+  local id=${2#lzr1-}
+  [[ $2 == lzr1-<-> && -e $STATE/$id.narrow && -r $STATE/$id.me ]] && zoom_pane $(<$STATE/$id.me)
   ;;
 
 _url)  # _url KEY: the session's Remote Control link
@@ -1710,6 +1764,11 @@ _panel)  # _panel ID
   # on its press and the menu takes the release, so the next footer click would be lost. In the tmux layout a release
   # typed into the panel once the menu is gone clears that (_unclick); a Ghostty split cannot be typed into.
   [[ $(mode $id) == tmux ]] && menu="execute($S _menu $id {1})+execute-silent($S _unclick $id $me)"
+  # Narrow (_fit): the viewer is hidden, so a tap on a session's row shows it (enter's action) instead of only moving the
+  # highlight. A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise makes.
+  local -a narrow=()
+  [[ $button != left-click ]] && narrow=( --bind "left-click:transform:[ -e ${(q)STATE}/$id.narrow ] &&
+    case {1} in +pr/*|*/) ;; */?*) echo 'execute-silent($S _go $id {1})' ;; esac" )
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
@@ -1720,6 +1779,7 @@ _panel)  # _panel ID
     --footer='[+opus] [+sonnet] [+opencode] [↻] [?]' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
+    --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
     --bind "focus:execute-silent($S _select $id {1} &)" \
     --bind "enter:execute-silent($S _go $id {1})" \
     --bind "double-click:execute-silent($S _go $id {1})" \
@@ -1783,9 +1843,10 @@ keys)
   q                close the panel and the viewer (the window closes)
 
   In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.
+  Narrow window: tap a row; the bottom bar: the panel.
   Copy: drag over the text, then Ctrl-C (Cmd-C does not reach Claude). Cmd-V pastes.
   Terminal's own selection: Cmd-R (macOS Terminal) or Shift-drag (Ghostty), then Cmd-C.
-  If Claude exits, its session stays: Enter resumes the conversation.
+  If Claude exits, its session stays: Enter resumes it.
 
   glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
           ✱ finished or asking since you last looked

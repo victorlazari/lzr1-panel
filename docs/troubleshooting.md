@@ -393,8 +393,9 @@ not happen. A Ghostty split cannot be sent one.
 
 **Fix:** in a Ghostty split, click the footer button again. You can also open the menu with **`m`**.
 
-While the panel reloads its list (just after a menu, or on its 15-second refresh), fzf ignores clicks and keys. When
-your machines answer slowly, a click right then does nothing. Click again.
+While the panel reloads its list (just after a menu, after the window is resized or a phone turned, or on its
+15-second refresh), fzf ignores clicks and keys. When your machines answer slowly, a click right then does nothing.
+Click again.
 
 ### Clicks do nothing at all
 

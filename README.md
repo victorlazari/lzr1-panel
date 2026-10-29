@@ -284,6 +284,7 @@ Set these in your shell, for example in `~/.zshenv`:
 | Setting | Default | What it does |
 |---|---|---|
 | `LZR1_PANEL_WIDTH` | `56` | the panel's width, in columns |
+| `LZR1_NARROW` | `86` (the panel's width + 30) | a tmux layout narrower than this (a phone) shows the panel or the session, one at a time; `0` never does |
 | `LZR1_MENU_BUTTON` | `right` | `left` opens menus with the left button |
 | `LZR1_PRS` | `1` | `0` hides the pull requests |
 | `LZR1_SOUND` | `1` | `0` turns the alert tone off; a sound file's path plays that instead |
