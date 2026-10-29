@@ -34,6 +34,7 @@ type config struct {
 	auditPath              string        // --audit: the audit trail (none when empty)
 	lockAfter, killAfter   int           // 0: the defaults (5 and 20); tests set them
 	lockFor                time.Duration // 0: the default (15 min)
+	idle                   time.Duration // --idle; 0 (tests): the default (30 min)
 }
 
 // errUsage marks a bad command line: exit 2.
@@ -52,6 +53,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&allow, "allow", "", "allowed Tailscale logins, comma-separated (required)")
 	fs.DurationVar(&c.ttl, "ttl", 8*time.Hour, "exit after this long")
 	fs.StringVar(&c.logPath, "log", "", "append the log to this file (default stderr)")
+	fs.DurationVar(&c.idle, "idle", defaultIdle, "log a browser out, closing its terminal, after this long without input")
 	fs.StringVar(&c.auditPath, "audit", "", "append the audit trail (logins, failures, lockouts, shutdown) to this file, 0600")
 	if err := fs.Parse(args); err != nil {
 		return c, errUsage
@@ -92,6 +94,9 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	}
 	if c.ttl <= 0 {
 		return bad("--ttl must be positive")
+	}
+	if c.idle <= 0 {
+		return bad("--idle must be positive")
 	}
 	return c, nil
 }
@@ -222,6 +227,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	gw := newServer(c, sum, logger)
 	gw.audit = audit
+	// Every exit path, after the server stopped: Shutdown and Close leave hijacked WebSockets open.
+	defer gw.closeAll()
 	srv := &http.Server{
 		Handler:           gw,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -241,6 +248,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		case <-wctx.Done():
 		}
 	}()
+	sctx, scancel := context.WithCancel(context.Background())
+	defer scancel()
+	go gw.sweep(sctx)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
 	up := waitUpstream(wctx, c.upstream)
@@ -252,7 +262,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		srv.Close()
 		return 0
 	}
-	audit.event("start", "ttl", c.ttl.String())
+	audit.event("start", "ttl", c.ttl.String(), "idle", gw.idle.String())
 	if tcp {
 		fmt.Fprintln(stdout, "ready", l.Addr()) // the port, when --listen asked for 0
 	} else {
@@ -276,9 +286,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		reason = "ttl"
 	}
 	audit.event("shutdown", "reason", reason)
-	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer scancel()
-	if err := srv.Shutdown(sctx); err != nil {
+	dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dcancel()
+	if err := srv.Shutdown(dctx); err != nil {
 		srv.Close()
 	}
 	return 0

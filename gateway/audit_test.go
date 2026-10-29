@@ -185,7 +185,7 @@ func TestAuditRunKillSwitch(t *testing.T) {
 			t.Errorf("line %q: %v", l, err)
 		}
 	}
-	for _, w := range []string{" start ttl=8h0m0s\n", " login user=a@x sid=" + sid(tok) + "\n", " logout user=a@x sid=" + sid(tok) + "\n",
+	for _, w := range []string{" start ttl=8h0m0s idle=30m0s\n", " login user=a@x sid=" + sid(tok) + "\n", " logout user=a@x sid=" + sid(tok) + "\n",
 		" failure user=b@x fails=0 total=20 locked=1\n", " shutdown reason=killswitch\n"} {
 		if !strings.Contains(text, w) {
 			t.Errorf("audit lacks %q:\n%s", w, text)
@@ -214,7 +214,7 @@ func TestAuditRunTTL(t *testing.T) {
 	}
 	b, _ := os.ReadFile(audit)
 	if ev := events(strings.TrimPrefix(string(b), "earlier line\n")); strings.Join(ev, " ") != "start shutdown" ||
-		!strings.Contains(string(b), " start ttl=200ms\n") || !strings.HasSuffix(string(b), " shutdown reason=ttl\n") {
+		!strings.Contains(string(b), " start ttl=200ms idle=30m0s\n") || !strings.HasSuffix(string(b), " shutdown reason=ttl\n") {
 		t.Errorf("audit %q", b)
 	}
 }

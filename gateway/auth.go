@@ -69,27 +69,27 @@ func (s *server) newSessionLocked(login string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	t := hex.EncodeToString(b)
-	s.sessions[t] = login
+	s.sessions[t] = &liveSession{login: login, last: s.now(), conns: map[*activityConn]struct{}{}}
 	return t
 }
 
-// session returns r's session token when it is live and bound to the request's Tailscale login.
+// session returns r's session token when it is live and bound to the request's Tailscale login; the request is
+// activity, so it also marks the session active.
 func (s *server) session(r *http.Request) (string, bool) {
 	ck, err := r.Cookie(cookieName)
 	if err != nil || ck.Value == "" {
 		return "", false
 	}
 	login := strings.ToLower(strings.TrimSpace(r.Header.Get("Tailscale-User-Login")))
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	bound, ok := s.sessions[ck.Value]
-	return ck.Value, ok && login != "" && bound == login
-}
-
-// authenticated reports whether r carries a live session issued to the same Tailscale login.
-func (s *server) authenticated(r *http.Request) bool {
-	_, ok := s.session(r)
-	return ok
+	sess := s.sessions[ck.Value]
+	if sess == nil || login == "" || sess.login != login {
+		return ck.Value, false
+	}
+	sess.last = now
+	return ck.Value, true
 }
 
 func (s *server) cookie(value string, maxAge int) *http.Cookie {
@@ -195,7 +195,7 @@ func (s *server) serveLogin(w http.ResponseWriter, r *http.Request, login string
 
 const killedMsg = "too many wrong passwords: the remote panel was turned off"
 
-// serveLogout ends this request's session (only one bound to the caller) and clears the cookie.
+// serveLogout ends this request's session (only one bound to the caller) and its terminals, and clears the cookie.
 func (s *server) serveLogout(w http.ResponseWriter, r *http.Request, login string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -204,8 +204,9 @@ func (s *server) serveLogout(w http.ResponseWriter, r *http.Request, login strin
 	}
 	if tok, ok := s.session(r); ok {
 		s.mu.Lock()
-		delete(s.sessions, tok)
+		conns := s.endSessionLocked(tok)
 		s.mu.Unlock()
+		closeConns(conns)
 		s.audit.event("logout", "user", login, "sid", sid(tok))
 	}
 	http.SetCookie(w, s.cookie("", -1))

@@ -48,13 +48,15 @@ type server struct {
 	lockAfter, killAfter int
 	lockFor              time.Duration
 	kill                 chan struct{}
+	idle                 time.Duration // a session with no input for longer is ended (idle.go)
 
 	mu          sync.Mutex
-	sessions    map[string]string // session token -> the Tailscale login it was issued to
-	fails       map[string]int    // wrong passwords in a row, per login
+	sessions    map[string]*liveSession // session token -> its login, last input and WebSockets
+	fails       map[string]int          // wrong passwords in a row, per login
 	lockedUntil map[string]time.Time
 	total       int  // wrong passwords and locked attempts, never reset
 	killed      bool // kill is closed
+	closing     bool // closeAll ran: a WebSocket registered now is closed at once
 }
 
 // The lockout and kill switch limits decided for Epic 2.1; config fields left at zero get these.
@@ -67,7 +69,7 @@ const (
 func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 	s := &server{base: c.base, host: c.host, stripped: c.stripped, allow: c.allow, pwHash: pwHash, log: logger,
 		now: time.Now, lockAfter: c.lockAfter, lockFor: c.lockFor, killAfter: c.killAfter, kill: make(chan struct{}),
-		sessions: map[string]string{}, fails: map[string]int{}, lockedUntil: map[string]time.Time{}}
+		idle: c.idle, sessions: map[string]*liveSession{}, fails: map[string]int{}, lockedUntil: map[string]time.Time{}}
 	if s.lockAfter <= 0 {
 		s.lockAfter = defaultLockAfter
 	}
@@ -76,6 +78,9 @@ func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 	}
 	if s.killAfter <= 0 {
 		s.killAfter = defaultKillAfter
+	}
+	if s.idle <= 0 {
+		s.idle = defaultIdle
 	}
 	upstream := c.upstream
 	s.proxy = &httputil.ReverseProxy{
@@ -163,13 +168,18 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveLogout(w, r, login)
 		return
 	}
-	if !s.authenticated(r) {
+	tok, ok := s.session(r)
+	if !ok {
 		if wantsHTML(r) {
 			http.Redirect(w, r, s.base+"login", http.StatusSeeOther)
 			return
 		}
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
+	}
+	if r.Header.Get("Upgrade") != "" {
+		// The terminal's WebSocket: its input keeps the session alive, and it ends with the session.
+		w = &upgradeWriter{ResponseWriter: w, s: s, tok: tok}
 	}
 	s.proxy.ServeHTTP(w, r)
 }

@@ -329,7 +329,7 @@ audit file without secrets.
 
 #### Task 2.1.2: Idle logout from real browser input
 
-- [ ] Done
+- [x] Done
 
 **Context:** A session lives as long as the browser keeps its cookie (`auth.go:88-91`, no `Expires`); nothing tracks
 activity. WebSockets pass through `httputil.ReverseProxy` (`server.go:49-82`), which hijacks the client connection;
@@ -768,3 +768,12 @@ each missing piece with its fix.
   fields (`lockAfter`, `lockFor`, `killAfter`) that default to 5, 15 min and 20 when left at zero. A kill switch firing
   before ttyd answers (the handler serves before `ready`) also exits 3, without `start`. `openAudit` also opens with
   `O_NOFOLLOW` and checks the opened file is regular, so a symlink swapped in after the `Lstat` is refused too.
+- Task 2.1.2: `--idle` defaults to 30m (a `config.idle` of zero, as tests build it, means the same), and `start` is now
+  `start ttl=… idle=…`. Reading `handleUpgradeResponse` showed the proxy copies from the hijacked `net.Conn` only:
+  bytes buffered in the `bufio.ReadWriter` never reach ttyd, so only the conn is parsed. `activityConn` forwards
+  `CloseWrite`, which the proxy looks for to half-close when ttyd ends first. The parser treats an unmasked frame, a
+  reserved opcode (3-7, 11-15) or a 64-bit length with its top bit set as malformed, and ignores the RSV bits
+  (permessage-deflate sets RSV1); a data frame counts once its header and mask key are read, and an empty one is not
+  input. `authenticated` is gone: `ServeHTTP` uses `session`, since an upgrade needs the token. Test hooks:
+  `server.track(tok, conn)`, `idleOut`, `closeAll`, and `runGatewayWith(t, upstream, args...)` in `idle_test.go`. No
+  live or browser run: Task 2.1.3 does it; `docs/remote.md` (the cookie row says "no expiry") is also its to update.
