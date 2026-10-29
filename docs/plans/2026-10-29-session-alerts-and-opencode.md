@@ -632,3 +632,10 @@ lists the Claude ones.
   adding the profile again. README, the installer's hook comment, the header usage and `run`'s comment say the
   panel lists `run` / `cl-*` sessions only inside a profile's repositories folder; the help prints one more header
   line for it (`sed -n '2,20p'`).
+- Review fix (alerts) 1: when `_tone` picks the bell, `list_rows` rings it to `/dev/tty` from the refresh and starts
+  the detached `_notify` with `LZR1_SOUND=0` (setsid takes its terminal); `lzr1-panel notify` is unchanged.
+  verify-mfix runs a copy with `OSTYPE=linux-gnu` under `script(1)`, with a `setsid` stub that really detaches.
+- Review fix (alerts) 2: the session menu's esc sends a second Escape 0.3 s later when the row's model or the
+  session's `@lzr1_agent` is opencode, and opencode's branch reads `esc again to interrupt` as work.
+- Review fix (alerts) 3: Claude's branch waits on `Claude exited` only and opencode's on `opencode exited` only, for
+  the state and for `waitfor`; the alert exclusion (`* exited · Enter resumes`) stays.

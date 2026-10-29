@@ -121,15 +121,16 @@ LIST_SCRIPT='
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
     if [ "$agent" = opencode ]; then
-      # opencode shows "esc interrupt" in its bottom bar while it works, and its question dialog ends in "enter
-      # submit". It titles the terminal "OC | <session title>", or "OpenCode" before it has one.
-      if printf "%s" "$screen" | grep -q "esc interrupt"; then st=work
+      # opencode shows "esc interrupt" in its bottom bar while it works ("esc again to interrupt" after one Esc),
+      # and its question dialog ends in "enter submit". It titles the terminal "OC | <session title>", or
+      # "OpenCode" before it has one.
+      if printf "%s" "$screen" | grep -qE "esc (again to )?interrupt"; then st=work
       elif printf "%s" "$screen" | grep -qE "enter submit|Permission required|opencode exited"; then st=wait
       else st=idle; fi
       title=${title#"OC | "}; [ "$title" = OpenCode ] && title=
     else
       if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
-      elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|(Claude|opencode) exited"; then st=wait
+      elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|Claude exited"; then st=wait
       else st=idle; fi
       # The newest link on screen wins: a resumed conversation gets a new one.
       new=$(printf "%s" "$full" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
@@ -146,7 +147,9 @@ LIST_SCRIPT='
     fi
     waitfor=
     if [ $st = wait ]; then
-      ex=$(printf "%s" "$screen" | grep -oE "(Claude|opencode) exited" | tail -1)
+      # The exit of this session'"'"'s own agent only: Claude may well show "opencode exited" in its work.
+      ex=Claude; [ "$agent" = opencode ] && ex=opencode
+      ex=$(printf "%s" "$screen" | grep -o "$ex exited" | tail -1)
       if [ -n "$ex" ]; then waitfor="$ex · Enter resumes"
       elif [ "$agent" = opencode ]; then
         # The question is the dialog'"'"'s last non-empty line above its first option, inside a "┃" border.
@@ -666,11 +669,14 @@ list_rows() {
   if [[ -n $track ]]; then
     # Alerts go out before the new states are kept: a refresh killed in between repeats one, never loses it. The
     # notifier runs in its own process group, off fzf's pipe: fzf killing this refresh, or a slow tone, never stops
-    # or holds up either.
-    local -a det=()
+    # or holds up either. setsid also takes the terminal from it, so a bell tone rings here, from the refresh.
+    local -a det=() snd=()
     if (( $+commands[setsid] )); then det=( setsid ); elif (( $+commands[perl] )); then det=( perl -e 'setpgrp; exec @ARGV' ); fi
     for (( f = 1; f <= $#uf; f++ )); do mkdir -p $uf[f]:h; print -r -- $uv[f] >$uf[f]; done
-    (( $#alerts )) && { $det $SELF _notify $alerts </dev/null >/dev/null 2>&1 &! }
+    if (( $#alerts )); then
+      _tone; [[ $reply[1] == bell ]] && { { print -n '\a' >/dev/tty } 2>/dev/null; snd=( LZR1_SOUND=0 ) }
+      { env $snd $det $SELF _notify $alerts </dev/null >/dev/null 2>&1 &! }
+    fi
     for (( f = 1; f <= $#sf; f++ )); do mkdir -p $sf[f]:h; print -r -- $sv[f] >$sf[f]; done
     [[ -n $seeded ]] || : >$STATE/$1.seeded
     mkdir -p $STATE/seen $STATE/unread; touch $STATE/seen $STATE/unread  # open sweeps what is a day old
@@ -1318,7 +1324,10 @@ gh pr checks $num, fix it and push." ;;
     folder) browse $dir ;;
     new)   $SELF _new opus $id $key ;;
     newoc) $SELF _new opencode $id $key ;;
-    esc)   on 'tmux send-keys -t "=$1:" Escape' $KS ;;
+    # opencode 2.0 stops only on a second Esc within a few seconds.
+    esc)   on 'tmux send-keys -t "=$1:" Escape
+             if [ "$2" = opencode ] || [ "$(tmux show-options -qv -t "=$1:" @lzr1_agent)" = opencode ]; then
+               sleep 0.3; tmux send-keys -t "=$1:" Escape; fi' $KS $model ;;
     rename)
       read -r "new?Rename $KS to: "
       [[ -z $new || $new == $KS ]] && exit 0
