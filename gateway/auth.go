@@ -74,7 +74,8 @@ func (s *server) newSessionLocked(login string) string {
 }
 
 // session returns r's session token when it is live and bound to the request's Tailscale login; the request is
-// activity, so it also marks the session active.
+// activity, so it also marks the session active. A session already past its idle limit ends here rather than being
+// renewed: the sweeper runs only every so often, and after the machine wakes a browser reconnects at once.
 func (s *server) session(r *http.Request) (string, bool) {
 	ck, err := r.Cookie(cookieName)
 	if err != nil || ck.Value == "" {
@@ -83,12 +84,18 @@ func (s *server) session(r *http.Request) (string, bool) {
 	login := strings.ToLower(strings.TrimSpace(r.Header.Get("Tailscale-User-Login")))
 	now := s.wall()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	sess := s.sessions[ck.Value]
 	if sess == nil || login == "" || sess.login != login {
+		s.mu.Unlock()
+		return ck.Value, false
+	}
+	if conns, idle := s.idleEndLocked(ck.Value, sess, now); idle {
+		s.mu.Unlock()
+		closeConns(conns)
 		return ck.Value, false
 	}
 	sess.last = now
+	s.mu.Unlock()
 	return ck.Value, true
 }
 

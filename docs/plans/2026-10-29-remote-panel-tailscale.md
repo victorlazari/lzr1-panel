@@ -887,3 +887,8 @@ each missing piece with its fix.
   Verified with `verify-tap-injection.zsh` (tap and footer; isolated `TMUX_TMPDIR`, a tmux session named
   `x$(touch …)`, driven through fzf's `--listen` API): HEAD creates the file, the fix does not; `verify-tap-decides.zsh`
   checks `_tap`'s choices. In the wide layout a left click now starts `_tap`, which exits at once (about 20 ms).
+- Phase 2 review: a request or WebSocket input that arrives after `--idle` has passed, but before the sweeper's next
+  pass (right after the machine wakes, when the browser reconnects at once), now ends the session instead of renewing
+  it (`idleEndLocked`, shared by `session`, `touch` and `idleOut`). The terminal-reply filter also recognizes DECRQM
+  (`$y`), DECXCPR (`?r;cR`), DECRQSS (`ESC P 0|1 $ r … ST`) and OSC 4 palette replies. Known gap (Low): xterm.js sends
+  Shift/Ctrl/Alt+F3 as `ESC [ 1 ; mod R`, the same shape as a cursor report, so those keys alone do not count as input.

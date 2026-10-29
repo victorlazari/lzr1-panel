@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -412,6 +413,19 @@ func TestFrameParserReports(t *testing.T) {
 		{"XTWINOPS size", "\x1b[8;24;80t", false},
 		{"XTWINOPS state", "\x1b[1t", false},
 		{"several replies at once", "\x1b[?1;2c\x1b]11;rgb:0/0/0\a\x1b[24;80R\x1b[I", false},
+		{"DECRQM private reply", "\x1b[?2026;2$y", false},
+		{"DECRQM ANSI reply", "\x1b[4;2$y", false},
+		{"DECXCPR", "\x1b[?5;10R", false},
+		{"DECRQSS reply, SGR", "\x1bP1$r0m\x1b\\", false},
+		{"DECRQSS reply, cursor style", "\x1bP1$r2 q\x1b\\", false},
+		{"DECRQSS reply, invalid", "\x1bP0$r\x1b\\", false},
+		{"OSC 4 palette ST", "\x1b]4;1;rgb:cdcd/0000/0000\x1b\\", false},
+		{"OSC 4 palette BEL", "\x1b]4;255;rgb:eeee/eeee/eeee\a", false},
+		{"DECRQM query, not a reply", "\x1b[?2026$p", true},
+		{"$y without a value", "\x1b[?2026$y", true},
+		{"DECRQSS unterminated", "\x1bP1$r0m", true},
+		{"DCS that is not DECRQSS", "\x1bP+q544e\x1b\\", true},
+		{"OSC 4 without an index", "\x1b]4;;rgb:0/0/0\a", true},
 		{"a key", "a", true},
 		{"Enter", "\r", true},
 		{"Esc", "\x1b", true},
@@ -528,6 +542,44 @@ func TestIdleWallClock(t *testing.T) {
 	s.idleOut()
 	if sessionCount(s) != 0 {
 		t.Error("still logged in after the clock jumped past --idle")
+	}
+}
+
+// A request or input that arrives after the idle limit, before the sweeper's next pass (right after the machine wakes,
+// when the browser reconnects at once), ends the session instead of renewing it.
+func TestIdlePastLimitNotRenewed(t *testing.T) {
+	for _, via := range []string{"request", "input"} {
+		t.Run(via, func(t *testing.T) {
+			var mu sync.Mutex
+			var jump time.Duration
+			clock := func() time.Time {
+				mu.Lock()
+				defer mu.Unlock()
+				return time.Now().Add(jump)
+			}
+			dir := sockDir(t)
+			s, _, _ := startGatewayWith(t, dir, filepath.Join(dir, "ttyd.sock"), []string{"a@x"}, func(s *server) {
+				s.now = clock
+				s.idle = time.Hour
+			})
+			tok := s.newSession("a@x")
+			mu.Lock()
+			jump = 2 * time.Hour // the machine slept; no sweep has run since
+			mu.Unlock()
+			if via == "request" {
+				r := httptest.NewRequest("GET", s.base, nil)
+				r.AddCookie(&http.Cookie{Name: cookieName, Value: tok})
+				r.Header.Set("Tailscale-User-Login", "a@x")
+				if _, ok := s.session(r); ok {
+					t.Error("a request past --idle was let in")
+				}
+			} else {
+				s.touch(tok)
+			}
+			if sessionCount(s) != 0 {
+				t.Errorf("the session was renewed by a %s past --idle", via)
+			}
+		})
 	}
 }
 

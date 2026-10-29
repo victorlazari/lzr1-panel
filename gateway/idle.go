@@ -160,9 +160,10 @@ func (p *frameParser) frameEnd() int {
 }
 
 // reportsOnly reports whether b is nothing but terminal reports, the replies xterm.js makes by itself: device
-// attributes (ESC [ ? … c, ESC [ > … c), cursor position (ESC [ row ; col R), status (ESC [ 0 n), focus (ESC [ I,
-// ESC [ O), window reports (ESC [ … t) and colour reports (ESC ] 1x ; rgb:… ended by BEL or ESC \). Keys, pastes and
-// mouse events are none of these. An empty b is nothing a person sent either.
+// attributes (ESC [ ? … c, ESC [ > … c), cursor position (ESC [ row ; col R, ESC [ ? row ; col R), status (ESC [ 0 n),
+// modes (ESC [ ? … $ y, ESC [ … $ y), focus (ESC [ I, ESC [ O), window reports (ESC [ … t), settings (ESC P 0|1 $ r … ESC
+// \) and colour reports (ESC ] 1x ; rgb:…, ESC ] 4 ; n ; rgb:…, ended by BEL or ESC \). Keys, pastes and mouse events
+// are none of these. An empty b is nothing a person sent either.
 func reportsOnly(b []byte) bool {
 	for len(b) > 0 {
 		k := report(b)
@@ -179,10 +180,13 @@ func report(b []byte) int {
 	if len(b) < 3 || b[0] != 0x1b {
 		return 0
 	}
-	if b[1] == ']' {
+	switch b[1] {
+	case ']':
 		return oscColour(b)
-	}
-	if b[1] != '[' {
+	case 'P':
+		return dcsSetting(b)
+	case '[':
+	default:
 		return 0
 	}
 	i := 2
@@ -199,13 +203,20 @@ func report(b []byte) int {
 		return 0
 	}
 	params, final := string(b[start:i]), b[i]
+	if final == '$' { // DECRQM reply: [?]mode ; value $ y
+		if i+1 < len(b) && b[i+1] == 'y' && prefix != '>' && pair(params) {
+			return i + 2
+		}
+		return 0
+	}
 	ok := false
 	switch {
+	case prefix == '?' && final == 'R': // DECXCPR: ? row ; col R
+		ok = pair(params)
 	case prefix != 0:
 		ok = final == 'c' // DA1 and DA2 replies
 	case final == 'R': // CPR: row;col
-		r, c, found := strings.Cut(params, ";")
-		ok = found && digits(r) && digits(c)
+		ok = pair(params)
 	case final == 'n':
 		ok = params == "0"
 	case final == 'I' || final == 'O':
@@ -219,18 +230,58 @@ func report(b []byte) int {
 	return i + 1
 }
 
-// oscColour returns the length of the OSC 10-19 colour report b starts with (ESC ] 1x ; rgb:h/h/h BEL or ST), or 0.
+// oscColour returns the length of the colour report b starts with, or 0: OSC 10-19 (ESC ] 1x ; rgb:h/h/h) or an OSC 4
+// palette entry (ESC ] 4 ; n ; rgb:h/h/h), ended by BEL or ST.
 func oscColour(b []byte) int {
-	const head = len("\x1b]1x;rgb:")
-	if len(b) < head || b[2] != '1' || b[3] < '0' || b[3] > '9' || string(b[4:head]) != ";rgb:" {
+	i := 2
+	switch {
+	case len(b) > 4 && b[2] == '1' && b[3] >= '0' && b[3] <= '9':
+		i = 4
+	case len(b) > 4 && b[2] == '4' && b[3] == ';':
+		i = 4
+		for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+			i++
+		}
+		if i == 4 {
+			return 0
+		}
+	default:
 		return 0
 	}
-	i := head
+	if len(b) < i+5 || string(b[i:i+5]) != ";rgb:" {
+		return 0
+	}
+	i += 5
+	head := i
 	for i < len(b) && (b[i] >= '0' && b[i] <= '9' || b[i] >= 'a' && b[i] <= 'f' || b[i] >= 'A' && b[i] <= 'F' || b[i] == '/') {
 		i++
 	}
+	if i == head {
+		return 0
+	}
+	return terminated(b, i)
+}
+
+// dcsSetting returns the length of the DECRQSS reply b starts with (ESC P 0|1 $ r … ST), or 0. Its body is printable
+// ASCII: the setting's own parameters.
+func dcsSetting(b []byte) int {
+	if len(b) < 6 || (b[2] != '0' && b[2] != '1') || b[3] != '$' || b[4] != 'r' {
+		return 0
+	}
+	i := 5
+	for i < len(b) && b[i] >= 0x20 && b[i] < 0x7f {
+		i++
+	}
+	if i < len(b) && b[i] == 0x1b && i+1 < len(b) && b[i+1] == '\\' {
+		return i + 2
+	}
+	return 0
+}
+
+// terminated returns the length of b up to and including the string terminator (BEL or ESC \) at i, or 0.
+func terminated(b []byte, i int) int {
 	switch {
-	case i == head || i == len(b):
+	case i >= len(b):
 		return 0
 	case b[i] == 0x07:
 		return i + 1
@@ -238,6 +289,12 @@ func oscColour(b []byte) int {
 		return i + 2
 	}
 	return 0
+}
+
+// pair reports whether s is two ;-separated runs of digits.
+func pair(s string) bool {
+	a, c, found := strings.Cut(s, ";")
+	return found && digits(a) && digits(c)
 }
 
 // digits reports whether s is one or more ASCII digits.
@@ -335,14 +392,31 @@ func (s *server) untrack(c *activityConn) {
 // wall is now on the wall clock. Go's monotonic clock stops while the machine sleeps; idle and --ttl count that time.
 func (s *server) wall() time.Time { return s.now().Round(0) }
 
-// touch marks the session tok active now.
+// touch marks the session tok active now; one already past its idle limit ends instead (see session).
 func (s *server) touch(tok string) {
 	now := s.wall()
+	var conns []*activityConn
 	s.mu.Lock()
 	if sess := s.sessions[tok]; sess != nil {
-		sess.last = now
+		var idle bool
+		if conns, idle = s.idleEndLocked(tok, sess, now); !idle {
+			sess.last = now
+		}
 	}
 	s.mu.Unlock()
+	closeConns(conns)
+}
+
+// idleEndLocked ends and audits the session tok when it has had no input for longer than s.idle at now, returning its
+// conns (to close once s.mu is released) and true; otherwise nil and false. s.mu must be held.
+func (s *server) idleEndLocked(tok string, sess *liveSession, now time.Time) ([]*activityConn, bool) {
+	if now.Sub(sess.last) <= s.idle {
+		return nil, false
+	}
+	login := sess.login
+	conns := s.endSessionLocked(tok)
+	s.audit.event("idle-out", "user", login, "sid", sid(tok))
+	return conns, true
 }
 
 // endSessionLocked deletes the session tok and returns its conns, to be closed once s.mu is released.
@@ -371,10 +445,8 @@ func (s *server) idleOut() {
 	var conns []*activityConn
 	s.mu.Lock()
 	for tok, sess := range s.sessions {
-		if now.Sub(sess.last) > s.idle {
-			login := sess.login
-			conns = append(conns, s.endSessionLocked(tok)...)
-			s.audit.event("idle-out", "user", login, "sid", sid(tok))
+		if c, idle := s.idleEndLocked(tok, sess, now); idle {
+			conns = append(conns, c...)
 		}
 	}
 	s.mu.Unlock()
