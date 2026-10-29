@@ -364,6 +364,10 @@ _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
 # Every profile's sessions, listed in parallel, as NUL-separated fzf items: "KEY<tab>display". The first item is
 # the summary heading. A session is three lines (layout A): name with model and age; its task, or what it waits
 # for; its branch and repository. Sized to the panel ($FZF_COLUMNS).
+# With a panel ID (list_rows ID, from _list), a session that changes into "needs you" makes an alert: it finished
+# its reply (working → idle) or shows a new question. Each session's last state is kept in $STATE/seen/PROFILE/NAME
+# ("state<US>waitfor"), shared by every open panel, so one change alerts once. An alert marks the session unread
+# ($STATE/unread/PROFILE/NAME holds its kind) and goes to $alerts as "kind<US>profile<US>session<US>text".
 list_rows() {
   local -a names=( $(profiles) )
   if (( ! $#names )); then
@@ -386,6 +390,17 @@ list_rows() {
   local -a items got; local n=0 w=0 q=0 i=0 line kind glyph right l1 l2 l3
   local name st att age url model dir title branch changed waitfor
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
+  local US=$'\037' track= seeded= f pst pwf ak t=0
+  local -a alerts stale
+  if [[ -n $1 ]]; then
+    # One refresh at a time compares and writes. A lock left by a killed refresh goes after 10s; one held longer
+    # than 2s skips tracking this time (the next refresh catches up).
+    stale=( $STATE/seen.lock(N/ms+10) ); (( $#stale )) && rmdir $stale 2>/dev/null
+    until mkdir $STATE/seen.lock 2>/dev/null; do (( ++t > 20 )) && break; sleep 0.1; done
+    (( t <= 20 )) && track=1
+    # A panel's first refresh only records: one reopened hours later does not alert for everything since.
+    [[ -e $STATE/$1.seeded ]] && seeded=1
+  fi
   for p in $names; do
     # A profile whose machine does not answer is left out until it does.
     [[ -e $tmp/$p.fail ]] && continue
@@ -398,6 +413,20 @@ list_rows() {
     for line in $got; do
       IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
       (( n++ ))
+      if [[ -n $track ]]; then
+        f=$STATE/seen/$p/$name ak=
+        if [[ -r $f ]]; then
+          IFS=$US read -r pst pwf <$f
+          if [[ $st == wait && $waitfor != "Claude exited · Enter resumes" && ( $pst != wait || $pwf != "$waitfor" ) ]]
+          then ak=question
+          elif [[ $pst == work && $st == idle ]]; then ak=done; fi
+        fi
+        mkdir -p $f:h; print -r -- "$st$US$waitfor" >$f
+        if [[ -n $ak && -n $seeded ]]; then
+          mkdir -p $STATE/unread/$p; print -r -- $ak >$STATE/unread/$p/$name
+          alerts+=( "$ak$US$p$US$name$US${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}" )
+        fi
+      fi
       case $st in
         work) (( w++ )); glyph="$C▶$R" ;;
         wait) (( q++ )); glyph="$Y⧗$R" ;;
@@ -416,6 +445,7 @@ list_rows() {
     done
   done
   rm -rf $tmp
+  if [[ -n $track ]]; then [[ -n $seeded ]] || : >$STATE/$1.seeded; rmdir $STATE/seen.lock 2>/dev/null; fi
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
@@ -570,7 +600,7 @@ list)
   ;;
 
 _list)  # _list ID: rows for fzf, cached for _pos
-  list_rows | tee $STATE/$2.cache
+  list_rows $2 | tee $STATE/$2.cache
   ;;
 
 profile)

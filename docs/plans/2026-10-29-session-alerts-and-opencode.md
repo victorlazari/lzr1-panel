@@ -53,7 +53,7 @@ never marks or alerts.
 
 #### Task 1.1.1: Track state changes per session in `list_rows`
 
-- [ ] Done
+- [x] Done
 
 **Context:** `list_rows` (`bin/lzr1-panel:367-422`) gathers each profile's records (fields at
 `bin/lzr1-panel:103-104`: name, state `work|wait|idle`, …, `waitfor`) and renders them. It is called by
