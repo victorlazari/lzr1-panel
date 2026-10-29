@@ -1228,8 +1228,8 @@ profile)
 
 open)  # panel on the left, viewer on the right
   local id=$$ term
-  # A reused ID is a new panel: its first refresh only records, and it starts wide.
-  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded $STATE/$id.narrow $STATE/$id.fit
+  # A reused ID is a new panel: its first refresh only records, it starts wide, and it is not a browser's layout.
+  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded $STATE/$id.narrow $STATE/$id.fit $STATE/$id.remote
   lzr1_splash open
   if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
     # Ghostty: split this pane; it becomes the viewer.

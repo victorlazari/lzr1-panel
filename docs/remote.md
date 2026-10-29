@@ -88,7 +88,9 @@ What it does not protect against: anyone who can run programs as you on this com
 file, password included); on macOS, any local user or process on this Mac, because they can reach the gateway's
 loopback port, send any `Tailscale-User-Login` and `Origin`, and so bypass the e-mail allowlist and the Origin check
 (the password still protects it); and an allowed person who has the password: they get a full terminal as you, on
-every machine your profiles reach. On Linux the gateway's socket is reachable only by you and root. Logins, failures,
+every machine your profiles reach. Nor does it keep a connected browser's clipboard apart from the sessions it
+shows: a copy made on this Mac's screen in a session the browser also shows reaches the browser's clipboard, and any
+output in such a session can write it (OSC 52; see "Copy, select and the right button"). On Linux the gateway's socket is reachable only by you and root. Logins, failures,
 lockouts, logouts and shutdowns go to the audit trail, `~/.cache/lzr1-panel/remote/audit.log` (below), never the
 password or a cookie.
 
@@ -155,9 +157,9 @@ The gateway adds one small script, `gateway/client.js`, to the page ttyd serves 
 `/<uuid>/lzr1-client.js` behind the same login as the rest, and does four things:
 
 - **Copies reach the browser's clipboard.** Claude Code's own copy and a tmux drag-select both arrive as OSC 52; the
-  script writes them with the browser's clipboard API (1 MiB at most). A browser that refuses a write without a click
-  (Safari) shows "Copied text ready — click to copy" for 15 seconds instead. A program asking to *read* the clipboard
-  (OSC 52 with `?`) gets nothing.
+  script writes them with the browser's clipboard API (1 MiB at most), with no click. A browser that refuses a write
+  without a click (Safari) shows "Copied text ready — click to copy" for 15 seconds instead. A program asking to
+  *read* the clipboard (OSC 52 with `?`) gets nothing.
 - **Option-drag selects** in the terminal itself on a Mac (Shift-drag elsewhere), even where the panel or tmux has the
   mouse; Cmd-C copies that selection.
 - **The right button** over the terminal opens only the panel's own menu: the browser's menu is cancelled there.
@@ -168,6 +170,13 @@ A browser's layout does not hand copies to this computer's `pbcopy`, so a copy m
 this Mac's clipboard, for sessions on other machines. A session on this Mac is the exception: its own tmux is shared
 with the panel on this screen, and pipes every copy to `pbcopy` too (as it does for that panel), so a copy made in it
 from a browser lands on both clipboards.
+
+It works the other way too: every OSC 52 that reaches the browser's layout is written to the browser's clipboard,
+whoever made it. A session's tmux sends a copy to every client showing that pane, so a copy made on this Mac's screen,
+in a session a connected browser also shows, lands on that device's clipboard (or shows Safari's toast there). And
+any output in a session the browser shows can carry an OSC 52 (a `cat` of an untrusted file, a remote machine's
+output), so it can set the connected browser's clipboard without anyone copying. The panel on this screen does the
+same with this Mac's clipboard; here the clipboard is on another device.
 
 ## A phone, or any narrow window
 

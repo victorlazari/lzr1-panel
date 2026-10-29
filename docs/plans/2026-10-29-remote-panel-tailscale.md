@@ -857,3 +857,11 @@ each missing piece with its fix.
   `kill-server`) are not allowed any more. Copy was measured on a session on this Mac only, not again through 2.2.1's
   `ssh` stand-in. Every Chrome cell passes; Safari, phone and the browser's own shortcuts stay "needs a person". The
   live runs allowed only lazari@lerian.studio with `--ttl 15m`, and each ended with "No serve config".
+- Phase 2 review findings: `open` now removes `$STATE/$id.remote` with the other per-ID files, so a local panel that
+  reuses a browser layout's PID no longer writes that remote's `.last` or opens on its session. The viewer's EXIT trap
+  does not remove it, as the finding also suggested: `_respawn` can reopen a closed viewer in the same browser's
+  layout, whose picks must still reach `.last`, and every layout passes through `open` first. `docs/remote.md` now
+  states both copy directions (copies made on this Mac's screen, and any session output with OSC 52, reach a connected
+  browser's clipboard) in the copy section and in "What it does not protect against". The optional focus or
+  recent-input gate in `client.js` was not added (documented instead). Verified by `verify-p2-findings.zsh` (a stub
+  `tmux`; no live publish).
