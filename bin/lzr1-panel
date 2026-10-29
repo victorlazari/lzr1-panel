@@ -367,21 +367,11 @@ _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
 # (LZR1_NOTIFY=0 off). The text comes from a session's screen: it reaches the notifier as an argument only, never
 # inside a script or a command line.
 notify_alerts() {
-  (( $# )) || return 0
-  local snd=${LZR1_SOUND:-1} r kind p s text verb
+  local r kind p s text verb
   local -a recs more
-  if [[ $snd == 0 ]]; then :
-  elif [[ $OSTYPE == darwin* ]]; then
-    [[ $snd == 1 ]] && snd=/System/Library/Sounds/Glass.aiff
-    if [[ -r $snd ]] && command -v afplay >/dev/null; then afplay $snd >/dev/null 2>&1 &!; fi
-  else
-    [[ $snd == 1 ]] && snd=/usr/share/sounds/freedesktop/stereo/complete.oga
-    if [[ -r $snd ]] && command -v paplay >/dev/null; then paplay $snd >/dev/null 2>&1 &!
-    elif [[ ${LZR1_SOUND:-1} == 1 ]] && command -v canberra-gtk-play >/dev/null; then
-      canberra-gtk-play -i complete >/dev/null 2>&1 &!
-    elif [[ -r $snd ]] && command -v canberra-gtk-play >/dev/null; then canberra-gtk-play -f $snd >/dev/null 2>&1 &!
-    elif [[ ${LZR1_SOUND:-1} == 1 ]]; then { print -n '\a' >/dev/tty } 2>/dev/null; fi
-  fi
+  _tone
+  if [[ $reply[1] == bell ]]; then { print -n '\a' >/dev/tty } 2>/dev/null
+  elif (( $#reply )); then $reply >/dev/null 2>&1 &!; fi
   [[ ${LZR1_NOTIFY:-1} == 0 ]] && return 0
   recs=( "$@" ); (( $# > 3 )) && recs=( "${(@)recs[1,2]}" )
   for r in "$@"; do
@@ -393,7 +383,23 @@ notify_alerts() {
     else more+=( $p/$s ); fi
   done
   if (( $#more )); then _cut "${(j:, :)more}" 120; _notify_one "$#more more sessions need you" lzr1-panel $REPLY lzr1-more; fi
-  return 0
+}
+
+# _tone: what plays the alert tone here (LZR1_SOUND), as a command into reply: "bell" for the terminal bell, empty
+# for none. notify_alerts plays it; doctor reports it.
+_tone() {
+  local snd=${LZR1_SOUND:-1}; reply=()
+  if [[ $snd == 0 ]]; then :
+  elif [[ $OSTYPE == darwin* ]]; then
+    [[ $snd == 1 ]] && snd=/System/Library/Sounds/Glass.aiff
+    [[ -r $snd ]] && reply=( afplay $snd )
+  else
+    [[ $snd == 1 ]] && snd=/usr/share/sounds/freedesktop/stereo/complete.oga
+    if [[ -r $snd ]] && (( $+commands[paplay] )); then reply=( paplay $snd )
+    elif [[ ${LZR1_SOUND:-1} == 1 ]] && (( $+commands[canberra-gtk-play] )); then reply=( canberra-gtk-play -i complete )
+    elif [[ -r $snd ]] && (( $+commands[canberra-gtk-play] )); then reply=( canberra-gtk-play -f $snd )
+    elif [[ ${LZR1_SOUND:-1} == 1 ]]; then reply=( bell ); fi
+  fi
 }
 
 # _notify_one TITLE SUBTITLE BODY GROUP: one OS notification, silently none where there is no notifier
@@ -443,14 +449,15 @@ list_rows() {
   local name st att age url model dir title branch changed waitfor
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   local US=$'\037' track= seeded= f pst pwf ak t=0
-  local -a alerts stale
+  local -a alerts stale fresh live
   if [[ -n $1 ]]; then
     # One refresh at a time compares and writes. A lock left by a killed refresh goes after 10s; one held longer
     # than 2s skips tracking this time (the next refresh catches up).
     stale=( $STATE/seen.lock(N/ms+10) ); (( $#stale )) && rmdir $stale 2>/dev/null
     until mkdir $STATE/seen.lock 2>/dev/null; do (( ++t > 20 )) && break; sleep 0.1; done
     (( t <= 20 )) && track=1
-    # A panel's first refresh only records: one reopened hours later does not alert for everything since.
+    # A panel's first refresh only records, and only what no other panel keeps (a file written in the last
+    # minute), so it neither alerts for everything since it was last open nor eats a change another panel is due.
     [[ -e $STATE/$1.seeded ]] && seeded=1
     [[ -r $STATE/$1.target ]] && cur=$(<$STATE/$1.target)
   fi
@@ -474,7 +481,8 @@ list_rows() {
           then ak=question
           elif [[ $pst == work && $st == idle ]]; then ak=done; fi
         fi
-        mkdir -p $f:h; print -r -- "$st$US$waitfor" >$f
+        fresh=( $f(Nms-60) )
+        if [[ -n $seeded ]] || (( ! $#fresh )); then mkdir -p $f:h; print -r -- "$st$US$waitfor" >$f; fi
         if [[ -n $ak && -n $seeded ]]; then
           mkdir -p $STATE/unread/$p; print -r -- $ak >$STATE/unread/$p/$name
           alerts+=( "$ak$US$p$US$name$US${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}" )
@@ -500,9 +508,18 @@ list_rows() {
       l3="   $D$REPLY$R"
       items+=( "$p/$name"$'\t'"$l1"$'\n'"$l2"$'\n'"$l3" )
     done
+    # A session that ended leaves no state behind, so a new one with its name starts fresh.
+    if [[ -n $track ]]; then
+      live=( ${got%%$US*} )
+      for f in $STATE/(seen|unread)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -f $f; done
+    fi
   done
   rm -rf $tmp
-  if [[ -n $track ]]; then [[ -n $seeded ]] || : >$STATE/$1.seeded; rmdir $STATE/seen.lock 2>/dev/null; fi
+  if [[ -n $track ]]; then
+    [[ -n $seeded ]] || : >$STATE/$1.seeded
+    mkdir -p $STATE/seen $STATE/unread; touch $STATE/seen $STATE/unread  # open sweeps what is a day old
+    rmdir $STATE/seen.lock 2>/dev/null
+  fi
   # In the background and off fzf's pipe: a slow tone or notifier never holds up the list.
   (( $#alerts )) && { notify_alerts $alerts >/dev/null 2>&1 &! }
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}"$'\0'
@@ -612,21 +629,18 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   print "\nalerts (a tone and a notification when a session needs you)"
   [[ ${LZR1_SOUND:-1} == 0 ]] && print "  · tone off (LZR1_SOUND=0)"
   [[ ${LZR1_NOTIFY:-1} == 0 ]] && print "  · notifications off (LZR1_NOTIFY=0)"
-  if [[ ${LZR1_SOUND:-1} != (0|1) && ! -r $LZR1_SOUND ]]; then print -r -- "  · tone: cannot read $LZR1_SOUND"; fi
+  _tone
+  if [[ $reply[1] == bell ]]; then print "  · tone: terminal bell (no default sound for paplay, no canberra-gtk-play)"
+  elif (( $#reply )); then _ok "tone: $reply[1]"
+  elif [[ ${LZR1_SOUND:-1} != (0|1) && ! -r $LZR1_SOUND ]]; then print -r -- "  · tone: cannot read $LZR1_SOUND"
+  elif [[ ${LZR1_SOUND:-1} == 1 ]]; then print "  · no tone: the default sound is missing"
+  elif [[ $LZR1_SOUND != 0 ]]; then print -r -- "  · no tone: no paplay or canberra-gtk-play for $LZR1_SOUND"; fi
   if [[ $OSTYPE == darwin* ]]; then
-    if [[ ${LZR1_SOUND:-1} != 0 ]]; then
-      (( $+commands[afplay] )) && _ok "tone: afplay" || print "  · no afplay: no tone"
-    fi
     if [[ ${LZR1_NOTIFY:-1} != 0 ]]; then
       if (( $+commands[terminal-notifier] )); then _ok "notifications: terminal-notifier"
       else print "  · notifications: osascript"; _hint "brew install terminal-notifier (groups them per session)"; fi
     fi
   else
-    if [[ ${LZR1_SOUND:-1} != 0 ]]; then
-      if (( $+commands[paplay] )); then _ok "tone: paplay"
-      elif (( $+commands[canberra-gtk-play] )); then _ok "tone: canberra-gtk-play"
-      else print "  · tone: terminal bell (no paplay or canberra-gtk-play)"; fi
-    fi
     if [[ ${LZR1_NOTIFY:-1} != 0 ]]; then
       if (( ! $+commands[notify-send] )); then
         print "  · no notify-send"; _hint "install libnotify (libnotify-bin on Debian/Ubuntu)"

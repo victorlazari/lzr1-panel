@@ -83,8 +83,11 @@ never marks or alerts.
 - Session and profile names never contain `/` (refused at `:449`, `:789`, `:976`; profile names at `:220`), so
   they are safe as path parts.
 - Edge cases: a profile that does not answer this refresh is skipped (`:391`) and its seen files stay untouched; a
-  session that ended leaves its files behind, harmless and swept by `open` after a day; a renamed session counts as
-  new (no `prev`, record only).
+  session that ended has its `seen` and `unread` files removed by the next refresh its profile answers, so a new
+  session with the same name starts with no `prev`; each tracked refresh touches `seen/` and `unread/`, so `open`'s
+  day-old sweep never takes them; a renamed session counts as new (no `prev`, record only). A panel's first refresh
+  (no `<ID>.seeded`) writes only the seen files that are missing or not written in the last minute (no open panel
+  keeps them): it never overwrites one another panel is about to compare, and never alerts.
 
 **Files:**
 - Modify: `bin/lzr1-panel:364-422` (`list_rows`)
