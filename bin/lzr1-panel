@@ -1053,8 +1053,8 @@ _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel list
   done
   ;;
 
-_new)  # _new opus|sonnet ID KEY [NAME [PROMPT]]: type a name on KEY's profile (or take NAME); starts in the background,
-       # shows it in the viewer; PROMPT is Claude's first message
+_new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's profile (or take NAME); starts in the background,
+       # shows it in the viewer; PROMPT is the first message
   local model=$2 id=$3 p=${4%%/*} name=$5 prompt=$6
   # Only the machines that answered on the last refresh.
   local -a all=( ${${(M)${(@0)"$(<$STATE/$id.cache)"}:#[^+/]##/$'\t'*}%%/*} )
@@ -1188,8 +1188,8 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
   elif [[ -z $KS ]]; then
     [[ -e $PROFILES/$KP.conf ]] || exit 0
     head=$KP
-    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'test\ttest this machine'
-           $'edit\tedit this profile…' "remove"$'\t'"${E}remove this profile…$R" $'reload\trefresh' )
+    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here'
+           $'opencode\tnew opencode session here' $'test\ttest this machine' $'edit\tedit this profile…' "remove"$'\t'"${E}remove this profile…$R" $'reload\trefresh' )
   else
     load $KP || exit 0
     for line in ${(f)"$(<$STATE/raw-$KP)"}; do
@@ -1211,8 +1211,10 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
     [[ -n $dir ]] && acts+=( $'github\topen its repository on GitHub' )
     acts+=( $'attach\tcopy the attach command' )
     [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
-    acts+=( $'new\tnew session on this machine' )
-    [[ $st == work ]] && acts+=( $'esc\tinterrupt Claude (Esc)' )
+    acts+=( $'new\tnew session on this machine' $'newoc\tnew opencode session on this machine' )
+    if [[ $st == work ]]; then
+      [[ $model == opencode ]] && acts+=( $'esc\tinterrupt it (Esc)' ) || acts+=( $'esc\tinterrupt Claude (Esc)' )
+    fi
     acts+=( $'rename\trename it' "end"$'\t'"${E}end it: stop Claude and close its tmux session…$R" )
   fi
   acts+=( "cancel"$'\t'"${D}cancel$R" )
@@ -1247,7 +1249,7 @@ gh pr checks $num, fix it and push." ;;
            read -q && { print; gh_do "closing #$num" gh pr close $num --repo $repo } ;;
     all)   browse https://github.com/pulls ;;
     refresh) rm -f $STATE/prs ;;
-    opus|sonnet) $SELF _new $act $id $key ;;
+    opus|sonnet|opencode) $SELF _new $act $id $key ;;
     test)  $SELF profile test $KP; print -n "press a key"; read -k1 -s ;;
     edit)  $SELF profile edit $KP; print -n "press a key"; read -k1 -s ;;
     remove)
@@ -1280,6 +1282,7 @@ gh pr checks $num, fix it and push." ;;
       else clip "ssh ${P_KEY:+-i $P_KEY }${P_PORT:+-p $P_PORT }-t $P_HOST tmux attach -t =$KS"; fi ;;
     folder) browse $dir ;;
     new)   $SELF _new opus $id $key ;;
+    newoc) $SELF _new opencode $id $key ;;
     esc)   on 'tmux send-keys -t "=$1:" Escape' $KS ;;
     rename)
       read -r "new?Rename $KS to: "
@@ -1324,7 +1327,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer='[+opus] [+sonnet] [↻] [?]' --footer-border=top \
+    --footer='[+opus] [+sonnet] [+opencode] [↻] [?]' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "focus:execute-silent($S _select $id {1} &)" \
@@ -1335,11 +1338,13 @@ _panel)  # _panel ID
     --bind "o:execute-silent($S _open_url {1})" \
     --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
     --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
+    --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
     --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
     --bind "click-footer:transform:case \$FZF_CLICK_FOOTER_WORD in
+        *opencode*) echo 'execute($S _new opencode $id {1})+reload-sync($S _list $id)' ;;
         *opus*)   echo 'execute($S _new opus $id {1})+reload-sync($S _list $id)' ;;
         *sonnet*) echo 'execute($S _new sonnet $id {1})+reload-sync($S _list $id)' ;;
         *↻*)      echo 'reload-sync($S _list $id)' ;;
@@ -1379,6 +1384,7 @@ keys)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
   n  or [+opus]    new Opus session on the highlighted row's profile
   s  or [+sonnet]  new Sonnet session (a repository name opens in its folder)
+  c  or [+opencode]  new opencode session (auto-approve on)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
   x                end the session: Claude and its tmux session (asks first),

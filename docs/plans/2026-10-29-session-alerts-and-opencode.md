@@ -504,7 +504,7 @@ command away, documented wherever the Claude ones are.
 
 #### Task 2.3.1: Panel: `c`, `[+opencode]` and menus
 
-- [ ] Done
+- [x] Done
 
 **Context:** `_new opus|sonnet ID KEY [NAME [PROMPT]]` picks a machine and a name, then runs `start`; `_panel`
 binds `n`/`s` and the footer `[+opus] [+sonnet] [↻] [?]` with `click-footer` matching `*opus*`, `*sonnet*`;
@@ -603,3 +603,9 @@ lists the Claude ones.
   screen, an opencode screen in a session without `@lzr1_agent` (read as Claude: idle), that `opencode exited` makes
   no alert, and a question alert carrying the question; its real `start t opencode alert-oc2` went work, then idle,
   with the task title shown without `OC | `.
+- Task 2.3.1: the heading menu's opencode item sits after sonnet (opus, sonnet, opencode, test, edit, remove,
+  reload), so verify-212's menu moves gained one `Down` (copy kept as `verify-212.pre231`). The session menu offers
+  `newoc` on every row, Claude's included; only the Esc label depends on the row's model, and the `end` label still
+  says "stop Claude" on an opencode row (left to the docs task if wanted). verify-231 starts sessions with a stub
+  opencode (`opencode=` on the profile) and drives both menus in a tmux pane; one real `_new opencode 1 t/ alert-oc6`
+  was also run (listed with model `opencode`, then killed).
