@@ -19,6 +19,9 @@
 #   lzr1-panel profile list|show|add|edit|test|remove manage profiles (lzr1-panel profile help)
 #   lzr1-panel keys                                  the panel's keys
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
+#   lzr1-panel remote on [--allow EMAIL] [--ttl 8h]  the panel in a browser on your tailnet: prints a private URL and
+#                                                    password, copies the URL (docs/remote.md)
+#   lzr1-panel remote off|status|url|password        end it, show it, copy the URL or the password again
 #
 # Profiles live in ~/.config/lzr1-panel/profiles/<name>.conf, outside the repository: hosts, keys and paths are yours.
 emulate -L zsh
@@ -710,6 +713,100 @@ _keep() {  # _keep AGENT FIRST RESUME: the session's command, in REPLY
   REPLY="trap : INT; $2; while :; do printf '\\n  $1 exited. Enter: resume this conversation · type end + Enter: close the session\\n  > '; read -r a || a=; [ \"\$a\" = end ] && break; $3; done"
 }
 
+# ---- remote: the panel on your tailnet (docs/remote.md) -------------------------------------------------------------
+
+# ttyd runs a fresh `lzr1-panel open` per browser on a private Unix socket; lzr1-remote-gw (gateway/) checks the
+# Tailscale login against the allowlist and the password, then proxies to it; tailscale serve (never funnel) publishes
+# the gateway at https://<machine>.<tailnet>.ts.net/<uuid>/. The gateway listens on 127.0.0.1: the macOS app's serve
+# cannot reach a Unix socket. $RDIR/session (0600) keeps the URL and password so they can be copied again.
+RDIR=$STATE/remote
+typeset -gA RS  # the session file, key => value
+
+# _ts ARGS: the Tailscale CLI (PATH, then the macOS app's)
+_ts() {
+  local t=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}
+  [[ -x $t ]] || die "remote needs Tailscale (tailscale.com/download)"
+  $t "$@"
+}
+
+# _ts_info: TS_STATE, TS_CERTS (how many HTTPS certificate domains), TS_HOST (this machine's tailnet name), TS_LOGIN
+_ts_info() {
+  local j
+  (( $+commands[jq] )) || die "remote needs jq (./install.sh installs it)"
+  j=$(_ts status --json 2>/dev/null)
+  local -a f=( "${(@f)$(print -r -- $j | jq -r '(.BackendState // "unknown"), ((.CertDomains // []) | length),
+    ((.Self.DNSName // "") | rtrimstr(".")), (.User[(.Self.UserID // 0) | tostring].LoginName // "")' 2>/dev/null)}" )
+  TS_STATE=${f[1]:-unknown} TS_CERTS=${f[2]:-0} TS_HOST=$f[3] TS_LOGIN=$f[4]
+}
+
+_ours() { [[ -n $1 && $(ps -o comm= -p $1 2>/dev/null) == (*/|)$2 ]] }  # _ours PID NAME: PID is still NAME
+
+_remote_read() {  # the session file into RS; false without one
+  RS=(); local k v
+  [[ -r $RDIR/session ]] || return 1
+  while IFS='=' read -r k v; do [[ -n $k ]] && RS[$k]=$v; done <$RDIR/session
+  [[ -n $RS[uuid] ]]
+}
+
+_remote_save() { local k; ( umask 077; for k in ${(ko)RS}; do print -r -- "$k=$RS[$k]"; done >$RDIR/session ) }
+
+# _remote_off: unpublish, stop the gateway, ttyd and the browsers' panels, remove the sockets and the session file.
+# Safe to repeat; uses RS (or reads the session file).
+_remote_off() {
+  local p n i s m t=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}
+  (( $#RS )) || _remote_read
+  [[ -n $RS[uuid] && -x $t ]] && $t serve --https=443 --set-path /$RS[uuid] off >/dev/null 2>&1
+  for p n in "$RS[gwpid]" lzr1-remote-gw "$RS[ttydpid]" ttyd; do
+    _ours $p $n || continue
+    kill $p 2>/dev/null
+    for i in {1..50}; do kill -0 $p 2>/dev/null || break; sleep 0.1; done
+    kill -9 $p 2>/dev/null
+  done
+  if [[ -n $RS[uuid] ]]; then
+    tmux -L lzr1 list-sessions -F '#{session_name} #{@lzr1_remote}' 2>/dev/null | while read -r s m; do
+      [[ $m == $RS[uuid] ]] && tmux -L lzr1 kill-session -t "=$s" 2>/dev/null
+    done
+  fi
+  rm -f $RDIR/session $RDIR/*.sock(N) $RDIR/gw.out
+  RS=()
+}
+
+# _remote_live: a session is on (its gateway runs); a stale one (expired, or a reboot) is cleaned up
+_remote_live() {
+  _remote_read || { RS=(); rm -f $RDIR/session; return 1 }
+  _ours "$RS[gwpid]" lzr1-remote-gw && return 0
+  _remote_off; return 1
+}
+
+# _remote_gw: builds the gateway into $RDIR when it is missing or older than its source; its path in REPLY
+_remote_gw() {
+  local src=${SELF:h:h}/gateway f stale=
+  REPLY=$RDIR/lzr1-remote-gw
+  [[ -x $REPLY ]] || stale=1
+  for f in $src/*.(go|mod|html)(N); do [[ $f -nt $REPLY ]] && stale=1; done
+  [[ -z $stale ]] && return 0
+  (( $+commands[go] )) || die "remote needs Go to build its gateway: brew install go (Linux: your distribution's golang package)"
+  mkdir -p $RDIR && chmod 700 $RDIR
+  print -r -- "building the gateway (gateway/, Go standard library only)"
+  ( cd $src && go build -trimpath -o $REPLY . ) || die "could not build the gateway: cd $src && go build ."
+}
+
+_remote_status() {
+  zmodload zsh/datetime
+  if ! _remote_live; then print "remote: off"; return 0; fi
+  local n=0 s m left=$(( ${RS[expires]:-0} - EPOCHSECONDS ))
+  tmux -L lzr1 list-sessions -F '#{session_name} #{@lzr1_remote}' 2>/dev/null | while read -r s m; do
+    [[ $m == $RS[uuid] ]] && (( n++ ))
+  done
+  print -r -- "remote: on"
+  print -r -- "  url:      $RS[url]"
+  print -r -- "  allowed:  ${RS[allow]//,/, }"
+  print -r -- "  expires:  $(strftime '%H:%M' $RS[expires]) (in $(( left / 3600 ))h$(( left % 3600 / 60 ))m)"
+  print -r -- "  gateway:  pid $RS[gwpid], 127.0.0.1:$RS[port]"
+  if _ours "$RS[ttydpid]" ttyd; then print -r -- "  ttyd:     pid $RS[ttydpid], $n browser(s) connected"
+  else print -r -- "  ttyd:     stopped (lzr1-panel remote off, then on)"; fi
+}
+
 # ---- commands -------------------------------------------------------------------------------------------------------
 
 case $1 in
@@ -926,7 +1023,7 @@ profile)
 
 open)  # panel on the left, viewer on the right
   local id=$$ term
-  rm -rf $STATE/*(Nmd+1) $STATE/$id.seeded  # a reused ID is a new panel: its first refresh only records
+  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded  # a reused ID is a new panel: its first refresh only records
   lzr1_splash open
   if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
     # Ghostty: split this pane; it becomes the viewer.
@@ -960,6 +1057,9 @@ open)  # panel on the left, viewer on the right
   print -rn -- $TERM_PROGRAM >$STATE/$id.term
   print -rn -- $vpane >$STATE/$id.vterm
   $T split-window -hb -l $PANEL_W -t $sess "$SELF _panel $id"
+  # A browser's panel (lzr1-panel remote): its layout ends when the browser goes, and remote off finds it by the mark.
+  [[ -n $LZR1_REMOTE ]] &&
+    TMUX= exec $T attach -t $sess \; set -t $sess destroy-unattached on \; set -t $sess @lzr1_remote $LZR1_REMOTE
   TMUX= exec $T attach -t $sess
   ;;
 
@@ -1455,6 +1555,116 @@ _notify)  # _notify RECORD...: list_rows' alerts, from a process of its own
 
 notify)  # a sample alert, in the foreground, to check the tone and the notifications on this computer
   notify_alerts "question"$'\037'"lzr1-panel"$'\037'"test"$'\037'"this is how a session asks for you"
+  ;;
+
+remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | password | build
+  shift
+  case $1 in
+    on)
+      shift
+      local allow= ttl=8h a gw uuid pw port n=${LZR1_REMOTE_PWLEN:-16} secs=0 i out
+      while (( $# )); do
+        case $1 in
+          --allow) allow=$2; shift 2 ;; --allow=*) allow=${1#*=}; shift ;;
+          --ttl) ttl=$2; shift 2 ;; --ttl=*) ttl=${1#*=}; shift ;;
+          *) die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h]" ;;
+        esac
+      done
+      [[ $n == <-> ]] && (( n >= 12 )) || die "LZR1_REMOTE_PWLEN must be 12 or more (got $n)"
+      [[ $ttl == ([0-9]##[hms])## ]] || die "--ttl takes hours, minutes or seconds, like 8h, 90m or 1h30m"
+      # The TTL in seconds, for the expiry shown.
+      a=$ttl; while [[ $a == (#b)([0-9]##)([hms])(*) ]]; do
+        secs=$(( secs + match[1] * ${${${match[2]/h/3600}/m/60}/s/1} )); a=$match[3]
+      done
+      (( secs > 0 )) || die "--ttl must be more than 0"
+      if _remote_live; then _remote_status; die "remote is already on (lzr1-panel remote off turns it off)"; fi
+      # Tailscale first: nothing starts unless it can publish.
+      _ts_info
+      [[ $TS_STATE == Running ]] || die "Tailscale is not connected ($TS_STATE): open Tailscale, or run tailscale up"
+      (( TS_CERTS > 0 )) && [[ -n $TS_HOST ]] ||
+        die "turn on HTTPS in the Tailscale admin console: DNS → HTTPS Certificates (login.tailscale.com/admin/dns)"
+      (( $+commands[ttyd] )) || die "remote needs ttyd: brew install ttyd (Linux: apt install ttyd, or github.com/tsl0922/ttyd)"
+      (( $+commands[openssl] )) || die "remote needs openssl"
+      # Who may open it: Tailscale logins, prefilled with the last answer (the first time: this machine's login).
+      if [[ -z $allow ]]; then
+        allow=$(sed -n 's/^allow=//p' $CONFIG/remote.conf 2>/dev/null); : ${allow:=$TS_LOGIN}
+        if [[ -t 0 ]]; then
+          vared -p "Tailscale logins allowed in (comma-separated): " allow || die "remote on: no answer"
+        else
+          print -rnu2 -- "Tailscale logins allowed in [$allow] "; IFS= read -r a && [[ -n $a ]] && allow=$a
+        fi
+      fi
+      allow=${(j:,:)${(s:,:)${allow//[[:space:]]/}}:l}
+      [[ -n $allow ]] || die "remote on: no login allowed in"
+      for a in ${(s:,:)allow}; do [[ $a == [^@]##@[^@]##.[^@]## ]] || die "not a Tailscale login (an e-mail): $a"; done
+      print -r -- "allow=$allow" >$CONFIG/remote.conf
+      _remote_gw; gw=$REPLY
+      mkdir -p $RDIR && chmod 700 $RDIR
+      rm -f $RDIR/*.sock(N) $RDIR/gw.out
+      if (( $+commands[uuidgen] )); then uuid=$(uuidgen); else uuid=$(</proc/sys/kernel/random/uuid); fi
+      uuid=${uuid:l}
+      [[ $uuid == [0-9a-f](#c8)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c4)-[0-9a-f](#c12) ]] || die "could not make a UUID"
+      # 56 characters with no look-alikes (0/O, 1/l/I), about 5.8 bits each.
+      pw=; while (( ${#pw} < n )); do
+        pw+=$(openssl rand -base64 48 | tr -dc 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')
+      done
+      pw=${pw[1,n]}
+      zmodload zsh/datetime
+      RS=(uuid $uuid url https://$TS_HOST/$uuid/ password $pw allow $allow started $EPOCHSECONDS
+          expires $(( EPOCHSECONDS + secs )) host $TS_HOST)
+      _remote_save
+      ( umask 077; : >$RDIR/ttyd.log; : >>$RDIR/remote.log )  # logs hold logins and paths, never the password
+      # A browser gets its own panel in the tmux layout (a Ghostty split cannot be shown in a browser), splash off;
+      # LZR1_REMOTE marks its tmux session so it ends with the browser and with remote off.
+      ttyd -i $RDIR/ttyd.sock -b /$uuid -W -m 4 -t titleFixed=lzr1 \
+        env -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM -u TMUX -u TMUX_PANE -u COLUMNS -u LINES \
+        LZR1_SPLASH=0 LZR1_REMOTE=$uuid $SELF open </dev/null >$RDIR/ttyd.log 2>&1 &!
+      RS[ttydpid]=${!}  # (RS[k]=$! would store "$!" itself)
+      _remote_save
+      # The password reaches the gateway on its stdin, never in a command line or the environment.
+      print -r -- $pw | $gw --listen 127.0.0.1:0 --upstream $RDIR/ttyd.sock --base /$uuid/ --allow $allow \
+        --ttl $ttl --log $RDIR/remote.log >$RDIR/gw.out 2>>$RDIR/remote.log &!
+      RS[gwpid]=${!}
+      _remote_save
+      for i in {1..50}; do
+        out=$(<$RDIR/gw.out); [[ $out == ready* ]] && break
+        _ours $RS[gwpid] lzr1-remote-gw || break
+        sleep 0.1
+      done
+      port=${${out#ready 127.0.0.1:}%%$'\n'*}
+      if [[ $port != <-> ]]; then
+        _remote_off
+        die "the gateway did not start: ${$(tail -3 $RDIR/remote.log $RDIR/ttyd.log 2>/dev/null)//$'\n'/ }"
+      fi
+      RS[port]=$port
+      _remote_save
+      # Publish on the tailnet only. The target keeps the /UUID prefix: serve strips its mount path.
+      if ! out=$(_ts serve --bg --yes --https=443 --set-path /$uuid http://127.0.0.1:$port/$uuid 2>&1); then
+        _remote_off
+        [[ $out == *(#i)(access denied|permission|operator)* ]] &&
+          print -ru2 -- "lzr1-panel: serve needs root on Linux, or once: sudo tailscale set --operator=\$USER"
+        die "tailscale serve failed: ${out//$'\n'/ }"
+      fi
+      if _ts serve status --json 2>/dev/null | jq -e --arg h $TS_HOST:443 '.AllowFunnel[$h] // false' >/dev/null; then
+        _remote_off
+        die "Funnel is on for $TS_HOST:443, which would put the panel on the internet: turned remote off"
+      fi
+      print -r -- "remote: on, for $allow until $(strftime '%H:%M' $RS[expires])"
+      print -r -- "  url:      $RS[url]"
+      print -r -- "  password: $pw"
+      clip $RS[url]
+      print -r -- "copied the URL; lzr1-panel remote password copies the password, lzr1-panel remote off ends it"
+      ;;
+    off)
+      if _remote_read; then _remote_off; print "remote: off (unpublished, stopped)"
+      else _remote_off; print "remote: off"; fi
+      ;;
+    status|'') _remote_status ;;
+    url) _remote_live || die "remote is off"; clip $RS[url]; print -r -- "copied the URL: $RS[url]" ;;
+    password) _remote_live || die "remote is off"; clip $RS[password]; print "copied the password" ;;
+    build) _remote_gw; print -r -- "gateway: $REPLY" ;;
+    *) die "usage: lzr1-panel remote on [--allow EMAIL[,EMAIL...]] [--ttl 8h] | off | status | url | password" ;;
+  esac
   ;;
 
 splash) lzr1_splash ${2:+${2#--}} ;;

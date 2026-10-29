@@ -6,7 +6,7 @@
 #   ./install.sh --no-shell   leave your shell rc files alone
 #   ./install.sh --uninstall  remove the links, the shell hook and the Claude skill (profiles stay)
 #
-# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh and jq; Claude Code if it is missing; Ghostty on macOS if
+# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh, jq and ttyd; Claude Code if it is missing; Ghostty on macOS if
 # you want it; the lzr1-panel command in ~/.local/bin; the Claude Code skill that creates profiles; a shell hook
 # with cl-* helpers and (optionally) the panel opening with Ghostty; Ctrl+C copying in Ghostty; GitHub sign-in; your
 # first profile; then lzr1-panel doctor checks it all.
@@ -98,6 +98,14 @@ for t in gh jq; do
   else warn "could not install $t: your pull requests need it (https://cli.github.com)"; fi
 done
 
+# ttyd shows the panel in a browser for lzr1-panel remote (with Tailscale and Go); the panel works without it.
+if have ttyd; then ok "ttyd"
+else
+  info "installing ttyd (lzr1-panel remote: the panel in a browser on your tailnet)"
+  if ( pkg_install ttyd ) >/dev/null 2>&1; then ok "ttyd installed"
+  else warn "could not install ttyd: lzr1-panel remote needs it (https://github.com/tsl0922/ttyd)"; fi
+fi
+
 fzf_version() { fzf --version 2>/dev/null | awk '{print $1}'; }
 if have fzf && version_ge "$(fzf_version)" "$FZF_MIN"; then
   ok "fzf $(fzf_version)"
@@ -160,6 +168,14 @@ chmod 700 "$CONFIG" "$CONFIG/profiles"
 ln -sfn "$REPO/bin/lzr1-panel" "$BIN/lzr1-panel"
 ok "$BIN/lzr1-panel → $REPO/bin/lzr1-panel"
 case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN is not on your PATH yet: the shell hook below adds it" ;; esac
+
+# lzr1-panel remote's login gateway (gateway/, Go standard library only); remote on builds it too when missing.
+if have go; then
+  "$REPO/bin/lzr1-panel" remote build >/dev/null 2>&1 && ok "remote gateway built (go build)" ||
+    warn "could not build the remote gateway: cd $REPO/gateway && go build ."
+else
+  info "no Go: lzr1-panel remote builds its gateway with it (brew install go, or your distribution's golang)"
+fi
 
 if [[ -d $HOME/.claude ]] || have claude; then
   mkdir -p "$SKILLS"

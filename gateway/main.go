@@ -1,6 +1,6 @@
 // lzr1-remote-gw: the login gateway in front of ttyd for `lzr1-panel remote`.
-// It listens on a private Unix socket (published by `tailscale serve`), checks the caller,
-// and proxies HTTP and WebSocket traffic to ttyd's Unix socket. No TCP listener, no third-party code.
+// It listens on a loopback TCP address or a private Unix socket (published by `tailscale serve`), checks the
+// caller, and proxies HTTP and WebSocket traffic to ttyd's Unix socket. No third-party code.
 package main
 
 import (
@@ -39,7 +39,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	var allow string
 	fs := flag.NewFlagSet("lzr1-remote-gw", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.StringVar(&c.listen, "listen", "", "Unix socket to serve on (required)")
+	fs.StringVar(&c.listen, "listen", "", "Unix socket, or loopback host:port (port 0 picks one), to serve on (required)")
 	fs.StringVar(&c.upstream, "upstream", "", "ttyd's Unix socket (required)")
 	fs.StringVar(&c.base, "base", "", "path prefix, /UUID/ (required)")
 	fs.StringVar(&allow, "allow", "", "allowed Tailscale logins, comma-separated (required)")
@@ -57,6 +57,12 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	}
 	if c.listen == "" || c.upstream == "" || c.base == "" || allow == "" {
 		return bad("--listen, --upstream, --base and --allow are required")
+	}
+	if !strings.Contains(c.listen, "/") {
+		host, _, err := net.SplitHostPort(c.listen)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			return bad("--listen must be a Unix socket path or a loopback IP:port, got %q", c.listen)
+		}
 	}
 	if len(c.base) < 3 || !strings.HasPrefix(c.base, "/") || !strings.HasSuffix(c.base, "/") || strings.Contains(c.base[1:len(c.base)-1], "/") {
 		return bad("--base must look like /UUID/, got %q", c.base)
@@ -132,6 +138,15 @@ func listenUnix(path string) (net.Listener, error) {
 	return l, nil
 }
 
+// listen opens --listen: a loopback TCP address (parseFlags checked it is one), else a Unix socket.
+// tailscale serve in the macOS app cannot reach a Unix socket, so lzr1-panel uses 127.0.0.1:0 there.
+func listen(addr string) (net.Listener, error) {
+	if strings.Contains(addr, "/") {
+		return listenUnix(addr)
+	}
+	return net.Listen("tcp", addr)
+}
+
 // waitUpstream returns true once ttyd's socket answers, false if ctx ends first.
 func waitUpstream(ctx context.Context, path string) bool {
 	for {
@@ -173,11 +188,14 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err := checkSocketDir(c.upstream); err != nil {
 		return fail(fmt.Errorf("upstream: %w", err))
 	}
-	l, err := listenUnix(c.listen)
+	l, err := listen(c.listen)
 	if err != nil {
 		return fail(err)
 	}
-	defer os.Remove(c.listen)
+	tcp := l.Addr().Network() == "tcp"
+	if !tcp {
+		defer os.Remove(c.listen)
+	}
 	srv := &http.Server{
 		Handler:           newServer(c, sum, logger),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -193,7 +211,11 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		srv.Close()
 		return 0
 	}
-	fmt.Fprintln(stdout, "ready")
+	if tcp {
+		fmt.Fprintln(stdout, "ready", l.Addr()) // the port, when --listen asked for 0
+	} else {
+		fmt.Fprintln(stdout, "ready")
+	}
 	select {
 	case err := <-served:
 		return fail(err)

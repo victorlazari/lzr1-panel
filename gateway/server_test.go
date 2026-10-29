@@ -424,3 +424,58 @@ func TestSocketRun(t *testing.T) {
 		t.Errorf("ttl took %v", d)
 	}
 }
+
+func TestListenTCP(t *testing.T) {
+	dir := sockDir(t)
+	up := filepath.Join(dir, "ttyd.sock")
+	ttyd := startUpstream(t, up)
+	args := func(listen string) []string {
+		return []string{"--listen", listen, "--upstream", up, "--base", testBase, "--allow", "you@example.com"}
+	}
+	for _, l := range []string{"0.0.0.0:0", "192.168.1.10:8080", "example.com:80", "localhost:0", "127.0.0.1", ":0"} {
+		if code := run(context.Background(), args(l), strings.NewReader("correct horse battery\n"), io.Discard, io.Discard); code != 2 {
+			t.Errorf("--listen %s: exit %d, want 2", l, code)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	pr, pw := io.Pipe()
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, args("127.0.0.1:0"), strings.NewReader("correct horse battery\n"), pw, io.Discard)
+	}()
+	line, err := bufio.NewReader(pr).ReadString('\n')
+	addr := strings.TrimPrefix(strings.TrimSuffix(line, "\n"), "ready 127.0.0.1:")
+	if err != nil || addr == line || addr == "0" || addr == "" {
+		t.Fatalf("stdout %q, %v", line, err)
+	}
+	addr = "127.0.0.1:" + addr
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	r, _ := http.NewRequest("GET", "http://"+addr+testBase, nil)
+	r.Header.Set("Accept", "text/html")
+	r.Header.Set("Tailscale-User-Login", "you@example.com")
+	resp, err := client.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != testBase+"login" {
+		t.Errorf("no session over TCP: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if len(ttyd.hits()) != 0 {
+		t.Error("an unauthenticated request reached the upstream")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("exit %d on shutdown", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no shutdown")
+	}
+	if c, err := net.Dial("tcp", addr); err == nil {
+		c.Close()
+		t.Error("still listening after shutdown")
+	}
+}

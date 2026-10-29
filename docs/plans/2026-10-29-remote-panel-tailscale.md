@@ -160,7 +160,7 @@ sessions and attaches a viewer; `remote off` leaves no serve config, socket, pro
 
 #### Task 1.2.1: Find Tailscale, build the gateway, start and stop the pieces
 
-- [ ] Done
+- [x] Done
 
 **Context:** `bin/lzr1-panel`'s `case $1 in` dispatch holds every command; `clip` (`bin/lzr1-panel:475`) copies to
 the clipboard; `openssl rand` is already used (`bin/lzr1-panel:1369`); `open)` (`bin/lzr1-panel:927-931`) chooses
@@ -299,3 +299,17 @@ each missing piece with its fix.
   equal `https://` + the request's `Host` exactly: Task 1.2.1 must confirm `tailscale serve` passes the browser's
   Host through (if it rewrites it, compare against the published `*.ts.net` name instead). Wrong password re-renders
   the form with 401; other methods on `login`/`logout` get 405; `logout` only deletes a session bound to the caller.
+- Task 1.2.1: confirmed live that the macOS app's `serve` cannot use a Unix-socket upstream, so the gateway's
+  `--listen` also takes a loopback `IP:port` (non-loopback → exit 2); with `127.0.0.1:0` it prints `ready
+  127.0.0.1:PORT` instead of `ready` (`TestListenTCP`). ttyd stays on its Unix socket. Live facts: `serve` strips its
+  mount path, so the target is `http://127.0.0.1:PORT/UUID`; it passes the browser's `Host` (the `*.ts.net` name),
+  `X-Forwarded-Host/Proto` and `Tailscale-User-Login`, so the Origin check works as built. Cost: a local process can
+  reach the port and claim any login (it still needs the password); `docs/remote.md` says so.
+- Task 1.2.1: Tailscale's status and serve JSON are read with `jq` (the installer already installs it). Added
+  `remote build` (used by `install.sh`). `open` no longer deletes `$STATE/remote` in its day-old cleanup, and a
+  browser's layout (`LZR1_REMOTE`) sets `destroy-unattached` and `@lzr1_remote UUID` at attach time (set on a detached
+  session, tmux destroys it at once) so it ends with the browser and `remote off` finds it. `remote on` while on prints
+  the status and exits 1. The session file also holds `host`, `port`, `gwpid`, `ttydpid`; `remote.log` and `ttyd.log`
+  (0600, no secrets) stay after `off`. The live check (only lazari@lerian.studio allowed, `--ttl 10m`) did not open a
+  WebSocket, since that starts `lzr1-*` sessions on the real `lzr1` tmux server: a browser's panel and its cleanup
+  are first exercised by Task 1.2.2.
