@@ -319,3 +319,12 @@ each missing piece with its fix.
   which sends `Origin: null` on the form's POST under `Referrer-Policy: no-referrer`, so the gateway (and `login.html`)
   now send `same-origin` (`TestLoginForm` checks it). Double-click, Ctrl-b d after a switch in place and the first
   footer click after a menu fail in a plain terminal's tmux layout too: panel bugs, listed for Epic 2.2.
+- Review fixes (Epic 1.2): `serve` runs in the foreground (no `--bg`), not as Task 1.2.1 says: Tailscale keeps a
+  foreground path only while that process lives (checked live: `kill` and `kill -9` both leave "No serve config"; a
+  reboot was not tested, by the same rule nothing should survive it). A watcher subshell (`watchpid`, HUP ignored like
+  `serve`) ends `serve` and runs `off`'s cleanup as soon as the gateway exits (`--ttl`, a crash) or `serve` does, so
+  expiry no longer waits for `status` or `on`. `_remote_off` confirms with `serve status --json` that `/UUID` is in no
+  handler (else tries `serve ... off`); if Tailscale cannot confirm it keeps the session file and the gateway, prints
+  the manual command and returns 1, so `remote off` exits 1, `status` says the path may still be published and `on`
+  refuses. The Funnel check now looks inside foreground configs too. Verified by `verify-review-fixes.zsh` (a stub
+  failing `tailscale`, then live with `--ttl 20s`).

@@ -722,11 +722,12 @@ _keep() {  # _keep AGENT FIRST RESUME: the session's command, in REPLY
 RDIR=$STATE/remote
 typeset -gA RS  # the session file, key => value
 
-# _ts ARGS: the Tailscale CLI (PATH, then the macOS app's)
+TSBIN=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}  # PATH, then the macOS app's
+
+# _ts ARGS: the Tailscale CLI
 _ts() {
-  local t=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}
-  [[ -x $t ]] || die "remote needs Tailscale (tailscale.com/download)"
-  $t "$@"
+  [[ -x $TSBIN ]] || die "remote needs Tailscale (tailscale.com/download)"
+  $TSBIN "$@"
 }
 
 # _ts_info: TS_STATE, TS_CERTS (how many HTTPS certificate domains), TS_HOST (this machine's tailnet name), TS_LOGIN
@@ -750,24 +751,46 @@ _remote_read() {  # the session file into RS; false without one
 
 _remote_save() { local k; ( umask 077; for k in ${(ko)RS}; do print -r -- "$k=$RS[$k]"; done >$RDIR/session ) }
 
-# _remote_off: unpublish, stop the gateway, ttyd and the browsers' panels, remove the sockets and the session file.
-# Safe to repeat; uses RS (or reads the session file).
+_stop() { local i; kill $1 2>/dev/null; for i in {1..50}; do kill -0 $1 2>/dev/null || return 0; sleep 0.1; done; kill -9 $1 2>/dev/null }
+
+# _remote_published UUID: the tailnet routes /UUID (in any serve config); 1 if not, 2 if Tailscale cannot say
+_remote_published() {
+  local j; [[ -x $TSBIN ]] || return 1
+  j=$($TSBIN serve status --json 2>/dev/null) || return 2
+  print -r -- $j | jq -e --arg p /$1 '[.. | objects | .Handlers? | objects | has($p)] | any' >/dev/null
+  case $? in 0) return 0 ;; 1) return 1 ;; *) return 2 ;; esac
+}
+
+# _remote_off: unpublish (end the watcher and the foreground serve, check the path is gone, else serve ... off), then
+# stop the gateway, ttyd and the browsers' panels, remove the sockets and the session file. Safe to repeat; uses RS
+# (or reads the session file). When the path may still be published it stops nothing (the gateway keeps holding its
+# port), keeps the session file, says how to remove the path and returns 1.
 _remote_off() {
-  local p n i s m t=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}
+  local p n s m r
+  zmodload zsh/system
   (( $#RS )) || _remote_read
-  [[ -n $RS[uuid] && -x $t ]] && $t serve --https=443 --set-path /$RS[uuid] off >/dev/null 2>&1
-  for p n in "$RS[gwpid]" lzr1-remote-gw "$RS[ttydpid]" ttyd; do
-    _ours $p $n || continue
-    kill $p 2>/dev/null
-    for i in {1..50}; do kill -0 $p 2>/dev/null || break; sleep 0.1; done
-    kill -9 $p 2>/dev/null
-  done
+  if [[ -n $RS[uuid] ]]; then
+    for p n in "$RS[watchpid]" zsh "$RS[servepid]" ${TSBIN:t}; do
+      [[ $p != $sysparams[pid] ]] && _ours $p $n && _stop $p
+    done
+    _remote_published $RS[uuid]; r=$?
+    if (( r == 0 )); then
+      $TSBIN serve --https=443 --set-path /$RS[uuid] off >/dev/null 2>&1; _remote_published $RS[uuid]; r=$?
+    fi
+    if (( r != 1 )); then
+      print -ru2 -- "lzr1-panel: could not unpublish https://${RS[host]:-<this machine>}/$RS[uuid]/ (is Tailscale" \
+        "running?); kept $RDIR/session. Run lzr1-panel remote off again, or: tailscale serve --https=443 --set-path" \
+        "/$RS[uuid] off"
+      return 1
+    fi
+  fi
+  for p n in "$RS[gwpid]" lzr1-remote-gw "$RS[ttydpid]" ttyd; do _ours $p $n && _stop $p; done
   if [[ -n $RS[uuid] ]]; then
     tmux -L lzr1 list-sessions -F '#{session_name} #{@lzr1_remote}' 2>/dev/null | while read -r s m; do
       [[ $m == $RS[uuid] ]] && tmux -L lzr1 kill-session -t "=$s" 2>/dev/null
     done
   fi
-  rm -f $RDIR/session $RDIR/*.sock(N) $RDIR/gw.out
+  rm -f $RDIR/session $RDIR/*.sock(N) $RDIR/gw.out $RDIR/serve.out
   RS=()
 }
 
@@ -793,7 +816,10 @@ _remote_gw() {
 
 _remote_status() {
   zmodload zsh/datetime
-  if ! _remote_live; then print "remote: off"; return 0; fi
+  if ! _remote_live; then
+    [[ -e $RDIR/session ]] && { print "remote: off, but its path may still be published (above)"; return 1 }
+    print "remote: off"; return 0
+  fi
   local n=0 s m left=$(( ${RS[expires]:-0} - EPOCHSECONDS ))
   tmux -L lzr1 list-sessions -F '#{session_name} #{@lzr1_remote}' 2>/dev/null | while read -r s m; do
     [[ $m == $RS[uuid] ]] && (( n++ ))
@@ -803,6 +829,7 @@ _remote_status() {
   print -r -- "  allowed:  ${RS[allow]//,/, }"
   print -r -- "  expires:  $(strftime '%H:%M' $RS[expires]) (in $(( left / 3600 ))h$(( left % 3600 / 60 ))m)"
   print -r -- "  gateway:  pid $RS[gwpid], 127.0.0.1:$RS[port]"
+  print -r -- "  serve:    pid $RS[servepid] (the path ends with it; it ends with the gateway)"
   if _ours "$RS[ttydpid]" ttyd; then print -r -- "  ttyd:     pid $RS[ttydpid], $n browser(s) connected"
   else print -r -- "  ttyd:     stopped (lzr1-panel remote off, then on)"; fi
 }
@@ -1578,6 +1605,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       done
       (( secs > 0 )) || die "--ttl must be more than 0"
       if _remote_live; then _remote_status; die "remote is already on (lzr1-panel remote off turns it off)"; fi
+      [[ -e $RDIR/session ]] && die "remote on: the last remote is still published (above)"
       # Tailscale first: nothing starts unless it can publish.
       _ts_info
       [[ $TS_STATE == Running ]] || die "Tailscale is not connected ($TS_STATE): open Tailscale, or run tailscale up"
@@ -1638,17 +1666,36 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       fi
       RS[port]=$port
       _remote_save
-      # Publish on the tailnet only. The target keeps the /UUID prefix: serve strips its mount path.
-      if ! out=$(_ts serve --bg --yes --https=443 --set-path /$uuid http://127.0.0.1:$port/$uuid 2>&1); then
+      # Publish on the tailnet only, with a foreground serve: Tailscale drops the path when that process ends (even
+      # killed, or at a reboot), and the watcher below ends it with the gateway. The target keeps the /UUID prefix:
+      # serve strips its mount path.
+      ( trap '' HUP INT; exec $TSBIN serve --yes --https=443 --set-path /$uuid http://127.0.0.1:$port/$uuid ) \
+        </dev/null >$RDIR/serve.out 2>&1 &!
+      RS[servepid]=${!}
+      _remote_save
+      for i in {1..50}; do
+        _remote_published $uuid && break
+        _ours $RS[servepid] ${TSBIN:t} || break
+        sleep 0.1
+      done
+      if ! _remote_published $uuid; then
+        out=$(<$RDIR/serve.out)
         _remote_off
         [[ $out == *(#i)(access denied|permission|operator)* ]] &&
           print -ru2 -- "lzr1-panel: serve needs root on Linux, or once: sudo tailscale set --operator=\$USER"
-        die "tailscale serve failed: ${out//$'\n'/ }"
+        die "tailscale serve failed: ${${out:-no route after 5 s}//$'\n'/ }"
       fi
-      if _ts serve status --json 2>/dev/null | jq -e --arg h $TS_HOST:443 '.AllowFunnel[$h] // false' >/dev/null; then
+      if _ts serve status --json 2>/dev/null |
+          jq -e --arg h $TS_HOST:443 '[.. | objects | .AllowFunnel? | objects | .[$h]?] | any' >/dev/null; then
         _remote_off
         die "Funnel is on for $TS_HOST:443, which would put the panel on the internet: turned remote off"
       fi
+      # The watcher: when the gateway ends (--ttl, a crash) or serve does (Tailscale quit), it turns the rest off.
+      ( trap '' HUP INT
+        while _ours $RS[gwpid] lzr1-remote-gw && _ours $RS[servepid] ${TSBIN:t}; do sleep 1; done
+        _remote_read && [[ $RS[uuid] == $uuid ]] && _remote_off ) </dev/null >/dev/null 2>&1 &!
+      RS[watchpid]=${!}
+      _remote_save
       print -r -- "remote: on, for $allow until $(strftime '%H:%M' $RS[expires])"
       print -r -- "  url:      $RS[url]"
       print -r -- "  password: $pw"
@@ -1656,7 +1703,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       print -r -- "copied the URL; lzr1-panel remote password copies the password, lzr1-panel remote off ends it"
       ;;
     off)
-      if _remote_read; then _remote_off; print "remote: off (unpublished, stopped)"
+      if _remote_read; then _remote_off || exit 1; print "remote: off (unpublished, stopped)"
       else _remote_off; print "remote: off"; fi
       ;;
     status|'') _remote_status ;;

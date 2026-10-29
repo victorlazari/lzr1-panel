@@ -38,7 +38,9 @@ browser ──HTTPS (tailnet only)──▶ tailscale serve ──▶ lzr1-remot
    password once on its standard input, checks every request and proxies the page and its WebSocket to ttyd.
 4. **`tailscale serve`** publishes the gateway at `https://<machine>.<tailnet>.ts.net/<uuid>/` with a certificate for
    that name. It is reachable only from the tailnet: `tailscale funnel` (the public internet) is never used, and
-   `remote on` turns itself off if Funnel is on for that address.
+   `remote on` turns itself off if Funnel is on for that address. It runs in the foreground (no `--bg`), so the
+   path lives only as long as that process: Tailscale drops it when the process ends, is killed, or the machine
+   reboots. A small watcher ends it as soon as the gateway exits, so the path never points at a freed port.
 5. The URL is copied to the clipboard. The password is copied only by `remote password`, so the two are not on the
    clipboard together.
 
@@ -69,13 +71,19 @@ reach. Logins, failures and logouts go to `~/.cache/lzr1-panel/remote/remote.log
 
 ## Turning it off
 
-`lzr1-panel remote off` removes the `serve` path, stops the gateway, ttyd and every browser's layout, and deletes the
-sockets and the session file. It is safe to run twice. When `--ttl` passes the gateway stops by itself; the next
-`remote status` or `remote on` notices and cleans up the rest. After a reboot nothing is running and `remote status`
-cleans the stale session file.
+`lzr1-panel remote off` removes the `serve` path, checks with `tailscale serve status` that it is gone, then stops
+the gateway, ttyd and every browser's layout, and deletes the sockets and the session file. It is safe to run twice.
+If Tailscale cannot confirm the path is gone (the app is quit, `tailscaled` is down, the operator permission was
+removed), `off` keeps the session file (the only record of the UUID) and leaves the gateway holding its port, still
+behind the allowlist and password, prints the manual command and exits 1. Run `remote off` again once Tailscale is
+back.
+
+When `--ttl` passes the gateway exits, and the watcher ends `serve` (the path goes with it) and turns the rest off
+within a second or so. If Tailscale quits, the foreground `serve` ends and the watcher turns remote off the same way.
+After a reboot nothing runs and nothing is published; `remote status` deletes the stale session file.
 
 If something is left over, by hand: `tailscale serve status`, then `tailscale serve --https=443 --set-path /<uuid>
-off`; `pkill -f lzr1-panel/remote/` stops the gateway and ttyd.
+off`; `remote status` shows the pids of the gateway, ttyd and `serve`.
 
 ## Fidelity in a browser
 
