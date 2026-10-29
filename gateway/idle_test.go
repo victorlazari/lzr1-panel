@@ -20,8 +20,14 @@ import (
 )
 
 // clientFrame is one masked frame as a browser sends it, with the 7-, 16- or 64-bit length its payload needs.
-func clientFrame(op byte, payload []byte) []byte {
-	b := []byte{0x80 | op}
+func clientFrame(op byte, payload []byte) []byte { return clientFrag(true, op, payload) }
+
+// clientFrag is clientFrame with the FIN bit as given: false for a fragment that more of its message follows.
+func clientFrag(fin bool, op byte, payload []byte) []byte {
+	b := []byte{op}
+	if fin {
+		b[0] |= 0x80
+	}
 	switch n := len(payload); {
 	case n < 126:
 		b = append(b, 0x80|byte(n))
@@ -48,16 +54,31 @@ func headerish(n int) []byte {
 func TestFrameParser(t *testing.T) {
 	var stream []byte
 	add := func(op byte, p []byte) { stream = append(stream, clientFrame(op, p)...) }
-	add(9, []byte("ping"))         // ping: not input
-	add(10, nil)                   // pong: not input
-	add(1, []byte("a"))            // a keystroke: 1
-	add(2, headerish(300))         // 16-bit length: 2
-	add(1, nil)                    // an empty data frame: not input
-	add(10, headerish(125))        // a long pong
-	add(2, headerish(70000))       // 64-bit length: 3
-	add(0, []byte("continuation")) // 4
-	add(8, []byte{0x03, 0xe8})     // close: not input
-	const want = 4
+	cat := func(a string, b []byte) []byte { return append([]byte(a), b...) }
+	add(1, []byte(`{"AuthToken":"","columns":80,"rows":24}`)) // ttyd's first message, JSON: not input
+	add(9, []byte("ping"))                                    // ping: not input
+	add(10, nil)                                              // pong: not input
+	add(2, []byte("0a"))                                      // INPUT, a keystroke: 1
+	add(2, cat("0", headerish(300)))                          // 16-bit length, a paste: 2
+	add(1, nil)                                               // an empty data frame: not input
+	add(2, []byte("0"))                                       // INPUT with nothing in it: not input
+	add(2, []byte("2"))                                       // PAUSE (flow control): not input
+	add(2, []byte("3"))                                       // RESUME (flow control): not input
+	add(10, headerish(125))                                   // a long pong
+	add(2, []byte(`1{"columns":100,"rows":30}`))              // RESIZE: 3
+	add(2, cat("0", headerish(70000)))                        // 64-bit length: 4
+	add(2, cat("3", headerish(70000)))                        // a long RESUME: not input
+	add(2, []byte("0\x1b[I"))                                 // a focus report: not input
+	// A fragmented message counts once, by its first byte, with control frames between its fragments.
+	stream = append(stream, clientFrag(false, 2, []byte("0x"))...)
+	add(9, nil)
+	stream = append(stream, clientFrag(true, 0, []byte("yz"))...) // 5
+	stream = append(stream, clientFrag(false, 2, []byte("0\x1b["))...)
+	stream = append(stream, clientFrag(true, 0, []byte("O"))...) // a focus report in two fragments: not input
+	stream = append(stream, clientFrag(false, 2, []byte("2"))...)
+	stream = append(stream, clientFrag(true, 0, []byte("0abc"))...) // PAUSE, whatever follows: not input
+	add(8, []byte{0x03, 0xe8})                                      // close: not input
+	const want = 5
 
 	count := func(chunks ...[]byte) int {
 		var p frameParser
@@ -91,10 +112,10 @@ func TestFrameParser(t *testing.T) {
 		"64-bit top bit":  {0x82, 0xff, 0x80, 0, 0, 0, 0, 0, 0, 0},
 	} {
 		var p frameParser
-		if n := p.feed(append(append(append([]byte{}, clientFrame(1, []byte("x"))...), bad...), clientFrame(1, []byte("y"))...)); n != 1 {
+		if n := p.feed(append(append(append([]byte{}, clientFrame(1, []byte("0x"))...), bad...), clientFrame(1, []byte("0y"))...)); n != 1 {
 			t.Errorf("%s: %d data frames, want 1 (the one before it)", name, n)
 		}
-		if n := p.feed(clientFrame(1, []byte("z"))); n != 0 {
+		if n := p.feed(clientFrame(1, []byte("0z"))); n != 0 {
 			t.Errorf("%s: the parser counted again after it", name)
 		}
 	}
@@ -180,6 +201,12 @@ func runGatewayWith(t *testing.T, up http.Handler, extra ...string) (string, str
 // keystroke that often. It returns the conn and a channel closed when the gateway ends the WebSocket.
 func browserWS(t *testing.T, sock, tok string, every time.Duration) (net.Conn, chan struct{}) {
 	t.Helper()
+	return browserWSSending(t, sock, tok, every, []byte("0k"))
+}
+
+// browserWSSending is browserWS sending the given ttyd messages in turn, one every `every`, as binary frames.
+func browserWSSending(t *testing.T, sock, tok string, every time.Duration, msgs ...[]byte) (net.Conn, chan struct{}) {
+	t.Helper()
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +255,8 @@ func browserWS(t *testing.T, sock, tok string, every time.Duration) (net.Conn, c
 				case <-ended:
 					return
 				case <-tick.C:
-					write(clientFrame(2, []byte("0k")))
+					write(clientFrame(2, msgs[0]))
+					msgs = append(msgs[1:], msgs[0])
 				}
 			}
 		}()
@@ -361,4 +389,181 @@ func TestIdleFlag(t *testing.T) {
 			t.Errorf("--idle %s accepted", v)
 		}
 	}
+}
+
+// Terminal reports are what xterm.js answers by itself (DA, DSR/CPR, OSC colours, focus, XTWINOPS): an INPUT message
+// made of nothing else is not a person at the keyboard. Anything else in it is.
+func TestFrameParserReports(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string // after ttyd's INPUT byte
+		count bool
+	}{
+		{"DA1 reply", "\x1b[?1;2c", false},
+		{"DA1 reply, many params", "\x1b[?62;4;9;22c", false},
+		{"DA2 reply", "\x1b[>0;276;0c", false},
+		{"CPR", "\x1b[24;80R", false},
+		{"DSR ok", "\x1b[0n", false},
+		{"OSC 10 BEL", "\x1b]10;rgb:ffff/ffff/ffff\a", false},
+		{"OSC 11 ST", "\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\", false},
+		{"OSC 12 short hex", "\x1b]12;rgb:f/f/f\a", false},
+		{"focus in", "\x1b[I", false},
+		{"focus out", "\x1b[O", false},
+		{"XTWINOPS size", "\x1b[8;24;80t", false},
+		{"XTWINOPS state", "\x1b[1t", false},
+		{"several replies at once", "\x1b[?1;2c\x1b]11;rgb:0/0/0\a\x1b[24;80R\x1b[I", false},
+		{"a key", "a", true},
+		{"Enter", "\r", true},
+		{"Esc", "\x1b", true},
+		{"an arrow key", "\x1b[A", true},
+		{"a function key", "\x1b[15~", true},
+		{"Alt-[", "\x1b[", true},
+		{"a paste", "\x1b[200~hello\x1b[201~", true},
+		{"SGR mouse press", "\x1b[<0;10;5M", true},
+		{"SGR mouse release", "\x1b[<0;10;5m", true},
+		{"X10 mouse", "\x1b[M !!", true},
+		{"a reply then a key", "\x1b[I" + "q", true},
+		{"a key then a reply", "q" + "\x1b[O", true},
+		{"DA query, not a reply", "\x1b[c", true},
+		{"CPR without a column", "\x1b[24R", true},
+		{"DSR other than 0", "\x1b[5n", true},
+		{"focus with params", "\x1b[1I", true},
+		{"OSC 52 (not a colour)", "\x1b]52;c;aGk=\a", true},
+		{"OSC 1 without a second digit", "\x1b]1;rgb:0/0/0\a", true},
+		{"OSC colour unterminated", "\x1b]11;rgb:0/0/0", true},
+		{"OSC colour not rgb", "\x1b]11;?\a", true},
+		{"a long run of replies", strings.Repeat("\x1b[I", 200), true}, // past what a reply needs: input
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := clientFrame(2, append([]byte("0"), tc.input...))
+			var p frameParser
+			if n := p.feed(frame); (n == 1) != tc.count {
+				t.Errorf("%q: %d input messages, want counted=%v", tc.input, n, tc.count)
+			}
+			// The same, byte by byte.
+			var q frameParser
+			n := 0
+			for i := range frame {
+				n += q.feed(frame[i : i+1])
+			}
+			if (n == 1) != tc.count {
+				t.Errorf("%q byte by byte: %d input messages, want counted=%v", tc.input, n, tc.count)
+			}
+		})
+	}
+}
+
+// ttyd's own client sends RESUME after each ~100 KB of output and PAUSE under backpressure, with no key pressed: a
+// browser left on a session that prints a lot must still be logged out.
+func TestIdleFlowControlDoesNotCount(t *testing.T) {
+	sock, audit, done, client := runGatewayWith(t, &pingTTYD{}, "--idle", "300ms")
+	_, tok := login(t, client, "a@x", testPassword)
+	_, ended := browserWSSending(t, sock, tok, 50*time.Millisecond, []byte("2"), []byte("3"))
+	waitEnded(t, ended, 3*time.Second, "PAUSE and RESUME every 50 ms")
+	if !strings.Contains(readAudit(t, audit), " idle-out user=a@x sid="+sid(tok)+"\n") {
+		t.Errorf("no idle-out audited:\n%s", readAudit(t, audit))
+	}
+	syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	exitCode(t, done)
+}
+
+// xterm.js answers a program's terminal queries by itself: those answers alone must not keep a session alive.
+func TestIdleTerminalRepliesDoNotCount(t *testing.T) {
+	sock, audit, done, client := runGatewayWith(t, &pingTTYD{}, "--idle", "300ms")
+	_, tok := login(t, client, "a@x", testPassword)
+	_, ended := browserWSSending(t, sock, tok, 50*time.Millisecond,
+		[]byte("0\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\"), []byte("0\x1b[?1;2c"), []byte("0\x1b[24;80R"), []byte("0\x1b[I"))
+	waitEnded(t, ended, 3*time.Second, "terminal replies every 50 ms")
+	if !strings.Contains(readAudit(t, audit), " idle-out user=a@x sid="+sid(tok)+"\n") {
+		t.Errorf("no idle-out audited:\n%s", readAudit(t, audit))
+	}
+	syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	exitCode(t, done)
+}
+
+// A resize is a person at the browser.
+func TestIdleResizeKeepsAlive(t *testing.T) {
+	sock, _, done, client := runGatewayWith(t, &pingTTYD{}, "--idle", "300ms")
+	_, tok := login(t, client, "a@x", testPassword)
+	_, ended := browserWSSending(t, sock, tok, 100*time.Millisecond, []byte(`1{"columns":80,"rows":24}`))
+	select {
+	case <-ended:
+		t.Fatal("a WebSocket resized every 100 ms was closed")
+	case <-time.After(time.Second):
+	}
+	syscall.Kill(os.Getpid(), syscall.SIGTERM)
+	exitCode(t, done)
+}
+
+// Idle is measured on the wall clock: Go's monotonic clock stops while the machine sleeps, so a time that carries a
+// monotonic reading would leave the sleep out. The clock here carries one (it is time.Now plus an offset) and jumps.
+func TestIdleWallClock(t *testing.T) {
+	var mu sync.Mutex
+	var jump time.Duration
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return time.Now().Add(jump)
+	}
+	dir := sockDir(t)
+	s, _, _ := startGatewayWith(t, dir, filepath.Join(dir, "ttyd.sock"), []string{"a@x"}, func(s *server) {
+		s.now = clock
+		s.idle = time.Hour
+	})
+	tok := s.newSession("a@x")
+	s.touch(tok)
+	s.mu.Lock()
+	last := s.sessions[tok].last
+	s.mu.Unlock()
+	if strings.Contains(last.String(), " m=") {
+		t.Errorf("the session's last input %v carries a monotonic reading", last)
+	}
+	s.idleOut()
+	if sessionCount(s) != 1 {
+		t.Fatal("ended before the clock moved")
+	}
+	mu.Lock()
+	jump = 2 * time.Hour // the machine slept
+	mu.Unlock()
+	s.idleOut()
+	if sessionCount(s) != 0 {
+		t.Error("still logged in after the clock jumped past --idle")
+	}
+}
+
+// --ttl is a wall-clock deadline: a clock that jumps past it (the machine slept) ends the gateway at the next check.
+func TestTTLWallClock(t *testing.T) {
+	var mu sync.Mutex
+	var jump time.Duration
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return time.Now().Add(jump)
+	}
+	s := newServer(config{base: testBase}, [32]byte{}, nil)
+	s.now = clock
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go s.expire(ctx, cancel, time.Hour, 10*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatal("ended long before the ttl")
+	}
+	mu.Lock()
+	jump = 2 * time.Hour
+	mu.Unlock()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(context.Cause(ctx), errTTL) {
+			t.Errorf("cause %v, want errTTL", context.Cause(ctx))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("still running after the clock jumped past --ttl")
+	}
+}
+
+func sessionCount(s *server) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions)
 }

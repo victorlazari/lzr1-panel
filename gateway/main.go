@@ -236,8 +236,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	ctx, cancel := context.WithTimeoutCause(ctx, c.ttl, errTTL)
-	defer cancel()
+	// --ttl on the wall clock, checked every 30 s (and at the deadline): a machine that slept past it stops on waking.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go gw.expire(ctx, cancel, c.ttl, 30*time.Second)
 	// The kill switch ends the wait for ttyd too: the handler serves (and counts) before ready.
 	wctx, wcancel := context.WithCancel(ctx)
 	defer wcancel()

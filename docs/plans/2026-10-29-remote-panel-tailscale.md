@@ -865,3 +865,16 @@ each missing piece with its fix.
   browser's clipboard) in the copy section and in "What it does not protect against". The optional focus or
   recent-input gate in `client.js` was not added (documented instead). Verified by `verify-p2-findings.zsh` (a stub
   `tmux`; no live publish).
+- Phase 2 open findings (idle and clock): the frame parser now unmasks what it needs and reads ttyd's command byte:
+  INPUT ('0') and RESIZE ('1') messages count, PAUSE ('2'), RESUME ('3') and the JSON auth message ('{') never do, so
+  flow control sent while output streams no longer keeps a session alive. An INPUT message made only of terminal reports
+  (DA `ESC[?…c`/`ESC[>…c`, CPR `ESC[r;cR`, `ESC[0n`, focus `ESC[I`/`ESC[O`, XTWINOPS `ESC[…t`, OSC 10-19 `rgb:`
+  colour replies ended by BEL or ST) does not count; any other byte does, and so does an INPUT message longer than 256
+  bytes (`maxReport`: replies are short, a paste is input). A fragmented message is judged by its first byte and its
+  whole INPUT payload, with control frames between fragments ignored. Task 2.1.2's "clock moves are irrelevant
+  (`time.Now` monotonic)" was wrong for sleep: the monotonic clock stops while the Mac sleeps. Session times are now
+  wall-clock (`server.wall`, `now().Round(0)`), and `--ttl` is no longer a `context.WithTimeoutCause` timer but a
+  wall-clock deadline that `server.expire` re-checks at least every 30 s, so a Mac that slept past the expiry stops
+  within 30 s of waking. Login lockouts still use `now()` (a lock that outlasts a sleep is harmless). The RED for the
+  clock is structural (a stored time carried `m=`; `expire` did not exist), since a test cannot suspend the machine.
+  No live browser measurement of the 100 KB RESUME cadence was made in this fix.

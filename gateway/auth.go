@@ -69,7 +69,7 @@ func (s *server) newSessionLocked(login string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	t := hex.EncodeToString(b)
-	s.sessions[t] = &liveSession{login: login, last: s.now(), conns: map[*activityConn]struct{}{}}
+	s.sessions[t] = &liveSession{login: login, last: s.wall(), conns: map[*activityConn]struct{}{}}
 	return t
 }
 
@@ -81,7 +81,7 @@ func (s *server) session(r *http.Request) (string, bool) {
 		return "", false
 	}
 	login := strings.ToLower(strings.TrimSpace(r.Header.Get("Tailscale-User-Login")))
-	now := s.now()
+	now := s.wall()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess := s.sessions[ck.Value]
