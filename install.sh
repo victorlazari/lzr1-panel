@@ -180,15 +180,18 @@ if [[ $SHELL_HOOK == 1 ]]; then
       echo "$HOOK_BEGIN"
       echo "# Managed by lzr1-panel/install.sh; ./install.sh --uninstall removes it."
       echo 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
-      echo "# cl-<profile>-opus / cl-<profile>-sonnet NAME: start a session on a profile without opening the panel"
+      echo "# cl-<profile>-opus / -sonnet / -opencode NAME: start a session on a profile without opening the panel"
       echo 'for _p in ${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel/profiles/*.conf; do'
       echo '  [ -e "$_p" ] || continue; _p=${_p##*/}; _p=${_p%.conf}'
       echo '  eval "cl-$_p-opus() { lzr1-panel start $_p opus \"\$@\"; }; cl-$_p-sonnet() { lzr1-panel start $_p sonnet \"\$@\"; }"'
+      echo '  eval "cl-$_p-opencode() { lzr1-panel start $_p opencode \"\$@\"; }"'
       echo 'done; unset _p'
-      echo "# cl-opus / cl-sonnet [claude args]: Claude in a new tmux session in this folder, so the panel lists it."
-      echo "# Your own cl-opus or cl-sonnet, defined earlier in this file, wins."
+      echo "# cl-opus / cl-sonnet [claude args], cl-opencode [opencode args]: Claude, or opencode with auto-approve on, in a"
+      echo "# new tmux session in this folder; the panel lists it inside a profile's repositories folder. Your own,"
+      echo "# defined earlier in this file, wins."
       echo 'type cl-opus >/dev/null 2>&1 || cl-opus() { lzr1-panel run --model opus "$@"; }'
       echo 'type cl-sonnet >/dev/null 2>&1 || cl-sonnet() { lzr1-panel run --model sonnet "$@"; }'
+      echo 'type cl-opencode >/dev/null 2>&1 || cl-opencode() { lzr1-panel run --opencode "$@"; }'
       if [[ $autoopen == 1 && $rc == "$HOME/.zshrc" ]]; then
         echo "# Opens the panel in the first Ghostty shell; LZR1_PANEL=0 (in ~/.zshenv) turns it off."
         echo 'if [[ -o interactive && $TERM_PROGRAM == ghostty && ${LZR1_PANEL:-1} == 1 && -z $TMUX ]] &&'
