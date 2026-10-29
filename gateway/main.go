@@ -31,6 +31,9 @@ type config struct {
 	allow                  []string
 	ttl                    time.Duration
 	logPath                string
+	auditPath              string        // --audit: the audit trail (none when empty)
+	lockAfter, killAfter   int           // 0: the defaults (5 and 20); tests set them
+	lockFor                time.Duration // 0: the default (15 min)
 }
 
 // errUsage marks a bad command line: exit 2.
@@ -49,6 +52,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&allow, "allow", "", "allowed Tailscale logins, comma-separated (required)")
 	fs.DurationVar(&c.ttl, "ttl", 8*time.Hour, "exit after this long")
 	fs.StringVar(&c.logPath, "log", "", "append the log to this file (default stderr)")
+	fs.StringVar(&c.auditPath, "audit", "", "append the audit trail (logins, failures, lockouts, shutdown) to this file, 0600")
 	if err := fs.Parse(args); err != nil {
 		return c, errUsage
 	}
@@ -192,6 +196,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		logw = f
 	}
 	logger := log.New(logw, "lzr1-remote-gw: ", log.LstdFlags)
+	var audit *auditLog
+	if c.auditPath != "" {
+		f, err := openAudit(c.auditPath)
+		if err != nil {
+			return fail(err)
+		}
+		defer f.Close()
+		audit = &auditLog{w: f, now: time.Now, log: logger}
+	}
 	sum, err := readPassword(stdin)
 	if err != nil {
 		return fail(err)
@@ -207,21 +220,39 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if !tcp {
 		defer os.Remove(c.listen)
 	}
+	gw := newServer(c, sum, logger)
+	gw.audit = audit
 	srv := &http.Server{
-		Handler:           newServer(c, sum, logger),
+		Handler:           gw,
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          logger,
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, c.ttl)
+	ctx, cancel := context.WithTimeoutCause(ctx, c.ttl, errTTL)
 	defer cancel()
+	// The kill switch ends the wait for ttyd too: the handler serves (and counts) before ready.
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	go func() {
+		select {
+		case <-gw.kill:
+			wcancel()
+		case <-wctx.Done():
+		}
+	}()
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
-	if !waitUpstream(ctx, c.upstream) {
+	up := waitUpstream(wctx, c.upstream)
+	if killed(gw) {
+		srv.Close()
+		return 3
+	}
+	if !up {
 		srv.Close()
 		return 0
 	}
+	audit.event("start", "ttl", c.ttl.String())
 	if tcp {
 		fmt.Fprintln(stdout, "ready", l.Addr()) // the port, when --listen asked for 0
 	} else {
@@ -230,14 +261,40 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	select {
 	case err := <-served:
 		return fail(err)
+	case <-gw.kill:
+		// The handler wrote "shutdown reason=killswitch". Nothing should finish gracefully.
+		srv.Close()
+		return 3
 	case <-ctx.Done():
+		if killed(gw) {
+			srv.Close()
+			return 3
+		}
 	}
+	reason := "signal"
+	if errors.Is(context.Cause(ctx), errTTL) {
+		reason = "ttl"
+	}
+	audit.event("shutdown", "reason", reason)
 	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer scancel()
 	if err := srv.Shutdown(sctx); err != nil {
 		srv.Close()
 	}
 	return 0
+}
+
+// errTTL is the cause of run's context ending when --ttl passes.
+var errTTL = errors.New("ttl passed")
+
+// killed reports whether the kill switch fired.
+func killed(s *server) bool {
+	select {
+	case <-s.kill:
+		return true
+	default:
+		return false
+	}
 }
 
 func main() {

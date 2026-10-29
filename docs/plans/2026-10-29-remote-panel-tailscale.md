@@ -265,7 +265,7 @@ lzr1-remote-gw ... [--audit FILE] [--idle 30m]
 
 #### Task 2.1.1: Audit log, lockout and kill switch in the gateway
 
-- [ ] Done
+- [x] Done
 
 **Context:** The password is checked in `serveLogin` (`gateway/auth.go:105-130`); a wrong one is only logged
 (`auth.go:123`, `s.log` is `remote.log`) and re-renders the form with 401. There is no per-login or total counter.
@@ -761,3 +761,10 @@ each missing piece with its fix.
   or `ttyd -I` (Task 2.2.1 says why); the `t` key was already a viewer switch in the tmux layout, so it stays. The
   narrow layout applies to every tmux layout, not only a browser's. The footer click after a menu was reproduced
   without a browser and is not explained yet: Task 2.2.2 starts with its root cause.
+- Task 2.1.1: the `start` line is `start ttl=…` only; Task 2.1.2 adds `idle=` with `--idle`. The gateway no longer
+  writes logins, failures and logouts to `remote.log` (they are audit events), and `remote on` passes no `--audit`
+  until Task 2.1.3, so in between a remote session records no logins; `docs/remote.md:78` is corrected by 2.1.3 as
+  planned. A `failure` while locked carries `fails=0` (the counter was reset by the lockout). The limits are `config`
+  fields (`lockAfter`, `lockFor`, `killAfter`) that default to 5, 15 min and 20 when left at zero. A kill switch firing
+  before ttyd answers (the handler serves before `ready`) also exits 3, without `start`. `openAudit` also opens with
+  `O_NOFOLLOW` and checks the opened file is regular, so a symlink swapped in after the `Lstat` is refused too.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"io"
 	"log"
@@ -9,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -348,5 +351,211 @@ func TestLoginLogout(t *testing.T) {
 	}
 	if resp, _ := do(t, client, req("GET", testBase+"logout", "you@example.com", "", other, nil)); resp.StatusCode != 405 {
 		t.Errorf("GET logout: %d", resp.StatusCode)
+	}
+}
+
+// fakeClock is a server's now that tests move by hand.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) add(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+// syncBuf is an audit sink tests can read while the server writes to it.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// events returns the event names of an audit text, in order.
+func events(text string) []string {
+	var ev []string
+	for _, l := range strings.Split(strings.TrimSpace(text), "\n") {
+		if f := strings.Fields(l); len(f) > 1 {
+			ev = append(ev, f[1])
+		}
+	}
+	return ev
+}
+
+// lockGateway starts a gateway for a@x and b@x with a fake clock and an audit buffer.
+func lockGateway(t *testing.T) (*server, *http.Client, *fakeClock, *syncBuf) {
+	t.Helper()
+	dir := sockDir(t)
+	startUpstream(t, filepath.Join(dir, "ttyd.sock"))
+	clk := &fakeClock{t: time.Date(2026, 10, 29, 14, 0, 0, 0, time.Local)}
+	buf := &syncBuf{}
+	s, client, _ := startGatewayWith(t, dir, filepath.Join(dir, "ttyd.sock"), []string{"a@x", "b@x"}, func(s *server) {
+		s.now = clk.now
+		s.audit = &auditLog{w: buf, now: clk.now, log: s.log}
+	})
+	return s, client, clk, buf
+}
+
+func TestLockout(t *testing.T) {
+	s, client, clk, buf := lockGateway(t)
+	lockEnd := clk.now().Add(15 * time.Minute)
+	until := lockEnd.Format("15:04")
+	for i := 1; i <= 5; i++ {
+		resp, tok := login(t, client, "a@x", "wrong password "+strconv.Itoa(i))
+		want := 401
+		if i == 5 {
+			want = 429
+		}
+		if resp.StatusCode != want || tok != "" {
+			t.Fatalf("wrong password %d: %d %q", i, resp.StatusCode, tok)
+		}
+	}
+	// Locked: even the right password is refused, unchecked.
+	resp, body := do(t, client, req("POST", testBase+"login", "a@x", "https://gw", "", url.Values{"password": {testPassword}}))
+	if resp.StatusCode != 429 || sessionCookie(resp) != nil || !strings.Contains(body, "Too many wrong passwords: locked until "+until+".") {
+		t.Fatalf("right password while locked: %d %q", resp.StatusCode, body)
+	}
+	if resp, body := do(t, client, req("GET", testBase+"login", "a@x", "", "", nil)); resp.StatusCode != 200 || !strings.Contains(body, "locked until "+until) {
+		t.Errorf("form while locked: %d %q", resp.StatusCode, body)
+	}
+	// Another login is not locked.
+	if resp, tok := login(t, client, "b@x", testPassword); resp.StatusCode != 303 || tok == "" {
+		t.Fatalf("b@x: %d", resp.StatusCode)
+	}
+	clk.add(14 * time.Minute)
+	if resp, _ := login(t, client, "a@x", testPassword); resp.StatusCode != 429 {
+		t.Fatalf("a@x after 14 min: %d", resp.StatusCode)
+	}
+	clk.add(time.Minute)
+	resp, tok := login(t, client, "a@x", testPassword)
+	if resp.StatusCode != 303 || tok == "" {
+		t.Fatalf("a@x after 15 min: %d", resp.StatusCode)
+	}
+	s.mu.Lock()
+	fails, total := s.fails["a@x"], s.total
+	s.mu.Unlock()
+	if fails != 0 || total != 7 {
+		t.Errorf("after the lock: fails %d total %d, want 0 7", fails, total)
+	}
+	// The counter is back to 0: four more wrong passwords do not lock.
+	for i := 0; i < 4; i++ {
+		if resp, _ := login(t, client, "a@x", "wrong again"); resp.StatusCode != 401 {
+			t.Errorf("fresh wrong password %d: %d", i+1, resp.StatusCode)
+		}
+	}
+	want := []string{"failure", "failure", "failure", "failure", "failure", "lockout", "failure", "login", "failure", "login",
+		"failure", "failure", "failure", "failure"}
+	if got := events(buf.String()); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("events\n got %v\nwant %v", got, want)
+	}
+	text := buf.String()
+	for _, w := range []string{"failure user=a@x fails=5 total=5\n", "lockout user=a@x until=" + lockEnd.Format(time.RFC3339) + "\n",
+		"failure user=a@x fails=0 total=6 locked=1\n", "login user=b@x sid=", "failure user=a@x fails=1 total=8\n"} {
+		if !strings.Contains(text, w) {
+			t.Errorf("audit lacks %q:\n%s", w, text)
+		}
+	}
+	if strings.Contains(text, testPassword) || strings.Contains(text, tok) {
+		t.Errorf("audit holds a secret:\n%s", text)
+	}
+}
+
+func TestKillSwitch(t *testing.T) {
+	s, client, _, buf := lockGateway(t)
+	for i := 1; i <= 19; i++ {
+		who := "a@x"
+		if i%2 == 0 {
+			who = "b@x"
+		}
+		resp, _ := login(t, client, who, "wrong password")
+		if resp.StatusCode == 503 {
+			t.Fatalf("attempt %d: 503 before 20", i)
+		}
+	}
+	select {
+	case <-s.kill:
+		t.Fatal("kill switch before 20")
+	default:
+	}
+	// The 20th attempt is the right password, but a@x is locked: it counts, and the switch fires.
+	resp, body := do(t, client, req("POST", testBase+"login", "a@x", "https://gw", "", url.Values{"password": {testPassword}}))
+	if resp.StatusCode != 503 || sessionCookie(resp) != nil || !strings.Contains(body, "too many wrong passwords: the remote panel was turned off") {
+		t.Fatalf("20th attempt: %d %q", resp.StatusCode, body)
+	}
+	select {
+	case <-s.kill:
+	case <-time.After(time.Second):
+		t.Fatal("kill not closed")
+	}
+	// Every later POST gets 503, the right password from an unlocked login included.
+	for _, who := range []string{"b@x", "a@x"} {
+		if resp, tok := login(t, client, who, testPassword); resp.StatusCode != 503 || tok != "" {
+			t.Errorf("%s after the kill switch: %d", who, resp.StatusCode)
+		}
+	}
+	ev := events(buf.String())
+	if n := strings.Count(buf.String(), "shutdown reason=killswitch\n"); n != 1 || ev[len(ev)-1] != "shutdown" {
+		t.Errorf("shutdown lines %d, last event %q", n, ev[len(ev)-1])
+	}
+	if n := strings.Count(buf.String(), " failure "); n != 20 {
+		t.Errorf("%d failures audited, want 20", n)
+	}
+}
+
+func TestKillSwitchConcurrent(t *testing.T) {
+	s, client, _, buf := lockGateway(t)
+	var wg sync.WaitGroup
+	codes := make(chan int, 60)
+	for i := 0; i < 60; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			who := []string{"a@x", "b@x"}[i%2]
+			r := req("POST", testBase+"login", who, "https://gw", "", url.Values{"password": {"wrong password"}})
+			resp, err := client.Do(r)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+			codes <- resp.StatusCode
+		}(i)
+	}
+	wg.Wait()
+	close(codes)
+	n503 := 0
+	for c := range codes {
+		if c == 503 {
+			n503++
+		}
+	}
+	if n503 != 41 {
+		t.Errorf("%d answers were 503, want 41 (the 20th and every later one)", n503)
+	}
+	<-s.kill
+	if n := strings.Count(buf.String(), "shutdown reason=killswitch\n"); n != 1 {
+		t.Errorf("%d shutdown lines", n)
+	}
+	if n := strings.Count(buf.String(), " failure "); n != 20 {
+		t.Errorf("%d failures audited, want 20", n)
 	}
 }

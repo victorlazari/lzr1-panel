@@ -81,13 +81,22 @@ func startUpstream(t *testing.T, sock string) *fakeTTYD {
 // startGateway serves newServer on a fresh socket; returns the server, an HTTP client for it and its socket.
 func startGateway(t *testing.T, dir, upstream string) (*server, *http.Client, string) {
 	t.Helper()
+	return startGatewayWith(t, dir, upstream, []string{"you@example.com"}, nil)
+}
+
+// startGatewayWith is startGateway with its own allowlist; tweak (if any) changes the server before it serves.
+func startGatewayWith(t *testing.T, dir, upstream string, allow []string, tweak func(*server)) (*server, *http.Client, string) {
+	t.Helper()
 	sock := filepath.Join(dir, "gw.sock")
 	l, err := listenUnix(sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := config{listen: sock, upstream: upstream, base: testBase, allow: []string{"you@example.com"}}
+	c := config{listen: sock, upstream: upstream, base: testBase, allow: allow}
 	s := newServer(c, sha256.Sum256([]byte("correct horse battery")), log.New(io.Discard, "", 0))
+	if tweak != nil {
+		tweak(s)
+	}
 	srv := &http.Server{Handler: s}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })

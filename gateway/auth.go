@@ -10,7 +10,9 @@ import (
 	"html/template"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed login.html
@@ -57,12 +59,17 @@ func (s *server) sameOrigin(r *http.Request) bool {
 
 // newSession issues a session token bound to login.
 func (s *server) newSession(login string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.newSessionLocked(login)
+}
+
+// newSessionLocked is newSession with s.mu held.
+func (s *server) newSessionLocked(login string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	t := hex.EncodeToString(b)
-	s.mu.Lock()
 	s.sessions[t] = login
-	s.mu.Unlock()
 	return t
 }
 
@@ -90,9 +97,10 @@ func (s *server) cookie(value string, maxAge int) *http.Cookie {
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode}
 }
 
-func (s *server) renderLogin(w http.ResponseWriter, code int, login, msg string) {
+// renderLogin shows the form with msg, or with the lockout message when locked is an "HH:MM".
+func (s *server) renderLogin(w http.ResponseWriter, code int, login, msg, locked string) {
 	var b bytes.Buffer
-	if err := loginPage.Execute(&b, struct{ Login, Error string }{login, msg}); err != nil {
+	if err := loginPage.Execute(&b, struct{ Login, Error, Locked string }{login, msg, locked}); err != nil {
 		http.Error(w, "login page error", http.StatusInternalServerError)
 		return
 	}
@@ -101,11 +109,29 @@ func (s *server) renderLogin(w http.ResponseWriter, code int, login, msg string)
 	w.Write(b.Bytes())
 }
 
-// serveLogin: GET shows the form; POST checks the password and starts a session.
+// lockedAt returns when login's lock ends, if it is locked at now; an expired lock is deleted. Needs s.mu.
+func (s *server) lockedAt(login string, now time.Time) (time.Time, bool) {
+	until, ok := s.lockedUntil[login]
+	if ok && !now.Before(until) {
+		delete(s.lockedUntil, login)
+		ok = false
+	}
+	return until, ok
+}
+
+// serveLogin: GET shows the form; POST checks the password and starts a session. A login locked out is refused
+// without checking the password; every wrong or locked attempt counts toward the kill switch.
 func (s *server) serveLogin(w http.ResponseWriter, r *http.Request, login string) {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.renderLogin(w, http.StatusOK, login, "")
+		s.mu.Lock()
+		until, locked := s.lockedAt(login, s.now())
+		s.mu.Unlock()
+		if locked {
+			s.renderLogin(w, http.StatusOK, login, "", until.Local().Format("15:04"))
+			return
+		}
+		s.renderLogin(w, http.StatusOK, login, "", "")
 		return
 	case http.MethodPost:
 	default:
@@ -119,15 +145,55 @@ func (s *server) serveLogin(w http.ResponseWriter, r *http.Request, login string
 		return
 	}
 	sum := sha256.Sum256([]byte(r.PostForm.Get("password")))
-	if subtle.ConstantTimeCompare(sum[:], s.pwHash[:]) != 1 {
-		s.log.Printf("login failed: %s", login)
-		s.renderLogin(w, http.StatusUnauthorized, login, "Wrong password.")
+	now := s.now()
+	s.mu.Lock()
+	if s.killed {
+		s.mu.Unlock()
+		http.Error(w, killedMsg, http.StatusServiceUnavailable)
 		return
 	}
-	s.log.Printf("login: %s", login)
-	http.SetCookie(w, s.cookie(s.newSession(login), 0))
-	http.Redirect(w, r, s.base, http.StatusSeeOther)
+	until, locked := s.lockedAt(login, now)
+	tok := ""
+	switch {
+	case locked:
+		s.total++
+		s.audit.event("failure", "user", login, "fails", strconv.Itoa(s.fails[login]), "total", strconv.Itoa(s.total), "locked", "1")
+	case subtle.ConstantTimeCompare(sum[:], s.pwHash[:]) != 1:
+		s.fails[login]++
+		s.total++
+		s.audit.event("failure", "user", login, "fails", strconv.Itoa(s.fails[login]), "total", strconv.Itoa(s.total))
+		if s.fails[login] >= s.lockAfter {
+			until, locked = now.Add(s.lockFor), true
+			s.lockedUntil[login] = until
+			delete(s.fails, login)
+			s.audit.event("lockout", "user", login, "until", until.Format(time.RFC3339))
+		}
+	default:
+		delete(s.fails, login) // the total never resets
+		tok = s.newSessionLocked(login)
+		s.audit.event("login", "user", login, "sid", sid(tok))
+	}
+	fired := tok == "" && s.total >= s.killAfter
+	if fired {
+		s.killed = true
+		s.audit.event("shutdown", "reason", "killswitch")
+		close(s.kill)
+	}
+	s.mu.Unlock()
+	switch {
+	case fired:
+		http.Error(w, killedMsg, http.StatusServiceUnavailable)
+	case locked:
+		s.renderLogin(w, http.StatusTooManyRequests, login, "", until.Local().Format("15:04"))
+	case tok == "":
+		s.renderLogin(w, http.StatusUnauthorized, login, "Wrong password.", "")
+	default:
+		http.SetCookie(w, s.cookie(tok, 0))
+		http.Redirect(w, r, s.base, http.StatusSeeOther)
+	}
 }
+
+const killedMsg = "too many wrong passwords: the remote panel was turned off"
 
 // serveLogout ends this request's session (only one bound to the caller) and clears the cookie.
 func (s *server) serveLogout(w http.ResponseWriter, r *http.Request, login string) {
@@ -140,7 +206,7 @@ func (s *server) serveLogout(w http.ResponseWriter, r *http.Request, login strin
 		s.mu.Lock()
 		delete(s.sessions, tok)
 		s.mu.Unlock()
-		s.log.Printf("logout: %s", login)
+		s.audit.event("logout", "user", login, "sid", sid(tok))
 	}
 	http.SetCookie(w, s.cookie("", -1))
 	http.Redirect(w, r, s.base+"login", http.StatusSeeOther)

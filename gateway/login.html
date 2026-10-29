@@ -21,7 +21,7 @@
 <form method="post" action="login" autocomplete="off">
   <h1>lzr1-panel remote</h1>
   <p>Signed in to Tailscale as {{.Login}}</p>
-  {{if .Error}}<p class="err" role="alert">{{.Error}}</p>{{end}}
+  {{if .Locked}}<p class="err" role="alert">Too many wrong passwords: locked until {{.Locked}}.</p>{{else if .Error}}<p class="err" role="alert">{{.Error}}</p>{{end}}
   <input type="password" name="password" aria-label="Password" placeholder="Password" required autofocus>
   <button type="submit">Open the panel</button>
 </form>

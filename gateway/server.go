@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 )
 
 const cookieName = "lzr1_remote"
@@ -39,12 +40,43 @@ type server struct {
 	log      *log.Logger
 	proxy    *httputil.ReverseProxy
 
-	mu       sync.Mutex
-	sessions map[string]string // session token -> the Tailscale login it was issued to
+	audit *auditLog        // nil without --audit
+	now   func() time.Time // tests move it
+
+	// Lockout: lockAfter wrong passwords in a row from one login lock it for lockFor; killAfter wrong passwords in
+	// total (attempts while locked included) fire the kill switch: kill is closed and the gateway exits 3.
+	lockAfter, killAfter int
+	lockFor              time.Duration
+	kill                 chan struct{}
+
+	mu          sync.Mutex
+	sessions    map[string]string // session token -> the Tailscale login it was issued to
+	fails       map[string]int    // wrong passwords in a row, per login
+	lockedUntil map[string]time.Time
+	total       int  // wrong passwords and locked attempts, never reset
+	killed      bool // kill is closed
 }
 
+// The lockout and kill switch limits decided for Epic 2.1; config fields left at zero get these.
+const (
+	defaultLockAfter = 5
+	defaultLockFor   = 15 * time.Minute
+	defaultKillAfter = 20
+)
+
 func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
-	s := &server{base: c.base, host: c.host, stripped: c.stripped, allow: c.allow, pwHash: pwHash, log: logger, sessions: map[string]string{}}
+	s := &server{base: c.base, host: c.host, stripped: c.stripped, allow: c.allow, pwHash: pwHash, log: logger,
+		now: time.Now, lockAfter: c.lockAfter, lockFor: c.lockFor, killAfter: c.killAfter, kill: make(chan struct{}),
+		sessions: map[string]string{}, fails: map[string]int{}, lockedUntil: map[string]time.Time{}}
+	if s.lockAfter <= 0 {
+		s.lockAfter = defaultLockAfter
+	}
+	if s.lockFor <= 0 {
+		s.lockFor = defaultLockFor
+	}
+	if s.killAfter <= 0 {
+		s.killAfter = defaultKillAfter
+	}
 	upstream := c.upstream
 	s.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
