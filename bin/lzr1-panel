@@ -1462,7 +1462,7 @@ splash) lzr1_splash ${2:+${2#--}} ;;
 version|--version) print -r -- "lzr1-panel $VERSION" ;;
 
 *)
-  sed -n '2,20p' $SELF | sed 's/^# \{0,1\}//'
+  sed -n '1d; /^#/!q; p' $SELF | sed 's/^# \{0,1\}//'  # the header comment, however long
   [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
   ;;
 esac

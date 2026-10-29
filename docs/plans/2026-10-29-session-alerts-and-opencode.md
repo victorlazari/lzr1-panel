@@ -23,8 +23,8 @@ list knows how to read its screen.
 
 | Phase | Milestone | Epics | Status |
 |-------|-----------|-------|--------|
-| 1 | A session that finishes its reply or asks a question gets a `✱` on its row, plays a tone and shows an OS notification | 1.1, 1.2, 1.3 | Detailed |
-| 2 | Profiles list only their repositories folder and can be edited or removed from the panel; new opencode sessions (`--auto`) from the panel, the command line and the shell shortcuts, listed and alerted like Claude's | 2.1, 2.2, 2.3 | Detailed |
+| 1 | A session that finishes its reply or asks a question gets a `✱` on its row, plays a tone and shows an OS notification | 1.1, 1.2, 1.3 | Complete |
+| 2 | Profiles list only their repositories folder and can be edited or removed from the panel; new opencode sessions (`--auto`) from the panel, the command line and the shell shortcuts, listed and alerted like Claude's | 2.1, 2.2, 2.3 | Complete |
 
 **Decisions already made with the owner (2026-10-29):**
 
