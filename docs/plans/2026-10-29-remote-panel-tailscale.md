@@ -878,3 +878,12 @@ each missing piece with its fix.
   within 30 s of waking. Login lockouts still use `now()` (a lock that outlasts a sleep is harmless). The RED for the
   clock is structural (a stored time carried `m=`; `expire` did not exist), since a test cannot suspend the machine.
   No live browser measurement of the 100 KB RESUME cadence was made in this fix.
+- Phase 2 open findings (tap injection): the narrow layout's `left-click` is now the fixed
+  `execute-silent($S _tap $id {1})`, and a new internal `_tap ID KEY` decides (narrow state file present, a session's
+  row) whether to run `_go`. The same flaw was in the footer: `click-footer:transform` echoed `execute(… {1})` from
+  inside single quotes in a shell, so fzf's quoting of `{1}` closed them; it is now `transform:$S _footer $id`, a new
+  internal `_footer ID` that prints the action with `{1}` left for fzf to fill in when it runs `execute`. The only other
+  placeholder in shell text, the new-session picker's `[ -n {q} ]`, is a bare argument fzf quotes: left as is.
+  Verified with `verify-tap-injection.zsh` (tap and footer; isolated `TMUX_TMPDIR`, a tmux session named
+  `x$(touch …)`, driven through fzf's `--listen` API): HEAD creates the file, the fix does not; `verify-tap-decides.zsh`
+  checks `_tap`'s choices. In the wide layout a left click now starts `_tap`, which exits at once (about 20 ms).

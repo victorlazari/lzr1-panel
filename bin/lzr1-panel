@@ -1569,6 +1569,23 @@ _go)  # _go ID KEY: enter and double-click; a session goes to the viewer with th
   else $SELF _select $2 $3 force; $SELF _focus $2; fi
   ;;
 
+_footer)  # _footer ID: fzf's action for a click on the footer word $FZF_CLICK_FOOTER_WORD. The row's key stays a {1}
+         # that fzf fills in, quoted, when it runs the action: the transform's own text never holds a session's name.
+  local more="+reload-sync($SELF _list $2)"
+  case $FZF_CLICK_FOOTER_WORD in
+    *opencode*) print -r -- "execute($SELF _new opencode $2 {1})$more" ;;
+    *opus*)     print -r -- "execute($SELF _new opus $2 {1})$more" ;;
+    *sonnet*)   print -r -- "execute($SELF _new sonnet $2 {1})$more" ;;
+    *↻*)        print -r -- "reload-sync($SELF _list $2)" ;;
+    *\?*)       print -r -- "execute($SELF keys; read -k1 -s)" ;;
+  esac
+  ;;
+
+_tap)  # _tap ID KEY: a left click on a row; in the narrow layout a session's row shows it, as enter does
+  [[ -e $STATE/$2.narrow ]] || exit 0
+  case $3 in +pr/*|*/) ;; */?*) $SELF _go $2 $3 ;; esac
+  ;;
+
 _kill)  # _kill KEY [ID]: end the session (Claude and its tmux session); with ID, the panel and the viewer then move
        # to the first session left
   local id=$3 next= it
@@ -1765,10 +1782,11 @@ _panel)  # _panel ID
   # typed into the panel once the menu is gone clears that (_unclick); a Ghostty split cannot be typed into.
   [[ $(mode $id) == tmux ]] && menu="execute($S _menu $id {1})+execute-silent($S _unclick $id $me)"
   # Narrow (_fit): the viewer is hidden, so a tap on a session's row shows it (enter's action) instead of only moving the
-  # highlight. A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise makes.
+  # highlight (_tap decides). A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise
+  # makes. A row's key ({1}) only ever reaches a command as one argument fzf quotes, never text a shell evaluates: a
+  # session's name can hold "$(...)".
   local -a narrow=()
-  [[ $button != left-click ]] && narrow=( --bind "left-click:transform:[ -e ${(q)STATE}/$id.narrow ] &&
-    case {1} in +pr/*|*/) ;; */?*) echo 'execute-silent($S _go $id {1})' ;; esac" )
+  [[ $button != left-click ]] && narrow=( --bind "left-click:execute-silent($S _tap $id {1})" )
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
@@ -1793,13 +1811,7 @@ _panel)  # _panel ID
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
-    --bind "click-footer:transform:case \$FZF_CLICK_FOOTER_WORD in
-        *opencode*) echo 'execute($S _new opencode $id {1})+reload-sync($S _list $id)' ;;
-        *opus*)   echo 'execute($S _new opus $id {1})+reload-sync($S _list $id)' ;;
-        *sonnet*) echo 'execute($S _new sonnet $id {1})+reload-sync($S _list $id)' ;;
-        *↻*)      echo 'reload-sync($S _list $id)' ;;
-        *\?*)     echo 'execute($S keys; read -k1 -s)' ;;
-      esac"
+    --bind "click-footer:transform:$S _footer $id"
   # q (or esc) closes the viewer too, so the window closes with the panel.
   $SELF _quit $id
   ;;
