@@ -185,10 +185,10 @@ in a terminal" marks a failure reproduced in the tmux layout in a plain terminal
 | **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | needs a person | needs a person |
 | **Right-click** menu | pass (2.2.1): the row's menu opens and its actions work; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | needs a person | needs a person (no right button: long-press) |
 | **Double-click** a row | fail, also in a terminal: the keyboard reaches the viewer for about 0.2 s, then tmux's own `DoubleClick1Pane` binding (`select-pane -t =`) puts it back on the panel. Enter works. | needs a person | needs a person |
-| **Footer** buttons | partial, also in a terminal: `[?]`, `[+opus]` and `[+sonnet]` work; the first footer click right after a row's menu is lost (`[↻]` did nothing; the next click worked). | needs a person | needs a person |
+| **Footer** buttons | `[?]`, `[+opus]` and `[+sonnet]` work. The first footer click right after a row's menu was lost, also in a terminal; fixed in 2.2.2 and checked in a terminal's tmux layout (Task 2.2.4 measures it again in Chrome). | needs a person | needs a person |
 | **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there (once in four runs that click did not start it). | needs a person | needs a person |
 | **Ctrl-C** to Claude | pass: the agent got SIGINT. | needs a person | needs a person (no Ctrl key on the keyboard) |
-| **Ctrl-b d** leaves a session | fail, also in a terminal: after a click switched the viewer to another session of the same machine, Ctrl-b d detaches and the viewer attaches again at once (its loop still holds the old target). Works when the viewer attached the session itself. | needs a person | needs a person |
+| **Ctrl-b d** leaves a session | After a click switched the viewer to another session of the same machine, Ctrl-b d detached and the viewer attached again at once, also in a terminal. Fixed in 2.2.2 and checked in a terminal's tmux layout, after a click, an Enter and a rename (Task 2.2.4 measures it again in Chrome). | needs a person | needs a person |
 | **Copy** (OSC 52, drag) | pass (2.2.1): Claude's OSC 52 copy, in a session on this Mac and on another machine (a stand-in reached through `ssh`), and a tmux drag-select both land on the browser's clipboard; the browser's layout no longer calls this Mac's `pbcopy` (a session on this Mac still does, from its own tmux: see "Copy, select and the right button"). Option-drag selects in xterm.js over the panel's mouse mode. | needs a person | needs a person |
 | **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | needs a person | needs a person |
 | **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel shrinks with the window (56 → 38 columns) rather than keeping its width. | needs a person | needs a person |
@@ -196,7 +196,7 @@ in a terminal" marks a failure reproduced in the tmux layout in a plain terminal
 | **Reconnect** after the laptop sleeps | partial (simulated by closing the WebSocket; a real sleep needs a person): the old layout ends and ttyd reconnects by itself, but its new panel fails with "server exited unexpectedly / cannot start tmux" (the dying layout was the last on the `lzr1` server); a second Enter gives a fresh panel, with the earlier selection gone. | needs a person | needs a person |
 | **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person: headless Chromium has no browser shortcuts. What reaches the page works: Ctrl-W arrives as the terminal's word erase. | needs a person | needs a person |
 
-Copy and the right button were fixed after this measurement (Task 2.2.1, measured again the same way). Still for
-Phase 2 (Epic 2.2): a narrower or single-pane layout under about 80 columns; double-click and Ctrl-b d in the tmux
-layout; the first footer click after a menu; reconnect without the `lzr1` server race; then the Safari and phone
-columns, measured by a person.
+Copy and the right button were fixed after this measurement (Task 2.2.1, measured again the same way). Ctrl-b d and
+the first footer click after a menu were fixed in Task 2.2.2 and checked in a terminal. Still for Phase 2 (Epic 2.2):
+a narrower or single-pane layout under about 80 columns; double-click in the tmux layout; reconnect without the
+`lzr1` server race; then the Safari and phone columns, measured by a person.

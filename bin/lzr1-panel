@@ -1254,10 +1254,10 @@ open)  # panel on the left, viewer on the right
   ;;
 
 _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothing is picked
-  local id=$2 target n gone
+  local id=$2 target n gone cur
   local -a ended hold
   local tfile=$STATE/$id.target
-  trap 'rm -f $tfile $tfile.want $tfile.detached $STATE/$id.vpid' EXIT
+  trap 'rm -f $tfile $tfile.want $tfile.detached $tfile.on $STATE/$id.vpid' EXIT
   print -rn -- $$ >$STATE/$id.vpid; rmdir $STATE/$id.spawn 2>/dev/null
   printf '\e]2;lzr1 viewer\a'
   while true; do
@@ -1283,12 +1283,18 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
           sleep 0.5
         done
       fi
+      # .on: the session this viewer's client is on. A pick on the same machine switches the client in place
+      # (_select), and a rename changes the name: both update it.
+      print -rn -- $target >$tfile.on
       on -t '
         tmux has-session -t "=$2" 2>/dev/null || exit 3
         mkdir -p "$HOME/.cache/lzr1-panel-viewer" && tty >"$HOME/.cache/lzr1-panel-viewer/$1"
         '"$CLIP"'
         unset TMUX
         exec tmux attach -t "=$2"' $id $KS || true
+      # Still on the current pick (Ctrl-b d, or it ended, after a switch in place): that is the session left.
+      cur=; [[ -r $tfile.on ]] && cur=$(<$tfile.on)
+      [[ -n $cur && -r $tfile && $cur == $(<$tfile) ]] && { target=$cur; split_key $target }
       on 'tmux has-session -t "=$1"' $KS 2>/dev/null || gone=1
     else
       sleep 3
@@ -1334,11 +1340,12 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY
   [[ -z $was ]] && exit 0  # an idle viewer picks the target up by itself
   if [[ ${was%%/*} == $KP ]]; then
-    # Same machine: switch the attached client in place.
-    load $KP && on '
+    # Same machine: switch the attached client in place; .on tells the viewer its client is on KEY now.
+    load $KP && [[ $(on '
       c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null)
-      [ -n "$c" ] && tmux list-clients -F "#{client_tty}" | grep -qx "$c" && tmux switch-client -c "$c" -t "=$2"
-      true' $id $KS
+      [ -n "$c" ] && tmux list-clients -F "#{client_tty}" | grep -qx "$c" && tmux switch-client -c "$c" -t "=$2" &&
+        echo switched
+      true' $id $KS) == switched ]] && print -rn -- $key >$tfile.on
   else
     # Another machine: let go of the old one; the viewer then attaches the new target.
     viewer_detach $id $was
@@ -1439,6 +1446,14 @@ _respawn)  # _respawn ID: open a new viewer pane to the right of the panel
       set v to split (terminal id \"$me\") direction right with configuration cfg
       return id of v" >$STATE/$id.vterm.new
   fi && mv $STATE/$id.vterm.new $STATE/$id.vterm
+  ;;
+
+_unclick)  # _unclick ID PANE: after a row's menu in the tmux layout (see _panel): a button release typed into the
+           # panel, then the menu's reload, sent once fzf has read that release (it drops input while it reloads)
+  tmux -L lzr1 send-keys -t $3 -l $'\e[<0;1;1m' 2>/dev/null
+  { sleep 0.2
+    curl -s -m 5 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$FZF_PORT" -d "reload-sync($SELF _list $2)"
+  } >/dev/null 2>&1 &!
   ;;
 
 _focus)  # _focus ID: move the keyboard to the viewer
@@ -1623,7 +1638,9 @@ gh pr checks $num, fix it and push." ;;
       [[ -z $new || $new == $KS ]] && exit 0
       [[ $new == *[.:/\|]* ]] && { print -r -- 'names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0 }
       on 'tmux rename-session -t "=$1" "$2"' $KS $new || { print -n "press a key"; read -k1 -s; exit 0 }
-      [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target ;;
+      [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target
+      cur=$STATE/$id.target.on
+      [[ -r $cur && $(<$cur) == $key ]] && print -rn -- "$KP/$new" >$cur ;;
     end)   $SELF _kill $key $id ;;
   esac
   ;;
@@ -1654,6 +1671,10 @@ _panel)  # _panel ID
   # A row's menu opens on the right button (LZR1_MENU_BUTTON=left: on the left one, which then also picks the row).
   local menu="execute($S _menu $id {1})+reload-sync($S _list $id)" button=right-click
   [[ $MENU_BUTTON == left ]] && button=left-click
+  # fzf runs a footer click on the button's release, and only when it saw that button's press. A click opens the menu
+  # on its press and the menu takes the release, so the next footer click would be lost. In the tmux layout a release
+  # typed into the panel once the menu is gone clears that (_unclick); a Ghostty split cannot be typed into.
+  [[ $(mode $id) == tmux ]] && menu="execute($S _menu $id {1})+execute-silent($S _unclick $id $me)"
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)

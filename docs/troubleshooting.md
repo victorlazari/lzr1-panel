@@ -384,6 +384,18 @@ Some terminals keep the right button for themselves.
 export LZR1_MENU_BUTTON=left   # in ~/.zshenv
 ```
 
+### After a row's menu, the first click on the footer does nothing
+
+The footer (`[+opus]`, `[↻]`, `[?]`, ...) acts when the mouse button comes up, and only after fzf saw that button go
+down. A click opens the menu as the button goes down, and the menu takes the release, so fzf reads your next press as
+a drag. In the tmux layout (which a browser also gets) the panel sends fzf a release when the menu closes, so this does
+not happen. A Ghostty split cannot be sent one.
+
+**Fix:** in a Ghostty split, click the footer button again. You can also open the menu with **`m`**.
+
+While the panel reloads its list (just after a menu, or on its 15-second refresh), fzf ignores clicks and keys. When
+your machines answer slowly, a click right then does nothing. Click again.
+
 ### Clicks do nothing at all
 
 **Fix:** make sure your terminal sends mouse events to programs (in most terminals this is on by default; in

@@ -521,7 +521,7 @@ the row's menu.
 
 #### Task 2.2.2: Ctrl-b d after an in-place switch; the first footer click after a menu
 
-- [ ] Done
+- [x] Done
 
 **Context:** Both fail in a plain terminal too. **Ctrl-b d:** `_viewer` (`bin/lzr1-panel:1156-1211`) attaches
 `$target`; `_select` (`:1213-1246`), for another session on the same machine, switches the attached client in place
@@ -803,3 +803,22 @@ each missing piece with its fix.
   gets the login redirect, as any path). The verify's "second (stand-in remote) profile" is a `type=ssh` profile with
   a stand-in `ssh` first on PATH that runs its scripts here with their own `TMUX_TMPDIR` and their own logging
   `pbcopy`. In the fidelity table only the Copy and Right-click Chrome cells changed (Task 2.2.4 re-measures the rest).
+- Task 2.2.2: the footer was none of the three planned cases. fzf (0.74.2, the same on master) runs a footer click
+  on the release, and only when `wasDown` is set and the press was at the same spot (`terminal.go`: `clicked :=
+  wasDown && !me.Down && (mx == pmx && my == pmy)`). A row's right-click (or a left-click with
+  `LZR1_MENU_BUTTON=left`) fires on the press, and the menu's `fzf` takes the release, so the panel reads the next
+  press as a drag. The transform never runs, and a drain finds nothing. Bare `fzf` shows it with a right-click
+  `execute` closed by Esc. The elaboration's bare probe was a false match: its click to close the menu missed the
+  child's items, so the "lost" click was the child's. A second cause was found with an fzf built to log mouse events:
+  `--track` with `reload-sync` drops every action until the reload ends, so a release sent inside the menu's chain
+  was dropped. The fix applies to the tmux layout only (a browser's too): the menu bind is
+  `execute(_menu)+execute-silent(_unclick ID PANE)`. `_unclick` types a button release into the panel's pane
+  (`send-keys -l`, `\e[<0;1;1m`, a no-op at the header row), then POSTs `reload-sync(_list)` through fzf's
+  `--listen` after 0.2 s, once fzf has read the release. A Ghostty split cannot be typed into, so it keeps the old
+  chain, and `docs/troubleshooting.md` says to click again there. Clicks during any reload are still dropped (fzf's
+  behaviour); troubleshooting mentions it. `keys` is unchanged. Nothing was filed upstream: an issue on
+  junegunn/fzf is a public post for the owner to decide on. The reduced repro is
+  `scratchpad/remote/v222/fzf-upstream-repro.sh` (2 of 3 footer clicks logged). Ctrl-b d follows the plan
+  (`$tfile.on`, `switched` from the in-place switch, rename updates it). The verify also covers a rename after an
+  in-place switch and a menu opened with `m`. The fidelity rows say "fixed, checked in a terminal's tmux layout".
+  Chrome is measured again in Task 2.2.4.
