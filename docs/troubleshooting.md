@@ -14,6 +14,7 @@ Still stuck? Find your problem below. Each one is: what you see, why, and the fi
 - [The viewer](#the-viewer)
 - [Copying text](#copying-text)
 - [Pull requests](#pull-requests)
+- [Alerts](#alerts)
 - [Mouse and menus](#mouse-and-menus)
 - [Looks wrong](#looks-wrong)
 - [Starting over](#starting-over)
@@ -281,6 +282,58 @@ The panel uses the account `gh` is signed in to.
 These use `gh` with your account. The error shows in the panel until you press a key.
 
 **Fix:** check that you can do it on GitHub (permissions, branch protection), and that `gh auth status` is fine.
+
+---
+
+## Alerts
+
+`lzr1-panel notify` plays the tone and shows a sample notification, and `lzr1-panel doctor` says what alerts use on
+this computer (its **alerts** section).
+
+### No sound
+
+**Fix:** check, in order:
+
+- **The setting.** `LZR1_SOUND=0` turns the tone off. A file path plays that file: make sure it exists and is
+  readable.
+- **The player.** macOS uses `afplay`, which comes with the system. Linux uses `paplay` (PulseAudio or PipeWire),
+  then `canberra-gtk-play`, then the terminal bell; install `pulseaudio-utils` (Debian/Ubuntu) to get `paplay`.
+- **The volume.** The system's output, not muted. On Linux the default tone is
+  `/usr/share/sounds/freedesktop/stereo/complete.oga` (the `sound-theme-freedesktop` package).
+
+### No notification on macOS
+
+Without `terminal-notifier`, notifications come from **Script Editor** (through `osascript`).
+
+**Fix:**
+
+- Open **System Settings → Notifications** and allow **Script Editor** (or **terminal-notifier**, if you installed
+  it). Then run `lzr1-panel notify`.
+- A **Focus** mode (Do Not Disturb, Work, …) hides them: allow the app there, or turn Focus off.
+- `brew install terminal-notifier` is optional: it groups notifications per session, so a new one replaces the
+  session's last.
+- `LZR1_NOTIFY=0` turns them off.
+
+### No notification on Linux
+
+**Fix:**
+
+- **`notify-send`** must be installed: the `libnotify-bin` package on Debian/Ubuntu, `libnotify` elsewhere.
+- A **notification daemon** must be running. Desktops (GNOME, KDE) have one; on a bare window manager, run `dunst`
+  or `mako`.
+- The panel needs **`$DISPLAY`** or **`$WAYLAND_DISPLAY`**: over SSH, or in a tmux started before the desktop,
+  there is none, and notifications are skipped. Run the panel from a terminal on the desktop.
+- `LZR1_NOTIFY=0` turns them off.
+
+### An alert came late or not at all
+
+The panel samples every session every 15 seconds, so an alert can come up to 15 seconds after the change.
+
+- A reply that starts and ends **between two samples** (idle, then idle again) makes no "finished" alert: the
+  panel never saw it working. A question still alerts, since it stays on the screen.
+- The session you are looking at in the viewer gets no `✱`, but the tone and the notification still come.
+- Alerts only happen while a panel is open (`lzr1-panel list` never alerts). The first refresh after opening it
+  only learns the states, so a session already waiting does not alert again.
 
 ---
 

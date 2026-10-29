@@ -90,6 +90,7 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 |---|---|
 | 🖥 **All your machines** | This computer and any server over SSH, each one a *profile*. A machine that does not answer is left out until it does. |
 | 📋 **Every session, at a glance** | Three lines each: its state (`▶` working, `⧗` waiting on you, `·` idle; `✱` finished or asking since you last looked), name, model and age; what Claude is doing, or the question it is waiting on; its git branch and folder. |
+| 🔔 **Told when it's your turn** | When a session finishes its reply or asks you something, its row gets `✱`, a tone plays and your system shows a notification (macOS and Linux). Looking at it in the viewer clears the mark. |
 | 🔀 **Your pull requests** | Below the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
 | 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
@@ -181,6 +182,7 @@ lzr1-panel attach PROFILE NAME              # this terminal into a session
 lzr1-panel list                             # every session, then your PRs
 lzr1-panel prs                              # your open pull requests
 lzr1-panel doctor                           # check everything, with fixes
+lzr1-panel notify                           # a sample alert: the tone and a notification
 lzr1-panel keys                             # every key
 ```
 
@@ -270,6 +272,8 @@ Set these in your shell, for example in `~/.zshenv`:
 | `LZR1_PANEL_WIDTH` | `56` | the panel's width, in columns |
 | `LZR1_MENU_BUTTON` | `right` | `left` opens menus with the left button |
 | `LZR1_PRS` | `1` | `0` hides the pull requests |
+| `LZR1_SOUND` | `1` | `0` turns the alert tone off; a sound file's path plays that instead |
+| `LZR1_NOTIFY` | `1` | `0` turns the system notifications off (the `✱` stays) |
 | `LZR1_SPLASH` | `1` | `0` skips the opening animation |
 | `LZR1_SPLASH_SECONDS` | `5` | how long the animation lasts |
 | `LZR1_PANEL` | `1` | `0` stops the panel opening with Ghostty |

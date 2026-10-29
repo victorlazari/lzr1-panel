@@ -608,6 +608,34 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
       (( $+commands[gh] )) && _hint "run: gh auth login" || _hint "./install.sh installs gh and signs you in"
     fi
   fi
+  # Informational only: a computer without a notifier still runs the panel.
+  print "\nalerts (a tone and a notification when a session needs you)"
+  [[ ${LZR1_SOUND:-1} == 0 ]] && print "  · tone off (LZR1_SOUND=0)"
+  [[ ${LZR1_NOTIFY:-1} == 0 ]] && print "  · notifications off (LZR1_NOTIFY=0)"
+  if [[ ${LZR1_SOUND:-1} != (0|1) && ! -r $LZR1_SOUND ]]; then print -r -- "  · tone: cannot read $LZR1_SOUND"; fi
+  if [[ $OSTYPE == darwin* ]]; then
+    if [[ ${LZR1_SOUND:-1} != 0 ]]; then
+      (( $+commands[afplay] )) && _ok "tone: afplay" || print "  · no afplay: no tone"
+    fi
+    if [[ ${LZR1_NOTIFY:-1} != 0 ]]; then
+      if (( $+commands[terminal-notifier] )); then _ok "notifications: terminal-notifier"
+      else print "  · notifications: osascript"; _hint "brew install terminal-notifier (groups them per session)"; fi
+    fi
+  else
+    if [[ ${LZR1_SOUND:-1} != 0 ]]; then
+      if (( $+commands[paplay] )); then _ok "tone: paplay"
+      elif (( $+commands[canberra-gtk-play] )); then _ok "tone: canberra-gtk-play"
+      else print "  · tone: terminal bell (no paplay or canberra-gtk-play)"; fi
+    fi
+    if [[ ${LZR1_NOTIFY:-1} != 0 ]]; then
+      if (( ! $+commands[notify-send] )); then
+        print "  · no notify-send"; _hint "install libnotify (libnotify-bin on Debian/Ubuntu)"
+      elif [[ -z $DISPLAY$WAYLAND_DISPLAY ]]; then
+        print "  · notify-send, but no \$DISPLAY or \$WAYLAND_DISPLAY here: no notifications"
+      else _ok "notifications: notify-send"; fi
+    fi
+  fi
+  _hint "lzr1-panel notify sends a test"
   print "\nprofiles"
   (( $#all )) || { _no "no profiles yet"; _hint "lzr1-panel profile add" }
   for p in $all; do profile_test $p | sed 's/^/  /' || bad=1; done

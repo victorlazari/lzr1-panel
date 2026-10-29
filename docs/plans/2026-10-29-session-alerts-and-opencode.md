@@ -196,7 +196,7 @@ screen text cannot run anything.
 
 #### Task 1.2.2: Doctor, settings and troubleshooting
 
-- [ ] Done
+- [x] Done
 
 **Context:** `doctor` (`bin/lzr1-panel:488-527`) prints sections with `_ok` / `_no` / `_hint`; optional things use
 `print "  · …"` (e.g. Ghostty, `:507-508`) and do not set `bad`. README's Settings table and troubleshooting's
