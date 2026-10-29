@@ -1731,12 +1731,14 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
           exec $gw $listen --host $TS_HOST --upstream $RDIR/ttyd.sock --base /$uuid/ --allow $allow --ttl $ttl \
             --log $RDIR/remote.log 2>>$RDIR/remote.log ) |
         _remote_keeper $uuid >>$RDIR/remote.log 2>&1 &!
+      # gw.pid is written just before the exec, so until then its command line is still this shell's: only a pid that
+      # is gone means the gateway died (and after 5 s it has long exec'd, so _remote_off recognizes it to stop it).
       for i in {1..50}; do
-        out=$(<$RDIR/gw.out 2>/dev/null); [[ $out == ready* ]] && break
-        [[ -s $RDIR/gw.pid ]] && ! _ours $(<$RDIR/gw.pid) gw $uuid && break
+        out=; [[ -r $RDIR/gw.out ]] && out=$(<$RDIR/gw.out); [[ $out == ready* ]] && break
+        [[ -s $RDIR/gw.pid ]] && ! kill -0 $(<$RDIR/gw.pid) 2>/dev/null && break
         sleep 0.1
       done
-      RS[gwpid]=$(<$RDIR/gw.pid 2>/dev/null)
+      RS[gwpid]=; [[ -r $RDIR/gw.pid ]] && RS[gwpid]=$(<$RDIR/gw.pid)
       [[ $out == "ready 127.0.0.1:"<-> ]] && RS[port]=${out##*:}
       _remote_save
       if [[ $out != ready* ]]; then
@@ -1744,7 +1746,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
         die "the gateway did not start: ${$(tail -3 $RDIR/remote.log $RDIR/ttyd.log 2>/dev/null)//$'\n'/ }"
       fi
       for i in {1..50}; do [[ -s $RDIR/serve.pid ]] && break; sleep 0.1; done
-      RS[servepid]=$(<$RDIR/serve.pid 2>/dev/null)
+      RS[servepid]=; [[ -r $RDIR/serve.pid ]] && RS[servepid]=$(<$RDIR/serve.pid)
       _remote_save
       for i in {1..50}; do
         _remote_published $uuid && break
@@ -1752,7 +1754,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
         sleep 0.1
       done
       if ! _remote_published $uuid; then
-        out=$(<$RDIR/serve.out)
+        out=; [[ -r $RDIR/serve.out ]] && out=$(<$RDIR/serve.out)
         _remote_off
         [[ $out == *(#i)(access denied|permission|operator)* ]] &&
           print -ru2 -- "lzr1-panel: serve needs root on Linux, or once: sudo tailscale set --operator=\$USER"
