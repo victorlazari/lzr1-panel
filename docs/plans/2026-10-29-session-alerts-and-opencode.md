@@ -23,13 +23,17 @@ list knows how to read its screen.
 
 | Phase | Milestone | Epics | Status |
 |-------|-----------|-------|--------|
-| 1 | A session that finishes its reply or asks a question gets a `✱` on its row, plays a tone and shows an OS notification | 1.1, 1.2 | Detailed |
-| 2 | New opencode sessions (`--auto`) from the panel, the command line and the shell shortcuts, listed and alerted like Claude's | 2.1, 2.2 | Epic-level |
+| 1 | A session that finishes its reply or asks a question gets a `✱` on its row, plays a tone and shows an OS notification | 1.1, 1.2, 1.3 | Detailed |
+| 2 | Profiles list only their repositories folder and can be edited or removed from the panel; new opencode sessions (`--auto`) from the panel, the command line and the shell shortcuts, listed and alerted like Claude's | 2.1, 2.2, 2.3 | Detailed |
 
 **Decisions already made with the owner (2026-10-29):**
 
 - "Needs you" means **both**: a session goes from working (`▶`) to idle (`·`, Claude finished its reply), or it
   shows a question or permission prompt (`⧗`). "Claude exited" is not an alert (it already shows on the row).
+- Profiles (added 2026-10-29): `profile add` no longer asks for a folder for non-repository sessions nor whether to
+  list only the folder's sessions: every new profile opens and lists sessions inside its repositories folder
+  (`root=` and `only=` = `repos=`). A `_` in a profile name becomes `-`; any other invalid name is asked again. A
+  machine heading's right-click menu offers edit and remove.
 - opencode v2.0.32 has no `--yolo`; its auto-approve flag is **`--auto`** ("auto-approve permissions that are not
   explicitly denied"). New opencode sessions always use `--auto`; no setting for another flag.
 
@@ -49,7 +53,7 @@ session unread (`✱` on its row, a count in the summary line) until you look at
 **Done when:** with a test profile and a fake tmux session, the second `_list` after a working → idle or idle →
 question change prints the row with `✱` and the summary with `1✱`; selecting the row clears it; `lzr1-panel list`
 never marks or alerts.
-**Status:** Pending
+**Status:** Done
 
 #### Task 1.1.1: Track state changes per session in `list_rows`
 
@@ -150,7 +154,7 @@ panel, with settings to turn either off, a test command, and doctor checks.
 **Done when:** `lzr1-panel notify` plays the tone and shows a notification on macOS (with and without
 `terminal-notifier`) and on Linux with `notify-send`; a real alert does the same; `LZR1_SOUND=0` / `LZR1_NOTIFY=0`
 silence each; the refresh never waits on either.
-**Status:** Pending
+**Status:** Done
 
 #### Task 1.2.1: `notify_alerts` — the tone and the notifications
 
@@ -229,41 +233,332 @@ alerts section and its exit status is unchanged by it.
 **Done when:** doctor reports what alerts will use on this computer, and the docs cover every setting and the
 common failures.
 
+### Epic 1.3: Alerts survive killed refreshes and two panels
+
+**Goal:** the review's Medium findings are fixed: a refresh fzf kills mid-way never leaves a lock that stalls the
+next ones nor loses an alert, and two panels never move the shared state back in time.
+**Scope:** `bin/lzr1-panel` (`list_rows` tracking, `open`, `_notify_one`)
+**Dependencies:** Epics 1.1, 1.2
+**Done when:** the reproductions below pass and every Phase 1 verification script still passes.
+**Status:** Pending
+
+#### Task 1.3.1: Owned lock, snapshot time, detached notifier, safe names and bodies
+
+- [ ] Done
+
+**Context:** `list_rows` takes `$STATE/seen.lock` with `mkdir` after the parallel fetch's `wait`, treats it as
+stale after 10 s by mtime (`rmdir` then `mkdir`, a check-then-act race), writes `seen/` files as it compares, and
+runs `notify_alerts … &!` at the end. fzf kills a running reload when the next one comes (and `_pos` fires up to 20
+reloads 0.8 s apart), killing its process group: a kill can leave the lock, or record a change whose alert never
+goes out. The panel ID is `open`'s PID, and `$ID.seeded` is never removed. Paths are built from raw session names,
+and a session created by hand with plain tmux may contain `/`. `notify-send` bodies are read as markup by most
+Linux daemons.
+
+**Implementation vision:**
+- **Lock owner:** the lock directory holds `pid` (the refresh's `$$`). A lock is stale when its pid is not alive
+  (`kill -0` fails) or it is older than 10 s; break it by renaming it to `seen.lock.$$` and removing that, so only
+  one panel wins the cleanup. Release it in an `always` block / trap on every exit path of the tracking code.
+- **Snapshot time:** take `EPOCHSECONDS` (zsh/datetime) before the fetch starts; each seen file becomes
+  `ts<US>state<US>waitfor`. Under the lock, when a session's stored ts is newer than this refresh's snapshot, skip
+  it (no compare, no write). Old two-field files are read as ts=0.
+- **Nothing lost on a kill:** compute all alerts first, write the unread files and start the notifier, then write
+  the seen files. A kill in between can at worst repeat an alert on the next refresh, never drop one.
+- **Detached notifier:** start `notify_alerts` in its own process group (zsh `setopt local_options monitor` before
+  the `&!`, or an equivalent that works non-interactively on macOS and Linux; verify by killing the refresh's
+  process group and seeing the stub notifier still run).
+- **Fresh seed per panel:** `open` removes `$STATE/$id.seeded` before starting the panel.
+- **Safe names:** seen/unread file names encode `/` in session names as `%2F` (and `%` as `%25`); every reader
+  (unread mark, prune, `_select` clearing) uses the same encoding.
+- **Safe Linux body:** escape `&`, `<`, `>` in the `notify-send` title and body.
+- Out of scope (Low, accepted): an empty list from a reachable machine whose tmux failed for a moment prunes its
+  files (worst case: one missed alert).
+
+**Files:** Modify `bin/lzr1-panel` (`list_rows`, `_select`, `open`, `_notify_one`)
+
+**Verification:** `zsh -n bin/lzr1-panel`; scratch env as in Phase 1; reproductions: a leftover `seen.lock` whose
+pid is dead does not delay `_list` (under 0.5 s over the unlocked time); two refreshes writing out of order (older
+snapshot last) give one `done` alert, not two; killing `_list`'s process group right after it computes alerts
+still runs the stub notifier; a tmux session `alert-a/b` gets its ✱ and is pruned when killed; a question
+`<b>x</b> & y?` reaches the notify-send stub as `&lt;b&gt;x&lt;/b&gt; &amp; y?`. Then re-run verify-111, 112, 121,
+122 and c1.
+
+**Done when:** all of the above pass.
+
 ---
 
-## Phase 2 — opencode sessions
+## Phase 2 — Profiles and opencode sessions
 
-### Epic 2.1: Start, run and list opencode sessions
+### Epic 2.1: Profiles list their folder only, and can be edited or removed from the panel
+
+**Goal:** `profile add` asks only name, target and repositories folder, re-asks a bad name, and every new profile
+lists exactly the sessions inside its repositories folder; `profile edit` and the machine heading's menu edit or
+remove a profile.
+**Scope:** `bin/lzr1-panel` (`profile_help`, `profile_add`, new `profile_edit`, `profile)` command, `_menu`),
+`docs/profiles.md`, `skills/lzr1-panel-profiles/SKILL.md`, `README.md`
+**Dependencies:** Phase 1
+**Done when:** the guided and flag forms write `root=` and `only=` equal to `repos=`; `my_mac` becomes `my-mac`; an
+invalid or taken name is asked again; `profile edit NAME` changes a profile in place; the heading menu offers edit
+and remove.
+**Status:** Pending
+
+#### Task 2.1.1: `profile add`: repositories folder only, names checked and asked again
+
+- [ ] Done
+
+**Context:** `profile_add` (`bin/lzr1-panel`, "profile management") asks, in its guided form, name, target, SSH
+host/key/port, the repositories folder (example `~/Github/lerian`), a root folder for non-repository sessions, and
+whether to list only the folder's sessions (`read -q`); the flag form takes `--root` and `--only`. It then validates
+the name once (`[a-z0-9][a-z0-9-]#`, else `die`), refuses an existing name with `die`, writes the file and runs
+`profile_test`. `load` keeps reading `root=` and `only=` (old profiles stay as they are).
+
+**Implementation vision:**
+- Guided: the root and "only" questions are removed. The repositories prompt reads `Folder with your repositories
+  (e.g. ~/Github/my-repositories): `; an empty answer is asked again.
+- Name, both forms: `_` is replaced by `-` (say so: `  using my-mac`); then a name that does not match the pattern,
+  or that already exists, prints why and, in the guided form, asks again (`die` stays for the flag form, which has
+  no one to ask). Uppercase is not converted (only `_` was asked for).
+- Both forms write `root=$repos` and `only=$repos`. `--root` and `--only` are removed: passing either dies with
+  `profile add: --root and --only are gone: a profile opens and lists sessions inside --repos`.
+- `profile_help` drops `--root`/`--only` and says a profile lists only the sessions inside `--repos`.
+- Docs: `docs/profiles.md` (what a profile holds, the conversation: questions 4 and 5 go, examples use
+  `~/Github/my-repositories`, the "two profiles on one machine" section explains it is now automatic),
+  `skills/lzr1-panel-profiles/SKILL.md` (same), README's Profiles section (examples, the `--only` paragraph).
+- Edge cases: a name that is only `_` characters becomes dashes and then fails the pattern (asked again); repos
+  given with a trailing `/` is written as typed (the list script already strips it from `only`).
+
+**Files:** Modify `bin/lzr1-panel` (`profile_help`, `profile_add`), `docs/profiles.md`,
+`skills/lzr1-panel-profiles/SKILL.md`, `README.md`
+
+**Verification:** `zsh -n bin/lzr1-panel`; scratch `LZR1_CONFIG`: `print -l 'bad name' 'my_mac' 1 /tmp | bin/lzr1-panel
+profile add` asks the name twice and writes `my-mac.conf` with `repos=/tmp`, `root=/tmp`, `only=/tmp`; adding
+`my-mac` again (guided) re-asks; `profile add x --local --repos /tmp --root /a` dies with the message above;
+`profile add a_b --local --repos /tmp` writes `a-b.conf`.
+
+**Done when:** new profiles always list only their repositories folder, and names are fixed or asked again.
+
+#### Task 2.1.2: `profile edit` and the heading menu's edit and remove
+
+- [ ] Done
+
+**Context:** `profile)` dispatches `list|show|add|test|remove`; `remove` deletes the file. `_menu ID KEY` on a
+machine heading (`KS` empty) offers `opus`, `sonnet`, `test`, `reload`. `_kill` shows how a menu action that removes
+something first moves the viewer (`first_key`, `_select … force`) and then the highlight (`_pos`).
+
+**Implementation vision:**
+- New `profile edit NAME` (and `profile_edit`): loads the profile, then asks with zsh `vared` (current value
+  prefilled, Enter keeps it): name, and for ssh host, key, port; then the repositories folder. Same checks as add
+  (`_`→`-`, pattern, a new name must not exist, empty repos asked again). Writes the file (a rename writes the new
+  file and removes the old), with `root=` and `only=` set to the repositories folder (an edit brings an old profile
+  to the new rule), keeps `claude=` (and `opencode=` once Task 2.2.1 exists), then runs `profile_test`.
+- `profile_help` lists `profile edit NAME`.
+- Heading menu: adds `edit\tedit this profile…` and `remove\t<red>remove this profile…</red>` after `test`.
+  - edit → `$SELF profile edit $KP`, then `press a key`.
+  - remove → asks `Remove profile $KP? Its sessions keep running in tmux; the panel stops listing them. [y/N]`;
+    on yes: if the viewer's target is on this profile, move it first to the first session of another profile
+    (`first_key` skipping every `$KP/*` key) or clear it, then `profile remove $KP`, then `$STATE/raw-$KP`,
+    `seen/$KP`, `unread/$KP` and `down-$KP` are removed.
+- The menu's `reload-sync` after `execute` refreshes the list as today.
+- Edge cases: renaming to an existing name re-asks; editing a profile while its machine is offline still saves and
+  reports the failed test; removing the last profile leaves the panel's "no profiles yet" rows.
+
+**Files:** Modify `bin/lzr1-panel` (`profile_help`, new `profile_edit`, `profile)`, `_menu`), `README.md` (menu
+table: "A machine's heading has a menu too"), `docs/profiles.md` ("Change a profile")
+
+**Verification:** `zsh -n bin/lzr1-panel`; scratch env: `print -l '' '' ~/x | bin/lzr1-panel profile edit t` keeps
+the name and sets repos/root/only to `~/x` (vared reads stdin when not a tty: if not, drive it with `script` or a
+tmux pane and `send-keys`); a rename `t`→`t2` leaves only `t2.conf`; in a tmux pane running the menu
+(`bin/lzr1-panel _menu 1 t/`), the heading menu lists edit and remove, and remove with `y` deletes `t.conf` and
+`seen/t`.
+
+**Done when:** profiles can be edited and removed from the command line and the heading's menu, and removing one
+never leaves the viewer on a session the panel no longer lists.
+
+### Epic 2.2: Start, run and list opencode sessions
 
 **Goal:** `lzr1-panel start PROFILE opencode NAME` and `lzr1-panel run --opencode` start `opencode --auto` in a new
-tmux session (repository folder rules as today), the session survives opencode exiting (Enter resumes with
-`--continue`), and the list shows it with `opencode` as its model and the right working / waiting / idle state, so
-Phase 1's alerts work for it.
-**Scope:** `bin/lzr1-panel` (`load`, `profile_add`, `profile_test`, `start`, `run`, `LIST_SCRIPT`)
-**Dependencies:** Phase 1 (alerts must apply to opencode states too)
-**Done when:** an opencode session started both ways is listed with its folder, branch and `opencode` model; its
-state follows a real prompt (working while it answers, idle after, waiting on a permission it asks); exiting
-opencode leaves the resume prompt; profiles without opencode still work and say so in `profile test`.
+tmux session, which survives opencode exiting; the list shows it with model `opencode`, its task, and the right
+working / waiting / idle state, so Phase 1's alerts work for it.
+**Scope:** `bin/lzr1-panel` (`load`, profile commands, `start`, `run`, `LIST_SCRIPT`, alert exclusion)
+**Dependencies:** Epic 2.1 (both touch `profile_add`)
+**Done when:** Tasks 2.2.1-2.2.3 pass; Claude sessions behave exactly as before.
 **Status:** Pending
 
-Notes for elaboration: profile key `opencode=` (path found at `profile add`, not required); tmux option
-`@lzr1_agent=opencode` beside `@lzr1_model`; no Remote Control link or folder-trust step for opencode. The screen
-markers for opencode's working / waiting states are unknown: start this epic with a spike that captures real
-opencode panes (`tmux capture-pane`) while it answers, asks and sits idle, and write the markers into `LIST_SCRIPT`
-for sessions with `@lzr1_agent=opencode` only.
+Spike (2026-10-29, opencode 2.0.32 in tmux 200x50): working shows `esc interrupt` in the bottom bar; the question
+tool shows a dialog (question line, `1. …` options, `↑↓ select  enter submit  esc dismiss`); idle shows neither;
+`pane_title` is `OpenCode`, then `OC | <session title>`; with `--auto` no permission prompt appeared (`rm -rf`,
+reading `/etc/hosts`); `/exit` typed in the input did not quit; `--continue` resumes; no Remote Control link and no
+folder-trust prompt.
 
-### Epic 2.2: Panel keys, menus and shell shortcuts for opencode
+#### Task 2.2.1: The profile knows its opencode
 
-**Goal:** a new opencode session is one key, one footer click, or one menu item away in the panel, and one shell
-command away (`cl-opencode` in this folder, `cl-<profile>-opencode NAME` on a profile), documented everywhere the
-Claude ones are.
-**Scope:** `bin/lzr1-panel` (`_new`, `_menu`, `_panel` binds and footer, `keys`, `doctor`), `install.sh` (shell
-hook), `README.md`, `docs/troubleshooting.md`
-**Dependencies:** Epic 2.1
-**Done when:** `c` and `[+opencode]` open the new-session picker for opencode; the machine and session menus offer
-"new opencode session"; after `./install.sh`, `cl-opencode` and `cl-<profile>-opencode` exist (yours win, as with
-`cl-opus`); `bash -n install.sh` passes on bash 3.2.
+- [ ] Done
+
+**Context:** `load` (`bin/lzr1-panel`, "profiles" section) reads `KEY=value` lines into `P_*` and defaults
+`P_CLAUDE` to `claude`. `profile_add` finds Claude's path on the machine (`command -v claude ||
+$HOME/.local/bin/claude`) and dies without it; `profile_test` prints one `key=value` line per check and counts any
+line containing `missing` as a failure; `profile_help` documents the options.
+
+**Implementation vision:**
+- New optional profile key `opencode=PATH`, read by `load` into `P_OPENCODE`, default `opencode`.
+- `profile add` takes `--opencode PATH`; without it, it looks the path up like Claude's (`command -v opencode ||
+  { [ -x "$HOME/.opencode/bin/opencode" ] && echo …; }`) and writes `opencode=` only when found. A machine without
+  opencode is fine: never `die`. The guided flow asks nothing new.
+- `profile test` prints `opencode=<path>`, or `opencode=not installed (opencode sessions unavailable)`. It must not
+  contain the word `missing`, so a profile without opencode still passes (and so `doctor` stays green).
+- `profile_help` lists `--opencode PATH`.
+- Edge cases: an `opencode=` path that no longer exists → `profile test` reports `not installed`; profiles written
+  before this change have no key → the default `opencode` from PATH.
+
+**Files:** Modify `bin/lzr1-panel` (`load`, `profile_help`, `profile_test`, `profile_add`)
+
+**Verification:** `zsh -n bin/lzr1-panel`; in a scratch `LZR1_CONFIG`: `profile add t --local --repos /tmp` writes
+`opencode=/opt/homebrew/bin/opencode` (on this Mac) and `profile test t` exits 0 with an `opencode:` line; with
+`--opencode /nope` the test still exits 0 and says `not installed`.
+
+**Done when:** profiles carry an optional opencode path, and its absence never fails `profile add`, `profile test`
+or `doctor`.
+
+#### Task 2.2.2: `start … opencode` and `run --opencode`
+
+- [ ] Done
+
+**Context:** `start)` builds `claude=…` and the resume loop `cmd` (`trap : INT; …; while :; do printf 'Claude
+exited. Enter: …'; read -r a …; $claude --continue; done`), then runs a POSIX sh script on the machine that picks
+the folder (repos/NAME, repos/REPO for `REPO-prN`, else root), runs `tmux new-session`, sets `@lzr1_model`, then
+waits up to 15 s accepting the folder-trust prompt and catching the Remote Control link. `run)` does the same
+locally and attaches. `LIST_SCRIPT` and Phase 1's alert rule recognise the exited text `Claude exited · Enter
+resumes` exactly.
+
+**Implementation vision:**
+- `start PROFILE opus|sonnet|opencode NAME [args]`. For `opencode`: `oc="${(q)P_OPENCODE} --auto"`;
+  first run `$oc [args] ${LZR1_PROMPT:+--prompt ${(q)LZR1_PROMPT}}`, resume `$oc --continue`; the loop prints
+  `opencode exited. Enter: resume this conversation · type end + Enter: close the session`.
+- The remote script gets a 6th argument, the agent (`claude|opencode`), and sets `tmux set-option @lzr1_agent
+  opencode` plus `@lzr1_model opencode`. For opencode it skips the trust/Remote Control loop: it checks the
+  session is still alive after 2 s (`opencode exited right after start` otherwise) and prints `started`.
+  Claude's path is unchanged.
+- `run --opencode [args]`: the binary is `${commands[opencode]:-$HOME/.opencode/bin/opencode}`; `--model` and
+  `--effort` are refused with it (`die`). Passthrough (exec plain opencode here) for `-h|--help|-v|--version`, a
+  first argument that is an opencode subcommand (`run|session|auth|models|mcp|serve|upgrade|update|stats|…`: match
+  `[a-z]*` that is not a path), no tty, or no tmux. Otherwise the same naming, new-session, `@lzr1_agent` /
+  `@lzr1_model`, `$CLIP`, and attach/switch as Claude's.
+- The exited marker becomes agent-neutral: `LIST_SCRIPT` matches `Claude exited|opencode exited`, `waitfor` is
+  `<Agent> exited · Enter resumes`, and Phase 1's alert exclusion matches `* exited · Enter resumes`.
+- Usage block and `start` usage message list `opencode`.
+- Edge cases: opencode missing on the machine → tmux starts, the command fails at once, the 2 s check reports
+  `opencode exited right after start` (the session is still there, at the resume prompt); a NAME with `.:/|` is
+  refused as today.
+
+**Files:** Modify `bin/lzr1-panel` (usage block, `LIST_SCRIPT` exit lines, `list_rows` alert exclusion, `start)`,
+`run)`)
+
+**Verification:** `zsh -n bin/lzr1-panel`; scratch env with a local test profile: `bin/lzr1-panel start t opencode
+alert-oc` → `started`; `tmux show-options -v -t '=alert-oc:' @lzr1_agent` → `opencode`; the pane shows opencode's
+input box; `tmux send-keys -t '=alert-oc:' C-c` twice, the resume prompt appears; kill `alert-oc`. A Claude
+`start` with a stub claude still runs its old path.
+
+**Done when:** opencode sessions start both ways with `--auto`, survive exit, and Claude sessions behave exactly as
+before.
+
+#### Task 2.2.3: List opencode sessions with the right state
+
+- [ ] Done
+
+**Context:** `LIST_SCRIPT` reads tmux fields split on `|` (title last), decides `st` from Claude's markers (`esc to
+interrupt` → work; `Enter to select|Do you want to|Would you like to proceed|…exited` → wait), the model from
+`@lzr1_model` or Claude's header, the task from `pane_title`, and the question line for `waitfor`. Spike findings
+(opencode 2.0.32 in tmux): working shows `esc interrupt` in its bottom bar; its question tool shows a dialog whose
+first line is the question, then `1. …` options, then `↑↓ select  enter submit  esc dismiss`; idle shows neither;
+`pane_title` is `OpenCode` before any task and `OC | <session title>` after; no permission prompt appeared under
+`--auto`.
+
+**Implementation vision:**
+- Add `#{@lzr1_agent}` to the tmux format before `#{pane_title}` (title must stay last) and read it as `agent`.
+- `agent=opencode`: `work` if the last 25 lines contain `esc interrupt`; `wait` if they contain `enter submit`,
+  `Permission required` or `opencode exited`; else `idle`. `waitfor`: the exited text; else the question, which is
+  the last non-empty line before the first line matching `┃[[:space:]]*1\. `, with `┃` and surrounding spaces
+  stripped; else `waiting on you`. Title: strip a leading `OC | `; `OpenCode` → empty. No Remote Control grep.
+- Any other agent (empty included) keeps Claude's detection untouched.
+- POSIX sh only (`sed`, `grep -E`, `awk` are fine; no `[[`).
+- Edge cases: a session that is not ours running opencode (no `@lzr1_agent`) is read as Claude and mostly shows
+  idle, accepted; `Permission required` is unverified on 2.0.32 (kept as best effort, noted in troubleshooting).
+
+**Files:** Modify `bin/lzr1-panel` (`LIST_SCRIPT`)
+
+**Verification:** scratch env; fake panes with `@lzr1_agent=opencode` set by hand, printing the captured screens
+(`esc interrupt` bar; the question dialog; a plain reply) → `_list 1` records `work`, `wait` with waitfor `Do you
+like the tmux poem I wrote into poem.md?`, `idle`; a work → idle change gives one `done` alert (stub notifier).
+Then one real `start t opencode alert-oc2` with a short prompt shows `work` then `idle`; kill it.
+
+**Done when:** opencode rows show the right glyph, question and task, and alert like Claude's.
+
+### Epic 2.3: Panel keys, menus and shell shortcuts for opencode
+
+**Goal:** a new opencode session is one key, one footer click or one menu item away in the panel, and one shell
+command away, documented wherever the Claude ones are.
+**Scope:** `bin/lzr1-panel` (`_new`, `_menu`, `_panel`, `keys`, `doctor`), `install.sh`, `README.md`,
+`docs/troubleshooting.md`
+**Dependencies:** Epic 2.2
+**Done when:** Tasks 2.3.1-2.3.2 pass; `bash -n install.sh` passes on bash 3.2.
 **Status:** Pending
 
-Notes for elaboration: `o` is taken (open link), hence `c`; `_new` currently accepts `opus|sonnet` and must take
-`opencode`; the footer must fit 56 columns.
+#### Task 2.3.1: Panel: `c`, `[+opencode]` and menus
+
+- [ ] Done
+
+**Context:** `_new opus|sonnet ID KEY [NAME [PROMPT]]` picks a machine and a name, then runs `start`; `_panel`
+binds `n`/`s` and the footer `[+opus] [+sonnet] [↻] [?]` with `click-footer` matching `*opus*`, `*sonnet*`;
+`_menu` offers `opus`/`sonnet` on a machine heading and `new` on a session; `keys` lists the keys.
+
+**Implementation vision:**
+- `_new` accepts `opencode` (prompt `new opencode on …`). It does not check that opencode exists on the machine:
+  `start` reports that.
+- `c` → `execute($S _new opencode $id {1})+reload-sync(…)`; footer `[+opus] [+sonnet] [+opencode] [↻] [?]` (37
+  columns, fits 56); `click-footer` adds `*opencode*` before `*opus*`.
+- Menus: machine heading adds `opencode\tnew opencode session here`; session menu adds `newoc\tnew opencode
+  session on this machine` after `new`; the Esc item reads `interrupt it (Esc)` when the row's model is
+  `opencode`.
+- `keys`: `c  or [+opencode]  new opencode session (auto-approve on)`.
+
+**Files:** Modify `bin/lzr1-panel` (`_new`, `_menu`, `_panel`, `keys`)
+
+**Verification:** `zsh -n bin/lzr1-panel`; `grep` the bindings; in the scratch env, `bin/lzr1-panel _new opencode
+1 t/ alert-oc3` (NAME given, so no picker) starts it and `_list 1` lists `alert-oc3` with model `opencode`; kill it.
+
+**Done when:** opencode sessions start from the key, the footer and both menus.
+
+#### Task 2.3.2: Shell shortcuts, doctor and docs
+
+- [ ] Done
+
+**Context:** `install.sh` writes a shell hook (lines ~180-200) with `cl-<profile>-opus/sonnet` (eval loop) and
+`cl-opus`/`cl-sonnet` (`type … || …`); it must parse on bash 3.2. `doctor` checks tools under "this computer".
+
+**Implementation vision:**
+- Hook: the eval loop also defines `cl-$_p-opencode() { lzr1-panel start $_p opencode "$@"; }`; add
+  `type cl-opencode >/dev/null 2>&1 || cl-opencode() { lzr1-panel run --opencode "$@"; }`, with comments updated.
+  Existing hooks are rewritten the way the installer already does for its block.
+- Doctor: `✓ opencode <version>` or `· no opencode: opencode sessions unavailable` (hint: `brew install
+  sst/tap/opencode` or opencode.ai), never `bad`.
+- README: tagline/"What you get" mention opencode; the panel table gets `c` / `[+opencode]`; command line gets
+  `start PROFILE opus|sonnet|opencode` and `run --opencode`; shortcuts get `cl-opencode` / `cl-<profile>-opencode`;
+  footer sample updated. Troubleshooting: "An opencode session shows the wrong state" (markers follow opencode
+  2.0.32's screen; newer versions may change them) and "opencode sessions do not start on a machine" (`profile
+  test`).
+
+**Files:** Modify `install.sh`, `bin/lzr1-panel` (`doctor`), `README.md`, `docs/troubleshooting.md`
+
+**Verification:** `bash -n install.sh && /bin/bash -n install.sh` (macOS bash 3.2); extract the generated hook into
+a scratch zsh and bash, source it with a scratch profile, `type cl-opencode cl-t-opencode` defines both; `doctor`
+in the scratch env shows the opencode line and its exit status is unchanged.
+
+**Done when:** `cl-opencode` and `cl-<profile>-opencode` exist after install, and every doc lists opencode where it
+lists the Claude ones.
+
+## Deviations
+
+- Phase 1: reviewer agent types are not available to workflow agents here; reviews ran as general-purpose agents
+  following the Ring reviewer instructions. The contrarian's two Medium findings (ended sessions' leftover state,
+  new panels eating a change) were fixed in 7fc2b9a; the review's lock/ordering Mediums became Epic 1.3.
+- An unseeded panel still overwrites a seen file older than 60 s (no open panel keeps it), so a panel reopened hours
+  later does not alert for everything since.
