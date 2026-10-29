@@ -618,3 +618,17 @@ lists the Claude ones.
   rows. verify-232 runs the installer's hook section alone under `/bin/bash` with a scratch `HOME` (an old block is
   replaced, your lines kept), sources the result in zsh and bash 3.2 with a stub `lzr1-panel`, and hides opencode
   from doctor with a copy of the script without `/opt/homebrew/bin` on its PATH.
+- Review fix 1: `profile edit` removes the old profile only after the new file is written, set to 600 and moved into
+  place; otherwise it removes the temporary file and dies `profile edit: cannot write …` (verify-mfix makes the
+  temporary file a folder).
+- Review fix 2: a rename takes the seen lock and moves `seen/OLD`, `unread/OLD` and `raw-OLD` to the new name,
+  removes `down-OLD`, and rewrites every `*.target` and `*.target.detached` holding `OLD/session`; it is in
+  `profile_edit`, so the heading menu's edit gets it too. `*.target.want` (a pick in flight) is left as it is.
+- Review fix 3: `profile edit` still writes `root=` and `only=` as the repositories folder, and says
+  `now lists and opens only sessions inside REPOS (was: …)` when the old `only=` was missing or different, or the
+  old `root=` differed from both.
+- Review fix 4: a profile with no `opencode=` line gets one from `profile edit` when opencode is found there (as
+  `profile add` looks), so troubleshooting's "opencode sessions do not start" says `profile edit NAME` instead of
+  adding the profile again. README, the installer's hook comment, the header usage and `run`'s comment say the
+  panel lists `run` / `cl-*` sessions only inside a profile's repositories folder; the help prints one more header
+  line for it (`sed -n '2,20p'`).

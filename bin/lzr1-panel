@@ -8,7 +8,8 @@
 #                                                    on PROFILE; a NAME that is a folder under the profile's repos
 #                                                    opens in it, else in its root
 #   lzr1-panel run [--model M] [--effort E] [args]   Claude in a new tmux session in this folder, attached (print
-#                                                    mode, -p, runs plain claude); the panel lists it
+#                                                    mode, -p, runs plain claude); the panel lists it when this
+#                                                    folder is inside a profile's repositories folder
 #   lzr1-panel run --opencode [args]                 the same with opencode --auto (its subcommands run plain)
 #   lzr1-panel attach PROFILE NAME                   this terminal into a session
 #   lzr1-panel list                                  print every profile's sessions, then your open PRs
@@ -290,9 +291,11 @@ profile_add() {
 
 # profile_edit NAME: asks name, (ssh) host, key and port, then the repositories folder, each prefilled (vared; Enter
 # keeps it). Piped answers: an empty line keeps the value, - empties it. root= and only= become the repositories
-# folder, as for a new profile; claude= and any other line stay. A new name writes the new file and removes the old.
+# folder, as for a new profile (said when that narrows what it listed); claude= and any other line stay; a missing
+# opencode= is looked up as add does. A new name writes the new file, then removes the old and moves the panel's
+# state (targets, raw-, seen/, unread/) to it.
 profile_edit() {
-  local old=$1 name host key port repos line REPLY WHY f=$PROFILES/$1.conf
+  local old=$1 name host key port repos line oc was t c REPLY WHY f=$PROFILES/$1.conf
   load $old || exit 1
   name=$old host=$P_HOST key=$P_KEY port=$P_PORT repos=$P_REPOS
   # zsh picks vi keys when $EDITOR says vi, and vi's insert mode cannot delete a prefilled value: bind these keys so it can.
@@ -317,7 +320,12 @@ profile_edit() {
     keep port "  SSH port (empty: 22): "
   fi
   while keep repos "  Folder with your repositories: "; [[ -z $repos ]]; do :; done
-  {
+  if [[ -z ${(M)${(f)"$(<$f)"}:#opencode=*} ]]; then
+    P_HOST=$host P_KEY=$key P_PORT=$port
+    oc=$(on 'command -v opencode 2>/dev/null || { [ -x "$HOME/.opencode/bin/opencode" ] && echo "$HOME/.opencode/bin/opencode"; }' 2>/dev/null)
+  fi
+  t=$PROFILES/$name.conf.new
+  if ! { {
     print -r -- "# lzr1-panel profile: $name (edited $(date +%Y-%m-%d)). Keep it out of git."
     print -r -- "type=$P_TYPE"
     [[ $P_TYPE == ssh ]] && { print -r -- "host=$host"; [[ -n $key ]] && print -r -- "key=$key"
@@ -326,10 +334,33 @@ profile_edit() {
     print -r -- "root=$repos"
     print -r -- "only=$repos"
     for line in ${(f)"$(<$f)"}; do [[ $line == (\#*|(type|host|key|port|repos|root|only)=*) ]] || print -r -- $line; done
-  } >$PROFILES/$name.conf.new
-  chmod 600 $PROFILES/$name.conf.new && mv $PROFILES/$name.conf.new $PROFILES/$name.conf
-  [[ $name == $old ]] || rm -f $f
+    [[ -z $oc ]] || print -r -- "opencode=$oc"
+  } >$t } 2>/dev/null || ! chmod 600 $t || ! mv $t $PROFILES/$name.conf; then
+    rm -f $t 2>/dev/null; die "profile edit: cannot write $PROFILES/$name.conf"
+  fi
+  if [[ $name != $old ]]; then
+    rm -f $f
+    # The panel follows the new name: a viewer on OLD/session moves to NEW/session, unread marks are kept.
+    if [[ -d $STATE ]]; then
+      _seen_lock
+      for c in seen unread; do
+        [[ -d $STATE/$c/$old ]] && { rm -rf $STATE/$c/$name; mv $STATE/$c/$old $STATE/$c/$name }
+      done
+      [[ -e $STATE/raw-$old ]] && mv -f $STATE/raw-$old $STATE/raw-$name
+      rm -f $STATE/down-$old
+      for c in $STATE/*.target(N) $STATE/*.target.detached(N); do
+        line=$(<$c) 2>/dev/null
+        [[ $line == $old/* ]] && print -rn -- "$name/${line#$old/}" >$c
+      done
+      _seen_unlock
+    fi
+  fi
   print -r -- "saved $PROFILES/$name.conf"
+  if [[ -z $P_ONLY ]]; then was="every session on the machine"
+  elif [[ $P_ONLY != $repos ]]; then was="sessions inside $P_ONLY"
+  fi
+  [[ -n $P_ROOT && $P_ROOT != $repos && $P_ROOT != $P_ONLY ]] && was+="${was:+, }new ones opening in $P_ROOT"
+  [[ -n $was ]] && print -r -- "  now lists and opens only sessions inside $repos (was: $was)"
   profile_test $name
 }
 
@@ -805,7 +836,7 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   ;;
 
 run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or opencode args]: Claude (or opencode) in a new
-     # tmux session in this folder, attached
+     # tmux session in this folder, attached; the panel lists it only inside a profile's repositories folder
   shift
   local model= effort= name= oc= fam sock REPLY
   while (( $# )); do
@@ -1422,7 +1453,7 @@ splash) lzr1_splash ${2:+${2#--}} ;;
 version|--version) print -r -- "lzr1-panel $VERSION" ;;
 
 *)
-  sed -n '2,19p' $SELF | sed 's/^# \{0,1\}//'
+  sed -n '2,20p' $SELF | sed 's/^# \{0,1\}//'
   [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
   ;;
 esac

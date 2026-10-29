@@ -187,7 +187,8 @@ if [[ $SHELL_HOOK == 1 ]]; then
       echo '  eval "cl-$_p-opencode() { lzr1-panel start $_p opencode \"\$@\"; }"'
       echo 'done; unset _p'
       echo "# cl-opus / cl-sonnet [claude args], cl-opencode [opencode args]: Claude, or opencode with auto-approve on, in a"
-      echo "# new tmux session in this folder, so the panel lists it. Your own, defined earlier in this file, wins."
+      echo "# new tmux session in this folder; the panel lists it inside a profile's repositories folder. Your own,"
+      echo "# defined earlier in this file, wins."
       echo 'type cl-opus >/dev/null 2>&1 || cl-opus() { lzr1-panel run --model opus "$@"; }'
       echo 'type cl-sonnet >/dev/null 2>&1 || cl-sonnet() { lzr1-panel run --model sonnet "$@"; }'
       echo 'type cl-opencode >/dev/null 2>&1 || cl-opencode() { lzr1-panel run --opencode "$@"; }'

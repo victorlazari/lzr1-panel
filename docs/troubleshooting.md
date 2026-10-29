@@ -167,8 +167,10 @@ The same goes for opencode: its session waits on `opencode exited. Enter: resume
 `not installed`:
 
 - **Not installed.** Install it on that machine (`brew install sst/tap/opencode`, or see
-  [opencode.ai](https://opencode.ai)), then add the profile again: `profile add` finds it, or takes
-  `--opencode /path/to/opencode`. tmux starts it with a bare PATH, so the profile needs its full path.
+  [opencode.ai](https://opencode.ai)), then run `lzr1-panel profile edit NAME` and press Enter through its
+  questions: a profile with no `opencode=` line gets the opencode it finds there. Installed somewhere else: add an
+  `opencode=/path/to/opencode` line to the profile. tmux starts it with a bare PATH, so the profile needs its full
+  path.
 - **Installed, but it exits.** Start it from a terminal and view the session: opencode's error shows above its
   resume prompt. Usually it has no provider yet: run `opencode auth login` on that machine.
 

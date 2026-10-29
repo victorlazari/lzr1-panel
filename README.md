@@ -181,7 +181,8 @@ Not copying? See [Copying text](docs/troubleshooting.md#copying-text).
 
 ```sh
 lzr1-panel open                             # the panel
-lzr1-panel run [--model M] [--effort E]     # Claude here, in a new tmux session, attached
+lzr1-panel run [--model M] [--effort E]     # Claude here, in a new tmux session, attached; listed when here is
+                                            # inside a profile's repositories folder
 lzr1-panel run --opencode                   # opencode here (auto-approve on), the same way
 lzr1-panel start PROFILE opus|sonnet|opencode NAME  # a session, without the panel
 lzr1-panel attach PROFILE NAME              # this terminal into a session
@@ -194,9 +195,11 @@ lzr1-panel keys                             # every key
 
 Your shell also gets shortcuts:
 
-- **`cl-opus`** / **`cl-sonnet`**: Claude in the folder you're in, inside a new tmux session, so the panel lists it.
-  If you already have your own `cl-opus` or `cl-sonnet`, yours stay; point them at `lzr1-panel run` to get the same.
-- **`cl-opencode`**: opencode, with auto-approve on, the same way (`lzr1-panel run --opencode`). Yours wins here too.
+- **`cl-opus`** / **`cl-sonnet`**: Claude in the folder you're in, inside a new tmux session, so the panel lists it
+  when that folder is inside a profile's repositories folder (a profile lists only the sessions there). If you
+  already have your own `cl-opus` or `cl-sonnet`, yours stay; point them at `lzr1-panel run` to get the same.
+- **`cl-opencode`**: opencode, with auto-approve on, the same way (`lzr1-panel run --opencode`), listed under the
+  same rule. Yours wins here too.
 - **`cl-<profile>-opus NAME`** / **`cl-<profile>-sonnet NAME`** / **`cl-<profile>-opencode NAME`**: a session on that
   profile's machine.
 
