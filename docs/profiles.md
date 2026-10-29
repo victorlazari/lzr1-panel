@@ -87,13 +87,17 @@ the person:
 
 - The panel shows the new profile on its next refresh (every 15 seconds) or when it opens: `lzr1-panel open`.
 - New shells get `cl-<name>-opus NAME` and `cl-<name>-sonnet NAME`, which start a session there without the panel.
-- Change a profile by removing and adding it again: `lzr1-panel profile remove NAME`.
+- Change a profile with `lzr1-panel profile edit NAME` (or **edit this profile** in its heading's menu in the
+  panel). It asks the name, for SSH the host, key and port, then the repositories folder, each showing its current
+  value: Enter keeps it. Piped answers: an empty line keeps a value, `-` empties it. A new name renames the profile;
+  an older profile also starts listing only the sessions inside its repositories folder. It runs `profile test` after.
 
 ## Other commands
 
 ```sh
 lzr1-panel profile list          # every profile
 lzr1-panel profile show NAME     # its settings
+lzr1-panel profile edit NAME     # change it
 lzr1-panel profile test NAME     # check it again
 lzr1-panel profile remove NAME
 ```

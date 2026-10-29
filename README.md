@@ -158,7 +158,8 @@ flowchart LR
 | new session · interrupt Claude · rename | mark it ready for review |
 | end it: stop Claude, close its tmux session, show the first one left | merge or close it (both ask first) |
 
-A machine's heading has a menu too: new sessions there, test the machine, refresh.
+A machine's heading has a menu too: new sessions there, test the machine, edit or remove its profile (removing
+asks first; its sessions keep running in tmux, and the viewer moves to another machine's session), refresh.
 
 ### Copying text
 
@@ -228,6 +229,7 @@ Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](
 | `lzr1-panel profile list` | your profiles |
 | `lzr1-panel profile test NAME` | reaches it and checks tmux, Claude and the folders |
 | `lzr1-panel profile show NAME` | what it holds |
+| `lzr1-panel profile edit NAME` | asks its questions again, each showing the current value |
 | `lzr1-panel profile remove NAME` | removes it |
 
 A session named like a folder in `--repos` opens inside it: `lerian-clients` opens in

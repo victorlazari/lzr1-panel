@@ -299,7 +299,7 @@ remove a profile.
 **Done when:** the guided and flag forms write `root=` and `only=` equal to `repos=`; `my_mac` becomes `my-mac`; an
 invalid or taken name is asked again; `profile edit NAME` changes a profile in place; the heading menu offers edit
 and remove.
-**Status:** Pending
+**Status:** Done
 
 #### Task 2.1.1: `profile add`: repositories folder only, names checked and asked again
 
@@ -338,7 +338,7 @@ profile add` asks the name twice and writes `my-mac.conf` with `repos=/tmp`, `ro
 
 #### Task 2.1.2: `profile edit` and the heading menu's edit and remove
 
-- [ ] Done
+- [x] Done
 
 **Context:** `profile)` dispatches `list|show|add|test|remove`; `remove` deletes the file. `_menu ID KEY` on a
 machine heading (`KS` empty) offers `opus`, `sonnet`, `test`, `reload`. `_kill` shows how a menu action that removes
@@ -572,3 +572,12 @@ lists the Claude ones.
   of looping. The name check is a new `profile_name` (sets `REPLY`, or `WHY`), for `profile edit` to reuse.
   `docs/troubleshooting.md` ("The same session shows under two profiles") also dropped `--only`. The earlier
   verification scripts dropped `--only` from their `profile add` lines (copies kept as `*.pre211`).
+- Task 2.1.2: `vared` needs a terminal ("can't access terminal"), so piped answers (agents, tests) show
+  `Question [current]` and read a line: empty keeps the value, `-` empties it (key and port). zsh picks vi keys when
+  `$EDITOR` says vi, and vi's insert mode cannot delete a prefilled value, so `profile edit` binds Backspace, ^H, ^U
+  and ^W in `viins` for its own process. The edit keeps `type=`; a key that is not readable is asked again. Lines
+  other than type/host/key/port/repos/root/only are kept as they are (so `claude=` and a later `opencode=`). The
+  menu's remove takes the seen lock while it deletes the profile's state. `docs/troubleshooting.md` ("The same
+  session shows under two profiles") now says `profile edit NAME`. The task's verification line
+  `print -l '' '' ~/x` has one answer too many for a local profile (name, repositories folder); verify-212 uses the
+  right count and a resolved scratch folder, and drives `vared` and the menu in tmux panes.

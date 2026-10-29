@@ -12,7 +12,7 @@
 #   lzr1-panel prs                                   your open pull requests (the GitHub account on this machine)
 #   lzr1-panel doctor                                check everything the panel needs, with the fix for what is missing
 #   lzr1-panel notify                                a sample alert: the tone and a notification, to check them
-#   lzr1-panel profile list|show|add|test|remove     manage profiles (lzr1-panel profile help)
+#   lzr1-panel profile list|show|add|edit|test|remove manage profiles (lzr1-panel profile help)
 #   lzr1-panel keys                                  the panel's keys
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
 #
@@ -149,6 +149,7 @@ lzr1-panel profile show NAME
 lzr1-panel profile add                                   guided: asks for everything
 lzr1-panel profile add NAME --local --repos PATH [--claude PATH]
 lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH]
+lzr1-panel profile edit NAME                             the same questions, each showing its current value
 lzr1-panel profile test NAME                             reach it, find tmux and claude, check the folders
 lzr1-panel profile remove NAME
 
@@ -255,6 +256,51 @@ profile_add() {
     print -r -- "claude=$claude"
   } >$PROFILES/$name.conf
   chmod 600 $PROFILES/$name.conf
+  print -r -- "saved $PROFILES/$name.conf"
+  profile_test $name
+}
+
+# profile_edit NAME: asks name, (ssh) host, key and port, then the repositories folder, each prefilled (vared; Enter
+# keeps it). Piped answers: an empty line keeps the value, - empties it. root= and only= become the repositories
+# folder, as for a new profile; claude= and any other line stay. A new name writes the new file and removes the old.
+profile_edit() {
+  local old=$1 name host key port repos line REPLY WHY f=$PROFILES/$1.conf
+  load $old || exit 1
+  name=$old host=$P_HOST key=$P_KEY port=$P_PORT repos=$P_REPOS
+  # zsh picks vi keys when $EDITOR says vi, and vi's insert mode cannot delete a prefilled value: bind these keys so it can.
+  [[ -t 0 ]] && bindkey -M viins '^?' backward-delete-char '^H' backward-delete-char '^U' kill-whole-line \
+    '^W' backward-kill-word 2>/dev/null
+  keep() {
+    if [[ -t 0 ]]; then vared -p "$2" $1 || die "profile edit: no answer"; return; fi
+    local a; print -rnu2 -- "$2[${(P)1}] "; IFS= read -r a || { print -u2; die "profile edit: no answer" }
+    case $a in -) : ${(P)1::=} ;; ?*) : ${(P)1::=$a} ;; esac
+  }
+  print -r -- "Edit profile $old (Enter keeps a value)"
+  while :; do
+    keep name "  Profile name: "
+    profile_name "$name" || [[ $REPLY == $old && -z ${WHY:#*exists*} ]] && break
+    print -r -- "  $WHY"; name=$old
+  done
+  name=$REPLY
+  if [[ $P_TYPE == ssh ]]; then
+    while keep host "  SSH user@host: "; [[ -z $host ]]; do :; done
+    while keep key "  SSH key file (empty: your SSH defaults): "; [[ $key == \~* ]] && key=$HOME${key#\~}
+      [[ -n $key && ! -r $key ]]; do print -r -- "  SSH key not readable: $key"; done
+    keep port "  SSH port (empty: 22): "
+  fi
+  while keep repos "  Folder with your repositories: "; [[ -z $repos ]]; do :; done
+  {
+    print -r -- "# lzr1-panel profile: $name (edited $(date +%Y-%m-%d)). Keep it out of git."
+    print -r -- "type=$P_TYPE"
+    [[ $P_TYPE == ssh ]] && { print -r -- "host=$host"; [[ -n $key ]] && print -r -- "key=$key"
+                              [[ -n $port ]] && print -r -- "port=$port" }
+    print -r -- "repos=$repos"
+    print -r -- "root=$repos"
+    print -r -- "only=$repos"
+    for line in ${(f)"$(<$f)"}; do [[ $line == (\#*|(type|host|key|port|repos|root|only)=*) ]] || print -r -- $line; done
+  } >$PROFILES/$name.conf.new
+  chmod 600 $PROFILES/$name.conf.new && mv $PROFILES/$name.conf.new $PROFILES/$name.conf
+  [[ $name == $old ]] || rm -f $f
   print -r -- "saved $PROFILES/$name.conf"
   profile_test $name
 }
@@ -763,6 +809,7 @@ profile)
       ;;
     show) load $2 && { print -r -- "# $PROFILES/$2.conf"; grep -v '^#' $PROFILES/$2.conf } ;;
     add) shift; profile_add "$@" ;;
+    edit) profile_edit $2 ;;
     test) profile_test $2 ;;
     remove|rm) [[ -e $PROFILES/$2.conf ]] || die "no profile '$2'"; rm -f $PROFILES/$2.conf; print "removed $2" ;;
     *) profile_help ;;
@@ -1048,7 +1095,7 @@ _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: swit
   ;;
 
 _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or move to it and press enter
-  local id=$2 key=$3 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' head line act new pick pr=
+  local id=$2 key=$3 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' head line act new pick pr= cur next=
   local -a acts  # ACTION<tab>label
   local name st att age url model dir title branch changed waitfor
   local repo num ptitle purl draft pbranch review checks updated
@@ -1074,7 +1121,8 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
   elif [[ -z $KS ]]; then
     [[ -e $PROFILES/$KP.conf ]] || exit 0
     head=$KP
-    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'test\ttest this machine' $'reload\trefresh' )
+    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'test\ttest this machine'
+           $'edit\tedit this profile…' "remove"$'\t'"${E}remove this profile…$R" $'reload\trefresh' )
   else
     load $KP || exit 0
     for line in ${(f)"$(<$STATE/raw-$KP)"}; do
@@ -1134,6 +1182,22 @@ gh pr checks $num, fix it and push." ;;
     refresh) rm -f $STATE/prs ;;
     opus|sonnet) $SELF _new $act $id $key ;;
     test)  $SELF profile test $KP; print -n "press a key"; read -k1 -s ;;
+    edit)  $SELF profile edit $KP; print -n "press a key"; read -k1 -s ;;
+    remove)
+      print -rn -- "Remove profile $KP? Its sessions keep running in tmux; the panel stops listing them. [y/N] "
+      read -q || { print; exit 0 }
+      print
+      # The viewer moves first, to the first session of another profile (or to none), so it never stays on a
+      # session the panel no longer lists.
+      cur=$(<$STATE/$id.target 2>/dev/null)
+      if [[ $cur == $KP/* ]]; then
+        first_key $id ${(M)${${(@0)"$(<$STATE/$id.cache 2>/dev/null)"}%%$'\t'*}:#$KP/*} && next=$REPLY
+        if [[ -n $next ]]; then $SELF _select $id $next force
+        else : >$STATE/$id.target; viewer_detach $id $cur; fi
+      fi
+      $SELF profile remove $KP
+      _seen_lock; rm -rf $STATE/raw-$KP $STATE/seen/$KP $STATE/unread/$KP $STATE/down-$KP; _seen_unlock
+      [[ -n $next ]] && $SELF _pos $id $FZF_PORT $next >/dev/null 2>&1 &! ;;
     view)  $SELF _select $id $key force ;;
     focus) $SELF _select $id $key force; $SELF _focus $id ;;
     tab)   $SELF _tab $id $key ;;
