@@ -11,6 +11,7 @@
 #   lzr1-panel list                                  print every profile's sessions, then your open PRs
 #   lzr1-panel prs                                   your open pull requests (the GitHub account on this machine)
 #   lzr1-panel doctor                                check everything the panel needs, with the fix for what is missing
+#   lzr1-panel notify                                a sample alert: the tone and a notification, to check them
 #   lzr1-panel profile list|show|add|test|remove     manage profiles (lzr1-panel profile help)
 #   lzr1-panel keys                                  the panel's keys
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
@@ -340,7 +341,7 @@ ghostty() { print -r -- "tell application \"Ghostty\""$'\n'"$1"$'\n'"end tell" |
 # would be missing and the pull requests would fall back to your SSH key's public ones.
 genv() {
   local v; local -a kv
-  for v in GITHUB_TOKEN GH_TOKEN GH_HOST LZR1_CONFIG LZR1_PRS LZR1_MENU_BUTTON LZR1_PANEL_WIDTH; do
+  for v in GITHUB_TOKEN GH_TOKEN GH_HOST LZR1_CONFIG LZR1_PRS LZR1_MENU_BUTTON LZR1_PANEL_WIDTH LZR1_NOTIFY LZR1_SOUND; do
     [[ -n ${(P)v} ]] && kv+=( "\"$v=${${(P)v}//(#m)[\\\"]/\\$MATCH}\"" )
   done
   (( $#kv )) && print -r -- "set environment variables of cfg to {${(j:, :)kv}}"
@@ -360,6 +361,56 @@ clip() {
 
 # _cut TEXT WIDTH: TEXT cut to WIDTH characters with an ellipsis, into REPLY
 _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
+
+# notify_alerts RECORD...: list_rows' alerts ("kind<US>profile<US>session<US>text") on the computer running the
+# panel: one tone however many there are (LZR1_SOUND: 0 off, or a sound file), a notification each, up to 3
+# (LZR1_NOTIFY=0 off). The text comes from a session's screen: it reaches the notifier as an argument only, never
+# inside a script or a command line.
+notify_alerts() {
+  (( $# )) || return 0
+  local snd=${LZR1_SOUND:-1} r kind p s text verb
+  local -a recs more
+  if [[ $snd == 0 ]]; then :
+  elif [[ $OSTYPE == darwin* ]]; then
+    [[ $snd == 1 ]] && snd=/System/Library/Sounds/Glass.aiff
+    if [[ -r $snd ]] && command -v afplay >/dev/null; then afplay $snd >/dev/null 2>&1 &!; fi
+  else
+    [[ $snd == 1 ]] && snd=/usr/share/sounds/freedesktop/stereo/complete.oga
+    if [[ -r $snd ]] && command -v paplay >/dev/null; then paplay $snd >/dev/null 2>&1 &!
+    elif [[ ${LZR1_SOUND:-1} == 1 ]] && command -v canberra-gtk-play >/dev/null; then
+      canberra-gtk-play -i complete >/dev/null 2>&1 &!
+    elif [[ -r $snd ]] && command -v canberra-gtk-play >/dev/null; then canberra-gtk-play -f $snd >/dev/null 2>&1 &!
+    elif [[ ${LZR1_SOUND:-1} == 1 ]]; then { print -n '\a' >/dev/tty } 2>/dev/null; fi
+  fi
+  [[ ${LZR1_NOTIFY:-1} == 0 ]] && return 0
+  recs=( "$@" ); (( $# > 3 )) && recs=( "${(@)recs[1,2]}" )
+  for r in "$@"; do
+    IFS=$'\037' read -r kind p s text <<<"$r"
+    if (( ${recs[(Ie)$r]} )); then
+      verb=asks; [[ $kind == done ]] && verb=finished
+      text=${text//[[:cntrl:]]/}; _cut "${text:-your turn}" 120
+      _notify_one "$s $verb" $p $REPLY lzr1-$p-$s
+    else more+=( $p/$s ); fi
+  done
+  if (( $#more )); then _cut "${(j:, :)more}" 120; _notify_one "$#more more sessions need you" lzr1-panel $REPLY lzr1-more; fi
+  return 0
+}
+
+# _notify_one TITLE SUBTITLE BODY GROUP: one OS notification, silently none where there is no notifier
+_notify_one() {
+  if [[ $OSTYPE == darwin* ]]; then
+    if command -v terminal-notifier >/dev/null; then
+      local -a a=( "${@[1,3]}" ); a=( "${(@)a/#-/ -}" )  # a leading - would read as one of its options
+      terminal-notifier -title $a[1] -subtitle $a[2] -message $a[3] -group $4 >/dev/null 2>&1
+    else
+      print -r -- $'on run argv\ndisplay notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)\nend run' |
+        osascript - $1 $2 $3 >/dev/null 2>&1
+    fi
+  elif [[ -n $DISPLAY$WAYLAND_DISPLAY ]] && command -v notify-send >/dev/null; then
+    notify-send -a lzr1-panel -- $1 $3 >/dev/null 2>&1
+  fi
+  return 0
+}
 
 # Every profile's sessions, listed in parallel, as NUL-separated fzf items: "KEY<tab>display". The first item is
 # the summary heading. A session is three lines (layout A): name with model and age; its task, or what it waits
@@ -452,6 +503,8 @@ list_rows() {
   done
   rm -rf $tmp
   if [[ -n $track ]]; then [[ -n $seeded ]] || : >$STATE/$1.seeded; rmdir $STATE/seen.lock 2>/dev/null; fi
+  # In the background and off fzf's pipe: a slow tone or notifier never holds up the list.
+  (( $#alerts )) && { notify_alerts $alerts >/dev/null 2>&1 &! }
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
@@ -1124,12 +1177,16 @@ keys)
 EOF
   ;;
 
+notify)  # a sample alert, in the foreground, to check the tone and the notifications on this computer
+  notify_alerts "question"$'\037'"lzr1-panel"$'\037'"test"$'\037'"this is how a session asks for you"
+  ;;
+
 splash) lzr1_splash ${2:+${2#--}} ;;
 
 version|--version) print -r -- "lzr1-panel $VERSION" ;;
 
 *)
-  sed -n '2,18p' $SELF | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' $SELF | sed 's/^# \{0,1\}//'
   [[ -z $1 || $1 == (help|-h|--help) ]] || exit 1
   ;;
 esac

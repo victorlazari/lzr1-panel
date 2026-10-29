@@ -151,7 +151,7 @@ silence each; the refresh never waits on either.
 
 #### Task 1.2.1: `notify_alerts` — the tone and the notifications
 
-- [ ] Done
+- [x] Done
 
 **Context:** alerts are collected in `list_rows` (Task 1.1.1). `browse` and `clip` (`bin/lzr1-panel:351-359`) show
 the house pattern for macOS / Wayland / X11 branches. `ghostty()` (`:336`) already sends AppleScript on stdin.
