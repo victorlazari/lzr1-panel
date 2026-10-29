@@ -240,11 +240,11 @@ next ones nor loses an alert, and two panels never move the shared state back in
 **Scope:** `bin/lzr1-panel` (`list_rows` tracking, `open`, `_notify_one`)
 **Dependencies:** Epics 1.1, 1.2
 **Done when:** the reproductions below pass and every Phase 1 verification script still passes.
-**Status:** Pending
+**Status:** Done
 
 #### Task 1.3.1: Owned lock, snapshot time, detached notifier, safe names and bodies
 
-- [ ] Done
+- [x] Done
 
 **Context:** `list_rows` takes `$STATE/seen.lock` with `mkdir` after the parallel fetch's `wait`, treats it as
 stale after 10 s by mtime (`rmdir` then `mkdir`, a check-then-act race), writes `seen/` files as it compares, and
@@ -562,3 +562,8 @@ lists the Claude ones.
   new panels eating a change) were fixed in 7fc2b9a; the review's lock/ordering Mediums became Epic 1.3.
 - An unseeded panel still overwrites a seen file older than 60 s (no open panel keeps it), so a panel reopened hours
   later does not alert for everything since.
+- Task 1.3.1: zsh refuses `setopt monitor` without a terminal, so the notifier is detached with `setsid` (Linux) or
+  `perl -e 'setpgrp; exec @ARGV'` (macOS) through a new internal `_notify` command; with neither it runs as before.
+  The snapshot is `EPOCHREALTIME`, not `EPOCHSECONDS` (`_pos` reloads are 0.8 s apart). A lock with no pid file
+  after 1 s also counts as stale (a refresh writes it right after `mkdir`). verify-111 and verify-c1 now read the
+  state as the seen file's second field, and verify-111 holds its lock with a live pid.

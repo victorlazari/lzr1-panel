@@ -413,18 +413,42 @@ _notify_one() {
         osascript - $1 $2 $3 >/dev/null 2>&1
     fi
   elif [[ -n $DISPLAY$WAYLAND_DISPLAY ]] && command -v notify-send >/dev/null; then
-    notify-send -a lzr1-panel -- $1 $3 >/dev/null 2>&1
+    local -a a=( "${@[1,3]}" ); a=( "${(@)${(@)${(@)a//&/&amp;}//\</&lt;}//\>/&gt;}" )  # most daemons read markup
+    notify-send -a lzr1-panel -- $a[1] $a[3] >/dev/null 2>&1
   fi
   return 0
 }
+
+# _seen_lock: $STATE/seen.lock for this refresh (its pid file holds $$), waited for up to 2s. A lock whose refresh is
+# gone (dead pid, older than 10s, or no pid after 1s) is renamed before it is removed, so one panel alone breaks it;
+# one taken again meanwhile goes back.
+_seen_lock() {
+  local l=$STATE/seen.lock t=0 pid; local -a old
+  until mkdir $l 2>/dev/null; do
+    (( ++t > 20 )) && return 1
+    { pid=$(<$l/pid) } 2>/dev/null; old=( $l(N/ms+10) )
+    [[ -z $pid ]] && old+=( $l(N/ms+1) )
+    if (( $#old )) || { [[ -n $pid ]] && ! kill -0 $pid 2>/dev/null }; then
+      if mv $l $l.$$ 2>/dev/null; then
+        if { [[ $(<$l.$$/pid) != $pid && ! -e $l ]] } 2>/dev/null; then mv $l.$$ $l; else rm -rf $l.$$; fi
+      fi
+    else sleep 0.1; fi
+  done
+  print -r -- $$ >$l/pid
+}
+_seen_unlock() { { [[ $(<$STATE/seen.lock/pid) == $$ ]] } 2>/dev/null || return 0; rm -rf $STATE/seen.lock }
+
+# _fname NAME: NAME as one file name, into REPLY (% is %25, / is %2F: a session made with plain tmux may hold one)
+_fname() { REPLY=${${1//\%/%25}//\//%2F} }
 
 # Every profile's sessions, listed in parallel, as NUL-separated fzf items: "KEY<tab>display". The first item is
 # the summary heading. A session is three lines (layout A): name with model and age; its task, or what it waits
 # for; its branch and repository. Sized to the panel ($FZF_COLUMNS).
 # With a panel ID (list_rows ID, from _list), a session that changes into "needs you" makes an alert: it finished
 # its reply (working → idle) or shows a new question. Each session's last state is kept in $STATE/seen/PROFILE/NAME
-# ("state<US>waitfor"), shared by every open panel, so one change alerts once. An alert marks the session unread
-# ($STATE/unread/PROFILE/NAME holds its kind) and goes to $alerts as "kind<US>profile<US>session<US>text".
+# ("ts<US>state<US>waitfor", ts the refresh's start), shared by every open panel, so one change alerts once. An alert
+# marks the session unread ($STATE/unread/PROFILE/NAME holds its kind) and goes to notify_alerts as
+# "kind<US>profile<US>session<US>text". NAME is _fname's (a / in it is %2F).
 # An unread session shows ✱ after its glyph, and the summary counts them; the one in the viewer is read already.
 list_rows() {
   local -a names=( $(profiles) )
@@ -433,7 +457,8 @@ list_rows() {
     print -rn -- $'-/\t'$'\e[90m'"run: lzr1-panel profile add"$'\e[0m\0'
     return
   fi
-  local tmp=$(mktemp -d) p
+  zmodload zsh/datetime
+  local tmp=$(mktemp -d) p snap=$EPOCHREALTIME  # what this refresh saw is as old as its start (_pos's are 0.8s apart)
   local -a down
   for p in $names; do
     # An offline machine is retried once a minute, so it never slows every refresh.
@@ -448,14 +473,15 @@ list_rows() {
   local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur
   local name st att age url model dir title branch changed waitfor
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
-  local US=$'\037' track= seeded= f pst pwf ak t=0
-  local -a alerts stale fresh live
+  local US=$'\037' track= seeded= f fn pts pst pwf ak
+  local -a alerts fresh live sf sv uf uv
   if [[ -n $1 ]]; then
-    # One refresh at a time compares and writes. A lock left by a killed refresh goes after 10s; one held longer
-    # than 2s skips tracking this time (the next refresh catches up).
-    stale=( $STATE/seen.lock(N/ms+10) ); (( $#stale )) && rmdir $stale 2>/dev/null
-    until mkdir $STATE/seen.lock 2>/dev/null; do (( ++t > 20 )) && break; sleep 0.1; done
-    (( t <= 20 )) && track=1
+    # One refresh at a time compares and writes; one that cannot get the lock in 2s skips tracking this time (the
+    # next refresh catches up).
+    if _seen_lock; then
+      track=1; setopt local_options local_traps
+      trap '_seen_unlock; exit 143' TERM HUP INT; TRAPEXIT() { _seen_unlock }
+    fi
     # A panel's first refresh only records, and only what no other panel keeps (a file written in the last
     # minute), so it neither alerts for everything since it was last open nor eats a change another panel is due.
     [[ -e $STATE/$1.seeded ]] && seeded=1
@@ -473,19 +499,24 @@ list_rows() {
     for line in $got; do
       IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
       (( n++ ))
+      _fname $name; fn=$REPLY ak=
       if [[ -n $track ]]; then
-        f=$STATE/seen/$p/$name ak=
-        if [[ -r $f ]]; then
-          IFS=$US read -r pst pwf <$f
-          if [[ $st == wait && $waitfor != "Claude exited · Enter resumes" && ( $pst != wait || $pwf != "$waitfor" ) ]]
-          then ak=question
-          elif [[ $pst == work && $st == idle ]]; then ak=done; fi
-        fi
-        fresh=( $f(Nms-60) )
-        if [[ -n $seeded ]] || (( ! $#fresh )); then mkdir -p $f:h; print -r -- "$st$US$waitfor" >$f; fi
-        if [[ -n $ak && -n $seeded ]]; then
-          mkdir -p $STATE/unread/$p; print -r -- $ak >$STATE/unread/$p/$name
-          alerts+=( "$ak$US$p$US$name$US${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}" )
+        f=$STATE/seen/$p/$fn pts=0 pst= pwf=
+        [[ -r $f ]] && IFS=$US read -r pts pst pwf <$f
+        [[ $pts == <->(.<->|) ]] || { pwf=$pst pst=$pts pts=0 }  # an older "state<US>waitfor" file
+        # A refresh that started before the one that wrote the file has nothing newer to say.
+        if (( pts <= snap )); then
+          if [[ -r $f ]]; then
+            if [[ $st == wait && $waitfor != "Claude exited · Enter resumes" && ( $pst != wait || $pwf != "$waitfor" ) ]]
+            then ak=question
+            elif [[ $pst == work && $st == idle ]]; then ak=done; fi
+          fi
+          fresh=( $f(Nms-60) )
+          [[ -n $seeded ]] || (( ! $#fresh )) && sf+=( $f ) sv+=( "$snap$US$st$US$waitfor" )
+          if [[ -n $ak && -n $seeded ]]; then
+            alerts+=( "$ak$US$p$US$name$US${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}" )
+            [[ $p/$name == "$cur" ]] || uf+=( $STATE/unread/$p/$fn ) uv+=( $ak )
+          else ak=; fi
         fi
       fi
       case $st in
@@ -493,9 +524,9 @@ list_rows() {
         wait) (( q++ )); glyph="$Y⧗$R" ;;
         *)    (( i++ )); glyph="$D·$R" ;;
       esac
-      mk= u=$STATE/unread/$p/$name
+      mk= u=$STATE/unread/$p/$fn
       if [[ -n $1 && $p/$name == "$cur" ]]; then rm -f $u
-      elif [[ -n $1 && -e $u ]]; then mk="$B$Y✱$R "; (( a++ )); fi
+      elif [[ -n $1 && ( -e $u || -n $ak ) ]]; then mk="$B$Y✱$R "; (( a++ )); fi
       _ago $age; age=$REPLY
       right="${model:+$model · }$age"
       pw=$(( W - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
@@ -510,18 +541,24 @@ list_rows() {
     done
     # A session that ended leaves no state behind, so a new one with its name starts fresh.
     if [[ -n $track ]]; then
-      live=( ${got%%$US*} )
-      for f in $STATE/(seen|unread)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -f $f; done
+      live=( ${got%%$US*} ); live=( ${${live//\%/%25}//\//%2F} )
+      for f in $STATE/(seen|unread)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -rf $f; done
     fi
   done
   rm -rf $tmp
   if [[ -n $track ]]; then
+    # Alerts go out before the new states are kept: a refresh killed in between repeats one, never loses it. The
+    # notifier runs in its own process group, off fzf's pipe: fzf killing this refresh, or a slow tone, never stops
+    # or holds up either.
+    local -a det=()
+    if (( $+commands[setsid] )); then det=( setsid ); elif (( $+commands[perl] )); then det=( perl -e 'setpgrp; exec @ARGV' ); fi
+    for (( f = 1; f <= $#uf; f++ )); do mkdir -p $uf[f]:h; print -r -- $uv[f] >$uf[f]; done
+    (( $#alerts )) && { $det $SELF _notify $alerts </dev/null >/dev/null 2>&1 &! }
+    for (( f = 1; f <= $#sf; f++ )); do mkdir -p $sf[f]:h; print -r -- $sv[f] >$sf[f]; done
     [[ -n $seeded ]] || : >$STATE/$1.seeded
     mkdir -p $STATE/seen $STATE/unread; touch $STATE/seen $STATE/unread  # open sweeps what is a day old
-    rmdir $STATE/seen.lock 2>/dev/null
+    _seen_unlock
   fi
-  # In the background and off fzf's pipe: a slow tone or notifier never holds up the list.
-  (( $#alerts )) && { notify_alerts $alerts >/dev/null 2>&1 &! }
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
@@ -722,7 +759,7 @@ profile)
 
 open)  # panel on the left, viewer on the right
   local id=$$ term
-  rm -rf $STATE/*(Nmd+1)
+  rm -rf $STATE/*(Nmd+1) $STATE/$id.seeded  # a reused ID is a new panel: its first refresh only records
   lzr1_splash open
   if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
     # Ghostty: split this pane; it becomes the viewer.
@@ -822,7 +859,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   [[ -z $KP || -z $KS || $KP == +pr ]] && exit 0
   # A click on another row, enter or a new session brings back a viewer pane that was closed.
   if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
-    print -rn -- $key >$tfile; rm -f $STATE/unread/$KP/$KS
+    print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY
     $SELF _respawn $id
     exit 0
   fi
@@ -837,7 +874,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   sleep 0.35
   [[ $(<$tfile.want 2>/dev/null) == $key ]] || exit 0
   local was=$(<$tfile 2>/dev/null)
-  print -rn -- $key >$tfile; rm -f $STATE/unread/$KP/$KS
+  print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY
   [[ -z $was ]] && exit 0  # an idle viewer picks the target up by itself
   if [[ ${was%%/*} == $KP ]]; then
     # Same machine: switch the attached client in place.
@@ -1217,6 +1254,10 @@ keys)
 
   press a key
 EOF
+  ;;
+
+_notify)  # _notify RECORD...: list_rows' alerts, from a process of its own
+  shift; notify_alerts "$@"
   ;;
 
 notify)  # a sample alert, in the foreground, to check the tone and the notifications on this computer
