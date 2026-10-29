@@ -39,7 +39,8 @@ source ${SELF:h:h}/lib/splash.zsh
 
 # A profile is KEY=value lines, read as data (never sourced):
 #   type=local|ssh  host=user@host  key=~/.ssh/id  port=22  root=~/work  repos=~/work/repos  claude=/path/to/claude
-#   only=~/work  (optional: list only the sessions whose folder is inside it, so profiles can share a machine)
+#   only=~/work  (list only the sessions whose folder is inside it, so profiles can share a machine).
+#   profile add writes root= and only= equal to repos=; older profiles may differ.
 load() {
   local f=$PROFILES/$1.conf k v
   [[ -n $1 && -r $f ]] || { print -ru2 -- "lzr1-panel: no profile '$1' (see: lzr1-panel profile list)"; return 1 }
@@ -146,16 +147,14 @@ profile_help() {
 lzr1-panel profile list
 lzr1-panel profile show NAME
 lzr1-panel profile add                                   guided: asks for everything
-lzr1-panel profile add NAME --local --repos PATH [--root PATH] [--only PATH] [--claude PATH]
-lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--root PATH] [--only PATH] [--claude PATH]
+lzr1-panel profile add NAME --local --repos PATH [--claude PATH]
+lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH]
 lzr1-panel profile test NAME                             reach it, find tmux and claude, check the folders
 lzr1-panel profile remove NAME
 
-NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari).
---repos: the folder holding your repositories; a session named like one of them opens inside it.
---root:  where any other session opens (default: --repos).
---only:  list only the sessions whose folder is inside PATH (usually --repos): two profiles can then share one
-         machine, one folder each, without listing the same sessions twice.
+NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari); a _ becomes a dash.
+--repos: the folder holding your repositories. A profile opens and lists only the sessions inside --repos, so two
+         profiles can share one machine, one folder each, without listing the same sessions twice.
 Paths may start with ~, read on the profile's machine.
 EOF
 }
@@ -181,26 +180,40 @@ profile_test() {
   return $bad
 }
 
+# $1, a profile name asked for: REPLY is the name to use (a _ becomes -), or WHY says what is wrong with it.
+profile_name() {
+  REPLY=${1//_/-} WHY=
+  [[ $REPLY == $1 ]] || print -r -- "  using $REPLY"
+  if [[ $REPLY != [a-z0-9][a-z0-9-]# ]]; then WHY="profile name: lowercase letters, digits and dashes"
+  elif [[ -e $PROFILES/$REPLY.conf ]]; then WHY="profile '$REPLY' exists (lzr1-panel profile remove $REPLY first)"
+  fi
+  [[ -z $WHY ]]
+}
+
 profile_add() {
-  local name type host key port repos root claude only
+  local name type host key port repos claude REPLY WHY
+  # One guided answer: the prompt shows even when the answers are piped in; the end of input stops the questions.
+  ask() { print -rnu2 -- "$2"; IFS= read -r $1 || { print -u2; die "profile add: no answer" } }
   if (( $# == 0 )); then
     # Guided: the same questions an agent asks, then the same command.
     print "New lzr1-panel profile (Claude Code sessions only, for now)"
-    read -r "name?  Profile name (e.g. macbook-pro-lazari): "
+    while :; do
+      ask name "  Profile name (e.g. macbook-pro-lazari): "
+      profile_name "$name" && break
+      print -r -- "  $WHY"
+    done
+    name=$REPLY
     print "  Target: 1) this computer   2) another machine over SSH"
-    read -r "type?  Choose 1 or 2: "
+    ask type "  Choose 1 or 2: "
     if [[ $type == 2 ]]; then
       type=ssh
-      read -r "host?  SSH user@host: "
-      read -r "key?  SSH key file (empty: your SSH defaults): "
-      read -r "port?  SSH port (empty: 22): "
+      ask host "  SSH user@host: "
+      ask key "  SSH key file (empty: your SSH defaults): "
+      ask port "  SSH port (empty: 22): "
     else
       type=local
     fi
-    read -r "repos?  Folder with your repositories (e.g. ~/Github/lerian): "
-    read -r "root?  Folder for sessions that are not a repository (empty: same as above): "
-    read -q "only?  List only the sessions inside the repositories folder (when profiles share this machine)? [y/N] "
-    print; [[ $only == y ]] && only=$repos || only=
+    while [[ -z $repos ]]; do ask repos "  Folder with your repositories (e.g. ~/Github/my-repositories): "; done
   else
     name=$1; shift
     while (( $# )); do
@@ -210,19 +223,18 @@ profile_add() {
         --key) key=$2; shift ;;
         --port) port=$2; shift ;;
         --repos) repos=$2; shift ;;
-        --root) root=$2; shift ;;
         --claude) claude=$2; shift ;;
-        --only) only=$2; shift ;;
+        --root|--only) die "profile add: --root and --only are gone: a profile opens and lists sessions inside --repos" ;;
         *) die "profile add: unknown option $1" ;;
       esac
       shift
     done
+    profile_name "$name" || die "$WHY"
+    name=$REPLY
   fi
-  [[ $name == [a-z0-9][a-z0-9-]# ]] || die "profile name: lowercase letters, digits and dashes"
   [[ $type == (local|ssh) ]] || die "profile add: choose --local or --ssh USER@HOST"
   [[ $type == local || -n $host ]] || die "profile add: --ssh needs USER@HOST"
   [[ -n $repos ]] || die "profile add: --repos PATH is required"
-  [[ -e $PROFILES/$name.conf ]] && die "profile '$name' exists (lzr1-panel profile remove $name first)"
   [[ $key == \~* ]] && key=$HOME${key#\~}
   [[ -z $key || -r $key ]] || die "SSH key not readable: $key"
   # Store a path to claude that works without a login shell: tmux starts it with a bare PATH.
@@ -238,8 +250,8 @@ profile_add() {
     [[ -n $key ]] && print -r -- "key=$key"
     [[ -n $port ]] && print -r -- "port=$port"
     print -r -- "repos=$repos"
-    print -r -- "root=${root:-$repos}"
-    [[ -n $only ]] && print -r -- "only=$only"
+    print -r -- "root=$repos"
+    print -r -- "only=$repos"
     print -r -- "claude=$claude"
   } >$PROFILES/$name.conf
   chmod 600 $PROFILES/$name.conf

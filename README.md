@@ -209,15 +209,16 @@ lzr1-panel profile add
 Or in one line:
 
 ```sh
-lzr1-panel profile add my-mac --local --repos ~/Github/lerian
-lzr1-panel profile add my-server --ssh user@host --key ~/.ssh/my.key --repos '~/repos'
+lzr1-panel profile add my-mac --local --repos ~/Github/my-repositories
+lzr1-panel profile add my-server --ssh user@host --key ~/.ssh/my.key --repos '~/my-repositories'
 ```
 
-**One machine, several folders?** Give each profile `--only`, and it lists just the sessions inside its folder:
+A profile lists only the sessions inside its `--repos` folder, so **one machine can have several profiles**, one
+folder each, and every session shows once:
 
 ```sh
-lzr1-panel profile add lzr1-personal --local --repos ~/Github/lazari --only ~/Github/lazari
-lzr1-panel profile add lzr1-lerian --local --repos ~/Github/lerian --only ~/Github/lerian
+lzr1-panel profile add lzr1-personal --local --repos ~/Github/lazari
+lzr1-panel profile add lzr1-lerian --local --repos ~/Github/lerian
 ```
 
 Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](docs/profiles.md)).
@@ -229,7 +230,8 @@ Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](
 | `lzr1-panel profile show NAME` | what it holds |
 | `lzr1-panel profile remove NAME` | removes it |
 
-A session named like a folder in `--repos` opens inside it: `lerian-clients` opens in `~/Github/lerian/lerian-clients`.
+A session named like a folder in `--repos` opens inside it: `lerian-clients` opens in
+`~/Github/my-repositories/lerian-clients`.
 
 > [!IMPORTANT]
 > **Profiles stay private.** They live in `~/.config/lzr1-panel/profiles/`, never in this repository: they hold

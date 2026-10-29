@@ -303,7 +303,7 @@ and remove.
 
 #### Task 2.1.1: `profile add`: repositories folder only, names checked and asked again
 
-- [ ] Done
+- [x] Done
 
 **Context:** `profile_add` (`bin/lzr1-panel`, "profile management") asks, in its guided form, name, target, SSH
 host/key/port, the repositories folder (example `~/Github/lerian`), a root folder for non-repository sessions, and
@@ -567,3 +567,8 @@ lists the Claude ones.
   The snapshot is `EPOCHREALTIME`, not `EPOCHSECONDS` (`_pos` reloads are 0.8 s apart). A lock with no pid file
   after 1 s also counts as stale (a refresh writes it right after `mkdir`). verify-111 and verify-c1 now read the
   state as the seen file's second field, and verify-111 holds its lock with a live pid.
+- Task 2.1.1: the guided questions print their prompt to stderr themselves (zsh's `read "x?prompt"` shows it only on
+  a terminal), so piped answers show each question, and the end of input dies with `profile add: no answer` instead
+  of looping. The name check is a new `profile_name` (sets `REPLY`, or `WHY`), for `profile edit` to reuse.
+  `docs/troubleshooting.md` ("The same session shows under two profiles") also dropped `--only`. The earlier
+  verification scripts dropped `--only` from their `profile add` lines (copies kept as `*.pre211`).

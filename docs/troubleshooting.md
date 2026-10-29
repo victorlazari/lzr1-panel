@@ -127,14 +127,14 @@ Your own `cl-*` aliases can do the same: make them call `lzr1-panel run --model 
 
 ### The same session shows under two profiles
 
-Both profiles point at the same machine, and a profile lists every session on its machine.
+Both profiles point at the same machine, and at least one was made by an older version, which listed every session
+on its machine (no `only=` in `lzr1-panel profile show NAME`).
 
-**Fix:** give each profile its own folder with `--only`, so it lists just the sessions inside it
-(remove the profile and add it again):
+**Fix:** add the profile again: a new profile lists just the sessions inside its repositories folder.
 
 ```sh
 lzr1-panel profile remove NAME
-lzr1-panel profile add NAME --local --repos ~/Github/lerian --only ~/Github/lerian
+lzr1-panel profile add NAME --local --repos ~/Github/lerian
 ```
 
 ### A session is missing from its profile
