@@ -42,7 +42,9 @@ browser ──HTTPS (tailnet only)──▶ tailscale serve ──▶ lzr1-remot
    `~/.cache/lzr1-panel/remote/session` (mode 0600, in a 0700 folder) so the URL and password can be copied again.
 2. **ttyd** listens on a Unix socket in that folder. Each browser that connects gets a fresh `lzr1-panel open` in the
    tmux layout (a Ghostty split cannot be shown in a browser), at most 4 at once. Every panel sees and drives the same
-   tmux sessions as the one on your screen. A browser's layout ends when the browser goes away.
+   tmux sessions as the one on your screen. A browser's layout ends when the browser goes away. The session a browser
+   shows is kept in `<uuid>.last` in that folder, so a browser that reconnects (after a sleep or a dropped network)
+   comes back to it.
 3. **lzr1-remote-gw** (`gateway/`, Go standard library only) listens on a Unix socket (mode 0600) in that folder, or,
    on macOS, on `127.0.0.1` on a free port (see below). It reads the password once on its standard input, checks every
    request and proxies the page and its WebSocket to ttyd.
@@ -129,8 +131,8 @@ errors, upstream errors and refused logins (a login not on the allowlist). Both 
 ## Turning it off
 
 `lzr1-panel remote off` ends the watcher and `serve`, stops the gateway, ttyd and every browser's layout, then checks
-with `tailscale serve status` that the path is gone (removing it with `serve ... off` if not), and deletes the sockets
-and the session file. It is safe to run twice. It signals a process only while its command line still holds this
+with `tailscale serve status` that the path is gone (removing it with `serve ... off` if not), and deletes the sockets,
+the session file and the `.last` picks. It is safe to run twice. It signals a process only while its command line still holds this
 remote's UUID (the watcher runs as `lzr1-panel remote watch <uuid>`, the gateway with `--base /<uuid>/`, ttyd with
 `-b /<uuid>`, `serve` with `--set-path /<uuid>`), so a pid reused after a crash or a reboot is never touched. If
 Tailscale cannot confirm the path is gone (the app is quit, `tailscaled` is down, the operator permission was removed),
@@ -184,7 +186,7 @@ in a terminal" marks a failure reproduced in the tmux layout in a plain terminal
 | **Typing** in a session | pass, once the keyboard is in the viewer (Enter on the row, or a click in the viewer): the session read every character. | needs a person | needs a person |
 | **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | needs a person | needs a person |
 | **Right-click** menu | pass (2.2.1): the row's menu opens and its actions work; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | needs a person | needs a person (no right button: long-press) |
-| **Double-click** a row | fail, also in a terminal: the keyboard reaches the viewer for about 0.2 s, then tmux's own `DoubleClick1Pane` binding (`select-pane -t =`) puts it back on the panel. Enter works. | needs a person | needs a person |
+| **Double-click** a row | pass (2.2.3): the row shows in the viewer and the keyboard moves there and stays. It used to go back to the panel after about 0.2 s, also in a terminal, because tmux's own `DoubleClick1Pane` binding ran `select-pane -t =`. The layout's server now binds the double and triple click without `select-pane`; a single click still moves the keyboard to the pane clicked. | needs a person | needs a person |
 | **Footer** buttons | `[?]`, `[+opus]` and `[+sonnet]` work. The first footer click right after a row's menu was lost, also in a terminal; fixed in 2.2.2 and checked in a terminal's tmux layout (Task 2.2.4 measures it again in Chrome). | needs a person | needs a person |
 | **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there (once in four runs that click did not start it). | needs a person | needs a person |
 | **Ctrl-C** to Claude | pass: the agent got SIGINT. | needs a person | needs a person (no Ctrl key on the keyboard) |
@@ -193,10 +195,10 @@ in a terminal" marks a failure reproduced in the tmux layout in a plain terminal
 | **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | needs a person | needs a person |
 | **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel shrinks with the window (56 → 38 columns) rather than keeping its width. | needs a person | needs a person |
 | **Phone-width** layout | fail (Chromium at 390×844 px): 52 columns, narrower than the 56-column panel, so tmux squeezes the panel to 1 column and the list disappears. | needs a person | needs a person |
-| **Reconnect** after the laptop sleeps | partial (simulated by closing the WebSocket; a real sleep needs a person): the old layout ends and ttyd reconnects by itself, but its new panel fails with "server exited unexpectedly / cannot start tmux" (the dying layout was the last on the `lzr1` server); a second Enter gives a fresh panel, with the earlier selection gone. | needs a person | needs a person |
+| **Reconnect** after the laptop sleeps | pass (2.2.3; simulated by closing the WebSocket, a real sleep needs a person): ttyd reconnects by itself to a working panel that shows the session the browser showed before, with the highlight on it. Before, the new panel could fail with "server exited unexpectedly / cannot start tmux" when the dying layout was the last on the `lzr1` server, and it started on the first session. `open` now retries tmux for about 5 s, and each remote keeps its browsers' last pick. | needs a person | needs a person |
 | **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person: headless Chromium has no browser shortcuts. What reaches the page works: Ctrl-W arrives as the terminal's word erase. | needs a person | needs a person |
 
 Copy and the right button were fixed after this measurement (Task 2.2.1, measured again the same way). Ctrl-b d and
-the first footer click after a menu were fixed in Task 2.2.2 and checked in a terminal. Still for Phase 2 (Epic 2.2):
-a narrower or single-pane layout under about 80 columns; double-click in the tmux layout; reconnect without the
-`lzr1` server race; then the Safari and phone columns, measured by a person.
+the first footer click after a menu were fixed in Task 2.2.2 and checked in a terminal. Double-click and reconnect
+were fixed in Task 2.2.3 and measured again in Chrome. Still for Phase 2 (Epic 2.2): a narrower or single-pane layout
+under about 80 columns; then the Safari and phone columns, measured by a person.

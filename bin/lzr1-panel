@@ -704,6 +704,13 @@ first_key() {
   return 1
 }
 
+# remote_last ID KEY: a browser's layout (open, LZR1_REMOTE) shows KEY: the remote's .last keeps it for a reconnect
+remote_last() {
+  local u; [[ -r $STATE/$1.remote ]] || return 0
+  u=$(<$STATE/$1.remote)
+  [[ $u == [0-9a-f-]## && -d $RDIR ]] && print -rn -- $2 >$RDIR/$u.last
+}
+
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
   split_key $2; load $KP 2>/dev/null || return 0
   on 'c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null); [ -n "$c" ] && tmux detach-client -t "$c" 2>/dev/null; true' $1
@@ -814,7 +821,7 @@ _remote_off() {
       $TSBIN serve --https=443 --set-path /$u off >/dev/null 2>&1; _remote_published $u; r=$?
     fi
   fi
-  rm -f $RDIR/*.sock(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid
+  rm -f $RDIR/*.sock(N) $RDIR/*.last(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid
   if (( r != 1 )); then
     print -ru2 -- "lzr1-panel: could not unpublish https://${RS[host]:-<this machine>}/$u/ (is Tailscale running?);" \
       "everything else is stopped; kept $RDIR/session. Run lzr1-panel remote off again, or:" \
@@ -1237,11 +1244,31 @@ open)  # panel on the left, viewer on the right
   if (( $+commands[pbcopy] )); then clip=pbcopy
   elif [[ -n $WAYLAND_DISPLAY ]] && (( $+commands[wl-copy] )); then clip=wl-copy
   elif [[ -n $DISPLAY ]] && (( $+commands[xclip] )); then clip='xclip -selection clipboard'; fi
-  $T new-session -d -s $sess -x ${COLUMNS:-200} -y ${LINES:-50} "$SELF _viewer $id" || die "cannot start tmux"
-  $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
-     \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' \
-     \; set -s set-clipboard on \; set -s 'terminal-features[90]' '*:clipboard' >/dev/null  # copies reach the terminal
+  # The lzr1 server exits with its last layout. A layout starting while it does (a browser reconnecting as its old
+  # layout ends) is refused ("server exited unexpectedly"), or its session goes with the server: try again.
+  local n r err
+  for r in 1 2 3; do
+    n=0
+    until err=$($T new-session -d -s $sess -x ${COLUMNS:-200} -y ${LINES:-50} "$SELF _viewer $id" 2>&1); do
+      (( ++n < 20 )) || die "${err:+$err; }cannot start tmux"
+      sleep 0.25
+    done
+    # Copies reach the terminal (set-clipboard). tmux's own double and triple click select the pane under the mouse
+    # after a delay, taking the keyboard back from the viewer that a double-click on a row just gave it: the same
+    # bindings without select-pane (a single click still selects the pane).
+    $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
+       \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' \
+       \; set -s set-clipboard on \; set -s 'terminal-features[90]' '*:clipboard' \
+       \; bind -n DoubleClick1Pane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \
+           'copy-mode -H ; send -X select-word ; run -d0.3 ; send -X copy-pipe-and-cancel' \
+       \; bind -n TripleClick1Pane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \
+           'copy-mode -H ; send -X select-line ; run -d0.3 ; send -X copy-pipe-and-cancel' >/dev/null 2>&1
+    $T has-session -t "=$sess" 2>/dev/null && break
+    (( r < 3 )) || die "cannot start tmux"
+  done
   [[ -n $clip && -z $LZR1_REMOTE ]] && $T set-hook -t $sess pane-set-clipboard "run-shell -b 'tmux save-buffer - | $clip'"
+  # A browser's layout: _select keeps its pick in the remote's .last, so a reconnecting browser comes back to it.
+  [[ -n $LZR1_REMOTE ]] && print -rn -- $LZR1_REMOTE >$STATE/$id.remote
   vpane=$($T display -p -t $sess '#{pane_id}')
   print -rn -- tmux >$STATE/$id.mode
   print -rn -- $TERM_PROGRAM >$STATE/$id.term
@@ -1305,7 +1332,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
       # have the panel's ticker move the highlight there.
       ended+=( $target )
       if first_key $id $ended; then
-        print -rn -- $REPLY >$tfile; print -rn -- $REPLY >$STATE/$id.follow
+        print -rn -- $REPLY >$tfile; print -rn -- $REPLY >$STATE/$id.follow; remote_last $id $REPLY
       else ended=(); : >$tfile; fi
       continue
     fi
@@ -1322,7 +1349,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   [[ -z $KP || -z $KS || $KP == +pr ]] && exit 0
   # A click on another row, enter or a new session brings back a viewer pane that was closed.
   if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
-    print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY
+    print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY; remote_last $id $key
     $SELF _respawn $id
     exit 0
   fi
@@ -1337,7 +1364,7 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   sleep 0.35
   [[ $(<$tfile.want 2>/dev/null) == $key ]] || exit 0
   local was=$(<$tfile 2>/dev/null)
-  print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY
+  print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY; remote_last $id $key
   [[ -z $was ]] && exit 0  # an idle viewer picks the target up by itself
   if [[ ${was%%/*} == $KP ]]; then
     # Same machine: switch the attached client in place; .on tells the viewer its client is on KEY now.
@@ -1352,13 +1379,20 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
   fi
   ;;
 
-_ticker)  # _ticker ID PORT: show the first session in the viewer, then reload the panel every 15s while it is alive
+_ticker)  # _ticker ID PORT: show the first session in the viewer (a reconnecting browser: the one it showed), then
+         # reload the panel every 15s while it is alive
   local id=$2 port=$3
-  ( local first i
+  ( local i u last=
+    local -a keys
+    [[ -r $STATE/$id.remote ]] && u=$(<$STATE/$id.remote) && [[ -r $RDIR/$u.last ]] && last=$(<$RDIR/$u.last)
     for i in {1..50}; do
-      first=$(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port?limit=200" |
-        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | grep -v '^+pr/' | head -1)
-      [[ -n $first ]] && { $SELF _select $id $first; break; }
+      keys=( ${(f)"$(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port?limit=200" |
+        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | grep -v '^+pr/')"} )
+      if (( $#keys )); then
+        if [[ -n $last && ${keys[(Ie)$last]} -gt 0 ]]; then $SELF _select $id $last; $SELF _pos $id $port $last &
+        else $SELF _select $id $keys[1]; fi
+        break
+      fi
       sleep 0.2
     done
     # Every second: follow the viewer when it moved on by itself (a session ended); every 15s: reload.
@@ -1638,7 +1672,8 @@ gh pr checks $num, fix it and push." ;;
       [[ -z $new || $new == $KS ]] && exit 0
       [[ $new == *[.:/\|]* ]] && { print -r -- 'names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0 }
       on 'tmux rename-session -t "=$1" "$2"' $KS $new || { print -n "press a key"; read -k1 -s; exit 0 }
-      [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target
+      [[ $(<$STATE/$id.target 2>/dev/null) == $key ]] && print -rn -- "$KP/$new" >$STATE/$id.target &&
+        remote_last $id "$KP/$new"
       cur=$STATE/$id.target.on
       [[ -r $cur && $(<$cur) == $key ]] && print -rn -- "$KP/$new" >$cur ;;
     end)   $SELF _kill $key $id ;;
@@ -1818,7 +1853,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       print -r -- "allow=$allow" >$CONFIG/remote.conf
       _remote_gw; gw=$REPLY
       mkdir -p $RDIR && chmod 700 $RDIR
-      rm -f $RDIR/*.sock(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid
+      rm -f $RDIR/*.sock(N) $RDIR/*.last(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid
       # The audit trail the gateway appends to (0600): its last 2000 lines kept. This remote's events start at auditpos,
       # where the watcher and status read from. Trimmed only here, while no remote runs.
       ( umask 077

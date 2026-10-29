@@ -571,7 +571,7 @@ fzf's with its workaround).
 
 #### Task 2.2.3: Double-click focuses the viewer; reconnect gets a working panel on the same session
 
-- [ ] Done
+- [x] Done
 
 **Context:** Both in the tmux layout `open` makes (`bin/lzr1-panel:1114-1153`), on the `lzr1` server started with
 `-f /dev/null`, so tmux's default mouse bindings apply. **Double-click:** fzf's `double-click` runs `_go` (`:1569`),
@@ -822,3 +822,18 @@ each missing piece with its fix.
   (`$tfile.on`, `switched` from the in-place switch, rename updates it). The verify also covers a rename after an
   in-place switch and a menu opened with `m`. The fidelity rows say "fixed, checked in a terminal's tmux layout".
   Chrome is measured again in Task 2.2.4.
+- Task 2.2.3: besides `_select`, the browser's pick reaches `.last` from two more places, through one helper
+  (`remote_last ID KEY`, a no-op without `$STATE/ID.remote`): the viewer moving on by itself when its session ended,
+  and a rename from the row's menu. `remote on` also removes stale `*.last` files. A `.last` key the panel does not
+  list falls back to the first row. `open`'s `set` and `bind` commands are now silent (2>/dev/null), since
+  `has-session` decides whether to try again. When tmux cannot start, the error is tmux's message followed by
+  "cannot start tmux", after about 5 s. Neither the isolated reconnect (3 rounds) nor the RED browser run hit the
+  "server exited unexpectedly" race; there the new panel started but showed the first session. The retry was
+  therefore checked with a stand-in `tmux` in the isolated HOME's `~/.local/bin`, which `open` puts first on PATH.
+  The stand-in fails the layout's `new-session` 3 times, or removes the new session once, and the layout starts in
+  both cases. The double-click check allows up to 0.6 s before the keyboard reaches the viewer, because `_go` takes
+  about 0.2 s (`_select`'s debounce). After that it must stay there: RED went back to the panel after 0.3 s, and
+  GREEN stayed for the 2.5 s, in a terminal and in Chrome. The triple-click check is a regression check on the
+  viewer, which kept the keyboard before the change too. A triple-click on a row still ends on the panel, since its
+  third press is a plain `MouseDown1Pane`. The live run allowed only lazari@lerian.studio with `--ttl 15m`, and it
+  ended with "No serve config".
