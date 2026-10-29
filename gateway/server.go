@@ -31,18 +31,20 @@ func setSecurityHeaders(h http.Header) {
 }
 
 type server struct {
-	base   string
-	allow  []string
-	pwHash [32]byte
-	log    *log.Logger
-	proxy  *httputil.ReverseProxy
+	base     string
+	host     string
+	stripped bool
+	allow    []string
+	pwHash   [32]byte
+	log      *log.Logger
+	proxy    *httputil.ReverseProxy
 
 	mu       sync.Mutex
 	sessions map[string]string // session token -> the Tailscale login it was issued to
 }
 
 func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
-	s := &server{base: c.base, allow: c.allow, pwHash: pwHash, log: logger, sessions: map[string]string{}}
+	s := &server{base: c.base, host: c.host, stripped: c.stripped, allow: c.allow, pwHash: pwHash, log: logger, sessions: map[string]string{}}
 	upstream := c.upstream
 	s.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -92,6 +94,18 @@ func (s *server) underBase(p string) bool {
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w.Header())
+	if s.stripped {
+		// Only serve reaches the 0600 socket, and it strips the mount path: put it back. "/../x" becomes
+		// "/UUID/../x", which underBase refuses.
+		if r.URL.Path != "" && !strings.HasPrefix(r.URL.Path, "/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		r.URL.Path = strings.TrimSuffix(s.base, "/") + r.URL.Path
+		if r.URL.Path == strings.TrimSuffix(s.base, "/") {
+			r.URL.Path = s.base
+		}
+	}
 	if r.URL.Path == strings.TrimSuffix(s.base, "/") {
 		http.Redirect(w, r, s.base, http.StatusPermanentRedirect)
 		return
@@ -104,7 +118,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !sameOrigin(r) {
+	if !s.sameOrigin(r) {
 		s.log.Printf("refused %s %s for %s: Origin %q", r.Method, r.URL.Path, login, r.Header.Get("Origin"))
 		http.Error(w, "cross-origin request refused", http.StatusForbidden)
 		return

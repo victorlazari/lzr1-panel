@@ -41,14 +41,18 @@ func (s *server) identity(w http.ResponseWriter, r *http.Request) (string, bool)
 }
 
 // sameOrigin reports whether r may change state: safe methods without an upgrade always may;
-// a POST or a WebSocket upgrade must carry exactly Origin: https://<Host>.
-func sameOrigin(r *http.Request) bool {
+// a POST or a WebSocket upgrade must carry exactly Origin: https://<--host>, or https://<Host> without --host.
+func (s *server) sameOrigin(r *http.Request) bool {
 	safe := r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions
 	if safe && r.Header.Get("Upgrade") == "" {
 		return true
 	}
 	o := r.Header.Values("Origin")
-	return r.Host != "" && len(o) == 1 && o[0] == "https://"+r.Host
+	want := r.Host
+	if s.host != "" {
+		want = s.host
+	}
+	return want != "" && len(o) == 1 && o[0] == "https://"+want
 }
 
 // newSession issues a session token bound to login.

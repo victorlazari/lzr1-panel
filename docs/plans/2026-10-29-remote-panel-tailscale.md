@@ -328,3 +328,20 @@ each missing piece with its fix.
   the manual command and returns 1, so `remote off` exits 1, `status` says the path may still be published and `on`
   refuses. The Funnel check now looks inside foreground configs too. Verified by `verify-review-fixes.zsh` (a stub
   failing `tailscale`, then live with `--ttl 20s`).
+- Phase 1 open findings: processes are matched by their full command line holding the UUID (`ps -o args=`), never by
+  name, before every signal, KILL included: the watcher is its own process, `lzr1-panel remote watch UUID` (an
+  internal subcommand), the gateway has `--base /UUID/`, ttyd `-b /UUID`, `serve` `--set-path /UUID`. `serve` is no
+  longer started by `remote on` itself: a keeper reading the gateway's stdout starts it on `ready` and ends it when
+  that stdout closes (the gateway exited), so the path dies with the gateway even when the watcher was killed (TERM and
+  KILL checked live). The gateway's pid comes from `gw.pid`, written by the subshell that execs it. Funnel is checked
+  before anything is published, again after, and by the watcher every 10 s; a status that cannot be read counts as
+  Funnel on. `_remote_off` now always stops the watcher, `serve`, the gateway, ttyd and the browsers' layouts, then
+  unpublishes; when Tailscale cannot confirm, only the session file is kept (the plan had it keep the gateway too).
+- Phase 1 open findings: on Linux the gateway is back on its 0600 Unix socket (`serve ... unix:SOCK`); the 127.0.0.1
+  listener is macOS only. Tailscale's source (`ipn/ipnlocal/serve.go`) shows that for a `unix:` target `serve` strips
+  the mount path and sends `Host: localhost`, so the gateway gained `--stripped` (put `--base` back) and `--host`
+  (the published name `Origin` must match; now passed on macOS too). Not run on a Linux machine: checked with a
+  stand-in `tailscale` and curl over the socket. Over a Unix socket `serve` forwards both `/UUID` and `/UUID/` as `/`,
+  so a URL typed without the final slash gets the page with broken relative links; the URL given always has it. The
+  allowlist accepts any single-`@` login without spaces (`user@github`, `name@passkey`). `--allow`/`--ttl` without a
+  value die with the usage.

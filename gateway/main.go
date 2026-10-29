@@ -26,6 +26,8 @@ const minPasswordLen = 12
 
 type config struct {
 	listen, upstream, base string
+	host                   string // the published name: Origin must be https://host (default: the request's Host)
+	stripped               bool   // serve strips --base before proxying (its unix: upstream): put it back
 	allow                  []string
 	ttl                    time.Duration
 	logPath                string
@@ -42,6 +44,8 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&c.listen, "listen", "", "Unix socket, or loopback host:port (port 0 picks one), to serve on (required)")
 	fs.StringVar(&c.upstream, "upstream", "", "ttyd's Unix socket (required)")
 	fs.StringVar(&c.base, "base", "", "path prefix, /UUID/ (required)")
+	fs.StringVar(&c.host, "host", "", "the published name, like m.tailnet.ts.net: Origin must be https://<it> (default: the Host header)")
+	fs.BoolVar(&c.stripped, "stripped", false, "requests arrive without --base (tailscale serve to a Unix socket strips it); needs --host")
 	fs.StringVar(&allow, "allow", "", "allowed Tailscale logins, comma-separated (required)")
 	fs.DurationVar(&c.ttl, "ttl", 8*time.Hour, "exit after this long")
 	fs.StringVar(&c.logPath, "log", "", "append the log to this file (default stderr)")
@@ -66,6 +70,13 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	}
 	if len(c.base) < 3 || !strings.HasPrefix(c.base, "/") || !strings.HasSuffix(c.base, "/") || strings.Contains(c.base[1:len(c.base)-1], "/") {
 		return bad("--base must look like /UUID/, got %q", c.base)
+	}
+	c.host = strings.ToLower(c.host)
+	if strings.ContainsAny(c.host, "/:@ ") {
+		return bad("--host must be a bare name, like m.tailnet.ts.net, got %q", c.host)
+	}
+	if c.stripped && (c.host == "" || !strings.Contains(c.listen, "/")) {
+		return bad("--stripped needs --host and a Unix socket --listen")
 	}
 	for _, a := range strings.Split(allow, ",") {
 		if a = strings.ToLower(strings.TrimSpace(a)); a != "" {

@@ -26,7 +26,8 @@ machine's Tailscale login), and keeps the answer in `~/.config/lzr1-panel/remote
 
 ```text
 browser ──HTTPS (tailnet only)──▶ tailscale serve ──▶ lzr1-remote-gw ──▶ ttyd ──▶ lzr1-panel open (one per browser)
-          https://<machine>.<tailnet>.ts.net/<uuid>/    127.0.0.1:<port>   Unix socket   tmux layout, splash off
+          https://<machine>.<tailnet>.ts.net/<uuid>/    Unix socket        Unix socket   tmux layout, splash off
+                                                        (macOS: 127.0.0.1:<port>)
 ```
 
 1. `remote on` checks Tailscale, makes a random UUID (the URL path) and a random password, and writes
@@ -34,19 +35,25 @@ browser ──HTTPS (tailnet only)──▶ tailscale serve ──▶ lzr1-remot
 2. **ttyd** listens on a Unix socket in that folder. Each browser that connects gets a fresh `lzr1-panel open` in the
    tmux layout (a Ghostty split cannot be shown in a browser), at most 4 at once. Every panel sees and drives the same
    tmux sessions as the one on your screen. A browser's layout ends when the browser goes away.
-3. **lzr1-remote-gw** (`gateway/`, Go standard library only) listens on `127.0.0.1` on a free port, reads the
-   password once on its standard input, checks every request and proxies the page and its WebSocket to ttyd.
+3. **lzr1-remote-gw** (`gateway/`, Go standard library only) listens on a Unix socket (mode 0600) in that folder, or,
+   on macOS, on `127.0.0.1` on a free port (see below). It reads the password once on its standard input, checks every
+   request and proxies the page and its WebSocket to ttyd.
 4. **`tailscale serve`** publishes the gateway at `https://<machine>.<tailnet>.ts.net/<uuid>/` with a certificate for
-   that name. It is reachable only from the tailnet: `tailscale funnel` (the public internet) is never used, and
-   `remote on` turns itself off if Funnel is on for that address. It runs in the foreground (no `--bg`), so the
-   path lives only as long as that process: Tailscale drops it when the process ends, is killed, or the machine
-   reboots. A small watcher ends it as soon as the gateway exits, so the path never points at a freed port.
+   that name. It is reachable only from the tailnet: `tailscale funnel` (the public internet) is never used.
+   `remote on` reads `tailscale serve status --json` before publishing and refuses if Funnel is on for
+   `<machine>:443`, or if that status cannot be read; it checks again right after publishing, and the watcher checks
+   every 10 seconds and turns remote off if Funnel appears (or the status cannot be read). `serve` runs in the
+   foreground (no `--bg`), so the path lives only as long as that process: Tailscale drops it when the process ends,
+   is killed, or the machine reboots. `serve` is started from the gateway's output and ended as soon as the gateway
+   exits (`--ttl`, a crash, a kill), so the path never points at a stopped gateway, even if the watcher is gone.
 5. The URL is copied to the clipboard. The password is copied only by `remote password`, so the two are not on the
    clipboard together.
 
-The gateway listens on loopback TCP, not a Unix socket, because `tailscale serve` in the macOS app cannot reach a Unix
-socket (every request answers 502). `serve` strips its mount path, so the target is `http://127.0.0.1:<port>/<uuid>`,
-which puts the prefix back.
+On Linux `tailscaled` runs as root and reaches the gateway's 0600 socket (`serve ... unix:<socket>`); `serve` strips
+its mount path and sends `Host: localhost` there, so the gateway puts `/<uuid>` back (`--stripped`) and checks `Origin`
+against the published name (`--host`). On macOS the app's `serve` cannot reach a Unix socket (every request answers
+502), so the gateway listens on loopback TCP and the target is `http://127.0.0.1:<port>/<uuid>`, which puts the prefix
+back.
 
 ## Safety layers
 
@@ -64,23 +71,28 @@ Each request has to pass all of these, in order:
 | Headers on every response: `Cache-Control: no-store`, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, a same-origin `Content-Security-Policy`, `Referrer-Policy: same-origin`, `nosniff` | Caching the terminal, framing it, leaking the URL in a Referer. |
 | An expiry (`--ttl`, 8 hours by default) | A session forgotten on. |
 
-What it does not protect against: anyone who can run programs as you on this computer (they could read the session
-file, or connect to the gateway's loopback port and claim any Tailscale login, though they would still need the
-password), and an allowed person who has the password: they get a full terminal as you, on every machine your profiles
-reach. Logins, failures and logouts go to `~/.cache/lzr1-panel/remote/remote.log`, never the password or a cookie.
+What it does not protect against: anyone who can run programs as you on this computer (they can read the session
+file, password included); on macOS, any local user or process on this Mac, because they can reach the gateway's
+loopback port, send any `Tailscale-User-Login` and `Origin`, and so bypass the e-mail allowlist and the Origin check
+(the password still protects it); and an allowed person who has the password: they get a full terminal as you, on
+every machine your profiles reach. On Linux the gateway's socket is reachable only by you and root. Logins, failures and logouts go to `~/.cache/lzr1-panel/remote/remote.log`, never the password or a cookie.
 
 ## Turning it off
 
-`lzr1-panel remote off` removes the `serve` path, checks with `tailscale serve status` that it is gone, then stops
-the gateway, ttyd and every browser's layout, and deletes the sockets and the session file. It is safe to run twice.
-If Tailscale cannot confirm the path is gone (the app is quit, `tailscaled` is down, the operator permission was
-removed), `off` keeps the session file (the only record of the UUID) and leaves the gateway holding its port, still
-behind the allowlist and password, prints the manual command and exits 1. Run `remote off` again once Tailscale is
-back.
+`lzr1-panel remote off` ends the watcher and `serve`, stops the gateway, ttyd and every browser's layout, then checks
+with `tailscale serve status` that the path is gone (removing it with `serve ... off` if not), and deletes the sockets
+and the session file. It is safe to run twice. It signals a process only while its command line still holds this
+remote's UUID (the watcher runs as `lzr1-panel remote watch <uuid>`, the gateway with `--base /<uuid>/`, ttyd with
+`-b /<uuid>`, `serve` with `--set-path /<uuid>`), so a pid reused after a crash or a reboot is never touched. If
+Tailscale cannot confirm the path is gone (the app is quit, `tailscaled` is down, the operator permission was removed),
+everything else is still stopped, but `off` keeps the session file (the only record of the UUID), prints the manual
+command and exits 1. Run `remote off` again once Tailscale is back.
 
-When `--ttl` passes the gateway exits, and the watcher ends `serve` (the path goes with it) and turns the rest off
-within a second or so. If Tailscale quits, the foreground `serve` ends and the watcher turns remote off the same way.
-After a reboot nothing runs and nothing is published; `remote status` deletes the stale session file.
+When `--ttl` passes the gateway exits, `serve` ends with it (the path goes too), and the watcher turns the rest off
+within a second or so. If Tailscale quits, the foreground `serve` ends and the watcher stops the gateway and ttyd the
+same way; since Tailscale cannot confirm the path is gone, it keeps the session file and writes the manual command to
+`remote.log`, and the next `remote status`, `on` or `off` finishes the cleanup. After a reboot nothing runs and nothing
+is published; `remote status` deletes the stale session file.
 
 If something is left over, by hand: `tailscale serve status`, then `tailscale serve --https=443 --set-path /<uuid>
 off`; `remote status` shows the pids of the gateway, ttyd and `serve`.
