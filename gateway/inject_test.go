@@ -241,3 +241,17 @@ func TestClientScript(t *testing.T) {
 		}
 	}
 }
+
+// ttyd's page has no viewport of its own: without one a phone lays it out 980px wide and shrinks it, so the panel
+// never reaches its narrow layout. The injected tag gives it the phone's real width.
+func TestInjectViewport(t *testing.T) {
+	page := string(insertTag([]byte("<html><head><title>ttyd</title></head><body></body></html>")))
+	for _, want := range []string{`name="viewport"`, "width=device-width", "initial-scale=1", "viewport-fit=cover"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("ttyd's page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Index(page, `name="viewport"`) > strings.Index(page, clientPath) {
+		t.Error("the viewport must come before the client script")
+	}
+}

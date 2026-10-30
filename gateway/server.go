@@ -49,6 +49,7 @@ type server struct {
 	lockFor              time.Duration
 	kill                 chan struct{}
 	idle                 time.Duration // a session with no input for longer is ended (idle.go)
+	deadline             time.Time     // when --ttl ends the gateway (expire sets it; status.go reports it)
 
 	mu          sync.Mutex
 	sessions    map[string]*liveSession // session token -> its login, last input and WebSockets
@@ -186,8 +187,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}
-	if r.URL.Path == s.base+clientPath {
+	switch r.URL.Path {
+	case s.base + clientPath:
 		serveClient(w, r)
+		return
+	case s.base + statusPath:
+		s.serveStatus(w, r, tok)
 		return
 	}
 	if r.Header.Get("Upgrade") != "" {

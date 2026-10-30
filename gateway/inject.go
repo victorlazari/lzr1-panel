@@ -21,8 +21,11 @@ var clientJS []byte
 
 const (
 	clientPath = "lzr1-client.js"
-	clientTag  = `<script src="` + clientPath + `"></script>`
-	maxPage    = 4 << 20 // a bigger page is passed through unchanged
+	// ttyd's page has no viewport: a phone would lay it out 980px wide and shrink it. With the phone's real width the
+	// panel takes its narrow layout; viewport-fit lets client.js keep its key bar clear of the home bar.
+	clientTag = `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">` +
+		`<script src="` + clientPath + `"></script>`
+	maxPage = 4 << 20 // a bigger page is passed through unchanged
 )
 
 // serveClient serves client.js; ServeHTTP has checked the identity, Origin and session first.

@@ -472,6 +472,9 @@ func (s *server) sweep(ctx context.Context) {
 // alone runs on the monotonic clock and would leave out the time the machine slept.
 func (s *server) expire(ctx context.Context, cancel context.CancelCauseFunc, ttl, every time.Duration) {
 	deadline := s.wall().Add(ttl)
+	s.mu.Lock()
+	s.deadline = deadline
+	s.mu.Unlock()
 	for {
 		left := deadline.Sub(s.wall())
 		if left <= 0 {
