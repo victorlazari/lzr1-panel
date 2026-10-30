@@ -15,7 +15,7 @@
 </pre>
 
 **Every Claude Code and opencode session you run, on every machine you own, in one clickable list.**<br>
-**Your pull requests right under them.**
+**Your pull requests right under them. Told when a session needs you. Open it from any browser on your tailnet.**
 
 ![macOS](https://img.shields.io/badge/macOS-supported-555?logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-supported-555?logo=linux&logoColor=white)
@@ -23,10 +23,14 @@
 ![tmux](https://img.shields.io/badge/tmux-sessions-1BB91F?logo=tmux&logoColor=white)
 ![fzf](https://img.shields.io/badge/fzf-0.74%2B-yellow)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-Remote_Control-D97757?logo=anthropic&logoColor=white)
+![opencode](https://img.shields.io/badge/opencode-sessions-555)
+![Tailscale](https://img.shields.io/badge/Tailscale-in_a_browser-242424?logo=tailscale&logoColor=white)
+![Go](https://img.shields.io/badge/Go-login_gateway-00ADD8?logo=go&logoColor=white)
 
 [Quick start](#-quick-start) ·
 [What you get](#-what-you-get) ·
 [Using it](#-using-it) ·
+[In a browser](#in-a-browser) ·
 [Profiles](#-profiles) ·
 [Settings](#-settings) ·
 [Something wrong?](#-something-wrong)
@@ -37,26 +41,26 @@
  lzr1 ───────────────────────────────────────────────
  3 sessions · 1▶ 1⧗ 1· · 1✱
  oracle-sessions ssh · online · 2 ───────────────────
- ▌ ▶ lerian-clients                     opus · 12m ●
+ ▌ ▶ billing-portal                     opus · 12m ●
  ▌   Docker dev data export and import
- ▌   ⎇ feat/docker-dev-data +3 · lerian-clients
-   · erebor                            sonnet · 2h
+ ▌   ⎇ feat/docker-dev-data +3 · billing-portal
+   · garden                            sonnet · 2h
      Review the tmux layer
-     ⎇ main · erebor
+     ⎇ main · garden
  macbook-pro-sessions local · online · 1 ────────────
-   ⧗ ✱ midaz                             opus · 4m
+   ⧗ ✱ atlas                             opus · 4m
      ⧗ Do you want to run make test?
-     ⎇ feat/fees +7 · midaz
+     ⎇ feat/fees +7 · atlas
 
 
 
 
 
  pull requests victorlazari · gh · 2 ────────────────
-   ⧗ #906 fix(oncall): guard ownerless VoIP pro… 2h
-     lerian-clients · ⎇ fix/voip-owner · review req…
-   ✓ #1398 chore: bump lib-commons               3d
-     midaz · ⎇ chore/lib-commons · checks passed
+   ⧗ #906 fix(auth): refresh expired tokens sil… 2h
+     billing-portal · ⎇ fix/token-refresh · revie…
+   ✓ #1398 chore: bump dependencies              3d
+     atlas · ⎇ chore/deps · checks passed
  ────────────────────────────────────────────────────
  [+opus] [+sonnet] [+opencode] [web] [↻] [?]
 ```
@@ -68,8 +72,8 @@
 ## 🚀 Quick start
 
 ```sh
-git clone https://github.com/victorlazari/lzr1-panel.git ~/Github/lazari/lzr1-panel
-cd ~/Github/lazari/lzr1-panel
+git clone https://github.com/victorlazari/lzr1-panel.git ~/Github/lzr1-panel
+cd ~/Github/lzr1-panel
 ./install.sh
 ```
 
@@ -117,13 +121,20 @@ flowchart LR
     machines --> claude["Claude Code and opencode<br/>in tmux sessions"]
     claude -. "Remote Control" .-> phone["claude.ai/code<br/>and your phone"]
     panel -- "your open PRs, every minute" --> github["GitHub<br/>(gh)"]
+    panel -- "a session needs you" --> alert["✱ on its row,<br/>a tone, a notification"]
+    browser(["A browser on<br/>your tailnet"]) -- "Tailscale (HTTPS)" --> gw["Login gateway<br/>(allowlist + password)"]
+    gw -- "ttyd" --> panel2["Its own panel<br/>on the same sessions"]
+    panel2 --> machines
 ```
 
 - Each **machine** keeps its Claude Code and opencode sessions in **tmux**, so they run whether the panel is open
   or not.
 - The **panel** asks every machine for its sessions at once (one shared SSH connection per server), and asks
-  GitHub for your open pull requests.
+  GitHub for your open pull requests. When a session finishes its reply or asks you something, the panel marks it,
+  plays a tone and shows a system notification.
 - The **viewer** attaches to the session you pick. Leave it with `Ctrl-b d`, and the session keeps going.
+- **In a browser**, `tailscale serve` publishes a login gateway on your tailnet; past it, each browser gets its own
+  panel and viewer, on the same tmux sessions ([docs/remote.md](docs/remote.md)).
 
 ---
 
@@ -145,10 +156,13 @@ flowchart LR
 | `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
 | `?` / `q` | all the keys / quit: closes the panel, the viewer and the window |
 
+In a narrow window (a phone, or a tmux layout under `LZR1_NARROW` columns), the panel and the session show one at a
+time: tap a session to open it, `Ctrl-b d` to come back to the list.
+
 ### The viewer
 
 - **`Ctrl-b d`** leaves the session (it keeps running).
-- **Ctrl-C** goes to Claude, unless text is selected: then it copies.
+- **Ctrl-C** goes to Claude (or opencode), unless text is selected: then it copies.
 
 ### The right-click menu
 
@@ -204,14 +218,20 @@ lzr1-panel start PROFILE opus|sonnet|opencode NAME  # a session, without the pan
 lzr1-panel attach PROFILE NAME              # this terminal into a session
 lzr1-panel list                             # every session, then your PRs
 lzr1-panel prs                              # your open pull requests
-lzr1-panel doctor                           # check everything, with fixes
+lzr1-panel doctor                           # check everything, with fixes: this computer, GitHub, alerts,
+                                            # the remote and every profile
 lzr1-panel notify                           # a sample alert: the tone and a notification
 lzr1-panel keys                             # every key
-lzr1-panel remote on                        # the panel in a browser, on your tailnet: prints the URL and password
+lzr1-panel profile list|show|add|edit|test|remove   # your machines (see Profiles below)
+lzr1-panel remote on [--allow EMAIL[,EMAIL]] [--ttl 8h]  # the panel in a browser, on your tailnet: prints the
+                                            # URL and password, copies the URL
 lzr1-panel remote url|password              # copy its URL / its password
 lzr1-panel remote status|who                # on or off, until when, its logins / who is signed in now
 lzr1-panel remote rotate                    # a new password: every browser is logged out, the URL stays
 lzr1-panel remote off                       # unpublish it and stop it all (docs/remote.md)
+lzr1-panel remote build                     # build the login gateway now (remote on does it when needed)
+lzr1-panel splash                           # the opening animation
+lzr1-panel version                          # the version
 ```
 
 Your shell also gets shortcuts:
@@ -249,8 +269,8 @@ A profile lists only the sessions inside its `--repos` folder, so **one machine 
 folder each, and every session shows once:
 
 ```sh
-lzr1-panel profile add lzr1-personal --local --repos ~/Github/lazari
-lzr1-panel profile add lzr1-lerian --local --repos ~/Github/lerian
+lzr1-panel profile add personal --local --repos ~/Github/personal
+lzr1-panel profile add work --local --repos ~/Github/work
 ```
 
 Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](docs/profiles.md)).
@@ -263,8 +283,8 @@ Or just ask Claude: *"create a new lzr1-panel profile"* ([the guide it follows](
 | `lzr1-panel profile edit NAME` | asks its questions again, each showing the current value |
 | `lzr1-panel profile remove NAME` | removes it |
 
-A session named like a folder in `--repos` opens inside it: `lerian-clients` opens in
-`~/Github/my-repositories/lerian-clients`.
+A session named like a folder in `--repos` opens inside it: `billing-portal` opens in
+`~/Github/my-repositories/billing-portal`.
 
 > [!IMPORTANT]
 > **Profiles stay private.** They live in `~/.config/lzr1-panel/profiles/`, never in this repository: they hold
