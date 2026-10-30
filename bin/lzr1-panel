@@ -696,7 +696,11 @@ list_rows() {
     mkdir -p $STATE/seen $STATE/unread; touch $STATE/seen $STATE/unread  # open sweeps what is a day old
     _seen_unlock
   fi
-  print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}"$'\0'
+  # ⇄ web while the remote's gateway runs: one ps, no cleanup of a stale session file (_remote_live's job), and RS
+  # local, so the caller's is untouched.
+  local web=; local -A RS
+  _remote_read && _ours "$RS[gwpid]" gw $RS[uuid] && web=' · ⇄ web'
+  print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}$web"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
 }
@@ -2028,8 +2032,8 @@ keys)
   c  or [+opencode]  new opencode session (auto-approve on)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
-  x                end the session: Claude and its tmux session (asks first),
-                   then the first session left shows
+  x                end the session (asks first); the next one shows
+  w  or [web]      in a browser too: on, copy, who, off
   r  or [↻]        refresh now (it refreshes every 15s)
   q                close the panel and the viewer (the window closes)
 

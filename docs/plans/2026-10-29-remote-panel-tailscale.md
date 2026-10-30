@@ -675,7 +675,7 @@ password (restarts the gateway, ends sessions), turn off; the summary line shows
 `list_rows` summary)
 **Dependencies:** Phases 1-2
 **Done when:** every action works from the key, the footer and the menu, in both Ghostty and tmux layouts.
-**Status:** Pending
+**Status:** Done
 
 Decisions for this epic (owner, 2026-10-29, and the elaboration):
 
@@ -833,7 +833,7 @@ browser's panel offers only the copies (to the browser's clipboard) and who is c
 
 #### Task 3.1.3: `⇄ web` in the summary line, `keys`, and the menu from a real browser
 
-- [ ] Done
+- [x] Done
 
 **Context:** The summary line is the panel's header row, printed last by `list_rows` (`bin/lzr1-panel:693`): `N sessions
 · w▶ q⧗ i· · a✱`; `lzr1-panel list` prints it too (`:1205`). `list_rows` runs every 15 s and after every
@@ -1252,3 +1252,17 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   vi-mode prompt kept its prefill, which was lazari@lerian.studio, with a 15 min TTL), and the plain status still said
   "No serve config". It was turned off at once with `remote off`. The verify now also checks that `serve status
   --json` has no `Handlers`, and Enter is sent only when the line holds exactly the intended answer.
+- Task 3.1.3: the `keys` line is `  w  or [web]      in a browser too: on, copy, who, off` (55 columns, its text in
+  column 19 like the others): the plan's text is 60 columns. "None over 56 columns" was measured as the `[?]` view's
+  rows at 56 columns (40, as before; 27 lines, as before), since many existing lines were already wider and wrap; the
+  new and the shortened `x` line are checked. `list_rows` reads the session file into a local `RS`, so a caller's is
+  untouched. Beyond `bin/lzr1-panel`: the browser check found that a rotate left the browser on ttyd's "Press ⏎ to
+  Reconnect", not the login form. `gateway/client.js` asks `HEAD lzr1-client.js` once when the WebSocket closes, and
+  during a rotate that answer is not a 401 (the old gateway is gone, the new one not yet published), so nothing
+  happened. It now asks again every second for a minute until it gets a 401 (login) or a 200 (ttyd's reconnect);
+  the login form then showed about 1.3 s after `rotate` finished. `docs/remote.md` is left for Task 3.2.2. Verified
+  by `verify-3.1.3.zsh` (offline with the stand-in remote, the 2.2.2 footer check included, RED then GREEN) and
+  `verify-3.1.3.js` (live, only lazari@lerian.studio, `--ttl 15m`: the browser's reduced menu, its URL copy read back
+  with `navigator.clipboard.readText()`, who, `⇄ web`, the local panel's rotate logging it out, the new password back
+  on the session it showed). The live run ended with "No serve config", `serve status --json` `{}`, and the real tmux
+  sessions unchanged.

@@ -8,17 +8,23 @@
   'use strict';
   const MAX = 1 << 20; // a copy larger than 1 MiB is dropped
 
-  // 1. ttyd's socket. A 401 for this script means no session; anything else (a network error, 200) leaves ttyd's own
-  // reconnect alone.
+  // 1. ttyd's socket. A 401 for this script means no session; a 200 leaves ttyd's own reconnect alone. Anything else (a
+  // network error, a 502 while `remote rotate` swaps the gateway) is asked again every second for a minute, so a
+  // rotate's logout still reaches the login form.
   const WS = window.WebSocket;
   if (WS) {
+    const check = n => {
+      fetch('lzr1-client.js', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })
+        .then(r => r.status, () => 0)
+        .then(s => {
+          if (s === 401) location.replace('login');
+          else if (s !== 200 && n < 60) setTimeout(() => check(n + 1), 1000);
+        });
+    };
     window.WebSocket = class extends WS {
       constructor(...a) {
         super(...a);
-        this.addEventListener('close', () => {
-          fetch('lzr1-client.js', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })
-            .then(r => { if (r.status === 401) location.replace('login'); }, () => {});
-        });
+        this.addEventListener('close', () => check(0));
       }
     };
   }
