@@ -26,7 +26,7 @@ browser), Tailscale 1.104 (`serve`, MagicDNS HTTPS certificates, identity header
 |-------|-----------|-------|--------|
 | 1 | `lzr1-panel remote on` prints a tailnet URL and password; an allowlisted tailnet user opens it in a browser, logs in and drives a working panel; `remote off` removes every trace | 1.1, 1.2 | Complete |
 | 2 | Hardened: lockout and kill switch, expiry and idle logout, audit log, an OS notification on every login and failure; terminal-fidelity fixes from Phase 1's spike | 2.1, 2.2 | Complete |
-| 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Detailed |
+| 3 | In the panel: a key and footer button that enable it and copy the URL, a menu to copy the URL or password, see who is connected, rotate or turn it off; installer, doctor and docs | 3.1, 3.2 | Complete |
 
 **Decisions already made with the owner (2026-10-29):**
 
@@ -879,7 +879,7 @@ troubleshooting and `docs/remote.md` cover setup, use, safety and turning it off
 **Dependencies:** Epic 3.1
 **Done when:** a fresh `./install.sh` on macOS and Linux leaves `lzr1-panel remote on` working, and `doctor` reports
 each missing piece with its fix.
-**Status:** Pending
+**Status:** Done
 
 #### Task 3.2.1: The installer offers ttyd and Go; `doctor` gets a remote section
 
@@ -948,7 +948,7 @@ reports every remote piece with its fix, failing only when a set-up remote canno
 
 #### Task 3.2.2: README, troubleshooting and `docs/remote.md`
 
-- [ ] Done
+- [x] Done
 
 **Context:** `README.md` says nothing about the remote: "What you get" (`README.md:87-100`), the panel's keys
 (`:131-144`), "From the command line" (`:180-197`), "What the installer does" (`:257-277`), "Settings" (`:280-296`,
@@ -1280,3 +1280,17 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   stand-in go that is too old, whose message reaches the warning; and an "on" state with a stand-in gateway process,
   stopped by its exact pid. The Linux operator check (`tailscale debug prefs`) was not run, since this is a Mac. Real
   tmux sessions were unchanged, and `serve status --json` was `{}`.
+- Task 3.2.2: docs only; `bin/lzr1-panel`, `install.sh` and `gateway/` are unchanged. "The doctor's remote lines point
+  here" was read as: each ✗ line of doctor's remote section is quoted in the troubleshooting entry for the same problem
+  (no new hint line in `doctor`, which already names docs/remote.md, and docs/remote.md links the troubleshooting
+  section). Beyond the plan's list, the troubleshooting section also has `remote needs jq`/`openssl`, the TTL, idle and
+  password-length settings `remote on` refuses, `no login allowed in`, `remote is already on`, `rotate failed`, "the URL
+  does not open at all" (with the watcher's "turned off" alerts), and, in the unpublish entry, that the plain `tailscale
+  serve status` can say "No serve config" while a foreground path is published (Task 3.1.2's finding). The README's
+  sample panel footer shows `[web]`. In the fidelity table the Chrome cells for Reconnect and Browser keys no longer say
+  "needs a person" (a real sleep "was not automated"; Cmd-W and Cmd-T "stay the browser's"); every Safari, Brave and
+  Phone cell is the owner's check, without the earlier per-cell notes (long-press, no Ctrl key, touch), which that check
+  did not measure one by one. Verified by `verify-3.2.2.zsh` (RED 18/80 on the docs before, GREEN 80/80): it also
+  checks every in-repo `#anchor` link in the three files with GitHub's anchor rule, and every backtick- or
+  double-quoted message in the section's headings (split at `…`) against `bin/lzr1-panel`, `install.sh` and the
+  gateway's non-test sources.

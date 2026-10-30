@@ -17,6 +17,7 @@ Still stuck? Find your problem below. Each one is: what you see, why, and the fi
 - [Alerts](#alerts)
 - [Mouse and menus](#mouse-and-menus)
 - [Looks wrong](#looks-wrong)
+- [Remote panel (in a browser)](#remote-panel-in-a-browser)
 - [Starting over](#starting-over)
 
 ---
@@ -423,6 +424,204 @@ The link appears once Claude prints it, a few seconds after the session starts. 
 signed in with a claude.ai account.
 
 **Fix:** wait a moment and refresh (`r`). If it never appears, run `claude` on that machine and check its sign-in.
+
+---
+
+## Remote panel (in a browser)
+
+The panel in a browser over Tailscale (`w`, `[web]`, `lzr1-panel remote`) is described in [remote.md](remote.md).
+`lzr1-panel doctor` checks its pieces in its "remote" section. Each heading below is the exact text you see: in the
+terminal, in `doctor`, in an alert, or on the page in the browser.
+
+### `remote needs Tailscale (tailscale.com/download)`, or doctor's `no Tailscale`
+
+Neither `tailscale` is on your PATH nor, on macOS, the app is in `/Applications/Tailscale.app`. The installer never
+installs Tailscale: it is a system VPN app.
+
+**Fix:** install it from [tailscale.com/download](https://tailscale.com/download), sign in, then `lzr1-panel remote on`
+again.
+
+### `Tailscale is not connected (…)`, or doctor's `Tailscale is not running`
+
+The state in brackets is Tailscale's own (`Stopped`, `NeedsLogin`, ...). `doctor` says "not running" when Tailscale
+does not answer at all, as when the macOS app is installed but not open.
+
+**Fix:** open Tailscale and connect it (on Linux: `sudo tailscale up`); sign in if it asks.
+
+### `turn on HTTPS in the Tailscale admin console`, or doctor's `HTTPS certificates are off`
+
+The remote's URL is `https://<machine>.<tailnet>.ts.net/<uuid>/`, which needs Tailscale's HTTPS certificates for your
+tailnet. They are off by default.
+
+**Fix:** in the admin console, [DNS](https://login.tailscale.com/admin/dns) → **HTTPS Certificates** → enable (MagicDNS
+must be on too). Then `lzr1-panel remote on` again.
+
+### `Funnel is on for …`
+
+Funnel puts what `tailscale serve` publishes on the public internet. `remote on` refuses to publish while Funnel is on
+for this machine's port 443, and turns the remote off if Funnel appears while it is on (the alert
+"Funnel appeared; turned off"). When it cannot read `tailscale serve status --json` it refuses too: "could not read
+tailscale serve status --json, so cannot check Funnel is off: not publishing".
+
+**Fix:** `tailscale funnel status` shows what is public; `tailscale funnel reset` turns Funnel off (it also clears this
+machine's other `serve` settings). Then `lzr1-panel remote on`.
+
+### `serve needs root on Linux`, or `tailscale serve failed: …`
+
+On Linux `tailscaled` runs as root, and `tailscale serve` is refused to other users unless you made yourself its
+operator. `doctor` says it as "is not Tailscale's operator: tailscale serve needs root". Other `serve failed` reasons
+are Tailscale's own words, after the colon.
+
+**Fix:** once, `sudo tailscale set --operator=$USER`, then `lzr1-panel remote on`.
+
+### `remote needs ttyd`, or doctor's `no ttyd`
+
+ttyd runs a panel for each browser. The installer offers it (it asks first).
+
+**Fix:** `./install.sh` again and answer yes, or `brew install ttyd` (Linux: `apt install ttyd`, or a release from
+github.com/tsl0922/ttyd).
+
+### `remote needs Go to build its gateway`, or `could not build the gateway`
+
+The login gateway (`gateway/`) is built from source with Go, once, by the installer or by the first `remote on`; it is
+built again after an update changes its source. The installer says it as "could not build the remote gateway", with
+Go's last line. A Go older than the one `gateway/go.mod` names (1.26) downloads the right one by itself, unless
+`GOTOOLCHAIN=local` is set or there is no network: then the build fails saying so.
+
+**Fix:** `brew install go` (Linux: your distribution's `golang` package, `golang-go` on Debian/Ubuntu). To see Go's
+whole message: `lzr1-panel remote build`. With an old Go, unset `GOTOOLCHAIN` (or set it to `auto`) and build again.
+
+### `remote needs jq`, or `remote needs openssl`
+
+`remote` reads Tailscale's status with jq and makes the password with openssl.
+
+**Fix:** `./install.sh` installs both.
+
+### `the gateway did not start: …`
+
+After the colon come the last lines of `~/.cache/lzr1-panel/remote/remote.log` and `ttyd.log`, which say why: ttyd
+could not start, or the gateway refused its folder or its flags.
+
+**Fix:** read those lines, then `lzr1-panel remote off` and `lzr1-panel remote on` again. If the gateway is the
+problem, `lzr1-panel remote build` rebuilds it.
+
+### `takes hours, minutes or seconds, like 8h, 90m or 1h30m`, or `LZR1_REMOTE_PWLEN must be 12 or more`
+
+A setting `remote on` cannot use: `LZR1_REMOTE_TTL`, `LZR1_REMOTE_IDLE` or `--ttl` must be like `8h`, `90m` or
+`1h30m`, and more than 0; the password is at least 12 characters. `doctor` names the setting with "remote on refuses
+it".
+
+**Fix:** correct it in `~/.zshenv` (or unset it for the default), then open a new terminal.
+
+### `remote on: no login allowed in`, or `not a Tailscale login (like you@example.com): …`
+
+The question "Tailscale logins allowed in" got no answer (Esc leaves the remote off on purpose), or an answer that is
+not a login.
+
+**Fix:** answer with the logins exactly as Tailscale shows them (the admin console's Users page, or `tailscale
+status`), comma-separated: `you@example.com`, or `name@github` for a GitHub sign-in. Or skip the question:
+`lzr1-panel remote on --allow you@example.com`.
+
+### `remote is already on (lzr1-panel remote off turns it off)`
+
+Only one remote at a time. The status above the message has its URL.
+
+**Fix:** `lzr1-panel remote url` copies the URL again, `lzr1-panel remote password` the password. To start over:
+`lzr1-panel remote off`, then `on` (a new URL and password).
+
+### The browser says "signed in to Tailscale as …, not allowed here"
+
+The page reached the gateway, but the device's Tailscale login (shown in the message) is not on the allowlist you gave
+`remote on`.
+
+**Fix:** sign that device in to Tailscale as an allowed login, or add the login: `lzr1-panel remote off`, then
+`lzr1-panel remote on` and add it to the answer (it is prefilled with the last one), or
+`--allow you@example.com,other@example.com`. The URL changes.
+
+### The browser says "no Tailscale identity: open this from a device signed in to Tailscale as an allowed user"
+
+`tailscale serve` names the person behind each request, but a tagged device (a server, a CI runner) has no person, so
+it is always refused.
+
+**Fix:** open the URL from a device signed in to Tailscale with your own login.
+
+### The browser says "Too many wrong passwords: locked until …"
+
+Five wrong passwords in a row from one login lock that login out for 15 minutes. Attempts while locked are refused
+without being checked, and still count toward the kill switch below. You get an alert, "LOGIN locked out until HH:MM".
+
+**Fix:** wait until the time shown. `lzr1-panel remote password` copies the right password on this computer. If it
+was not you, `lzr1-panel remote rotate` (a new password; it also ends the lock) or `lzr1-panel remote off`.
+
+### The browser says "too many wrong passwords: the remote panel was turned off"
+
+The kill switch: 20 wrong passwords in total, from any logins, turned the whole remote off. The alert says "turned off:
+20 wrong passwords", and `lzr1-panel remote status` says when.
+
+**Fix:** see who tried in `~/.cache/lzr1-panel/remote/audit.log`. When you are sure it was you, `lzr1-panel remote on`
+again: a new URL and password.
+
+### Back at the login form, though I logged in
+
+The session ended, and the page went back to the login form by itself:
+
+- **Idle logout:** nothing typed, clicked, pasted or resized in that browser for `LZR1_REMOTE_IDLE` (30 minutes by
+  default). Watching a long Claude run does not count as input.
+- **A rotate** (`lzr1-panel remote rotate`, or the `w` menu on the computer) logged every browser out with a new
+  password.
+
+**Fix:** log in again (after a rotate, with the new password: `lzr1-panel remote password`). To be logged out less
+often: `export LZR1_REMOTE_IDLE=2h` before `remote on`.
+
+### A 502 after login: "the terminal is not answering (ttyd still starting or stopped)"
+
+The gateway let you in, but ttyd, which runs the browser's panel, does not answer. Right after `remote on` it may still
+be starting; otherwise it stopped, and `lzr1-panel remote status` says "ttyd: stopped (lzr1-panel remote off, then on)".
+
+**Fix:** reload once. Still there: `lzr1-panel remote off`, then `lzr1-panel remote on`.
+
+### The URL does not open at all
+
+The remote is off (it expires after `LZR1_REMOTE_TTL`, 8 hours by default), the URL is an old one (every `remote on`
+makes a new one), or the device is not on your tailnet. While the remote turns itself off you get an alert:
+"expired, turned off", "the gateway stopped; turned off", "tailscale serve ended; turned off" (Tailscale was quit or
+disconnected).
+
+**Fix:** `lzr1-panel remote status` on the computer; turn it on again if it is off. On the other device, check that
+Tailscale is connected.
+
+### `could not unpublish …`, or `remote: off, but its path may still be published`
+
+Everything was stopped, but Tailscale could not confirm the URL's path is gone (Tailscale quit, `tailscaled` down, the
+operator permission removed), so the session file, the only record of that path, was kept. `doctor` says it as "a path
+may still be published". `remote on` refuses until it is cleaned: "remote on: the last remote is still published".
+Nothing answers on that path while the gateway is stopped.
+
+**Fix:** start Tailscale, then `lzr1-panel remote off` again. By hand: `tailscale serve status --json` lists what is
+published (the plain `tailscale serve status` can say "No serve config" while a path is published), and
+`tailscale serve --https=443 --set-path /<uuid> off` removes it.
+
+### `w` in a browser has no rotate or turn off ("not from a browser's panel: …")
+
+By design: a browser's own panel offers only the two copies and who is connected, so a browser never turns off or
+logs out the remote it is using.
+
+**Fix:** on the computer, press `w` in its panel, or run `lzr1-panel remote rotate` or `lzr1-panel remote off`.
+
+### `rotate failed: …; remote is off`, or `it expires in under a minute`
+
+A rotate starts a new gateway; when it cannot start, the remote is turned off rather than left half on. In its last
+minute, a remote is not rotated.
+
+**Fix:** read the reason after "rotate failed:", then `lzr1-panel remote on`.
+
+### A copy in the browser does not reach its clipboard ("Copied text ready — click to copy")
+
+Safari lets a page write the clipboard only right after a click, so the copy waits in that note for 15 seconds.
+
+**Fix:** click the note. Copies made in a browser's panel go to that browser's clipboard, not to this computer's (a
+session on this computer is the exception: its copies land on both). More in
+[remote.md, copy](remote.md#copy-select-and-the-right-button).
 
 ---
 

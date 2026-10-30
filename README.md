@@ -58,7 +58,7 @@
    ✓ #1398 chore: bump lib-commons               3d
      midaz · ⎇ chore/lib-commons · checks passed
  ────────────────────────────────────────────────────
- [+opus] [+sonnet] [+opencode] [↻] [?]
+ [+opus] [+sonnet] [+opencode] [web] [↻] [?]
 ```
 
 <p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
@@ -96,6 +96,7 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 | 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
+| 🌐 **The panel in a browser** | One key publishes the whole panel to your tailnet, behind your Tailscale login and a password: use it from another laptop or a phone, as here. See [docs/remote.md](docs/remote.md). |
 | 🛟 **Sessions survive** | If Claude or opencode exits (two Ctrl-Cs, Claude's `/exit`, a crash), the session stays. Enter resumes the same conversation. |
 | ✂️ **Copy just works** | Drag to select, Ctrl-C, and it's on your clipboard: in any terminal, from any machine. |
 
@@ -140,6 +141,7 @@ flowchart LR
 | `t` | the session in a new Ghostty tab |
 | `o` | its Remote Control link (on a PR: the PR) |
 | `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
+| `w`, or `[web]` | the panel in a browser: turns it on (asks who may come in, copies the URL); while it is on, its menu: copy the URL or the password, who is connected, rotate the password, turn it off |
 | `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
 | `?` / `q` | all the keys / quit: closes the panel, the viewer and the window |
 
@@ -177,6 +179,20 @@ session), refresh.
 
 Not copying? See [Copying text](docs/troubleshooting.md#copying-text).
 
+### In a browser
+
+Press **`w`** (or click **`[web]`**) and the panel is published to your tailnet: any browser there, on another laptop
+or a phone, opens the URL, types the password and gets its own panel on the same sessions, with the same keys and
+menus. The first time, it asks which Tailscale logins may come in; then it shows the URL and the password, and copies
+the URL. While it is on, the summary line ends in `⇄ web`, and `w` opens its menu: copy the URL, copy the password,
+who is connected, rotate the password (every browser is logged out), turn it off. In a browser's own panel, `w` offers
+only the two copies and who is connected, so a browser never cuts off the remote it is using.
+
+Only your tailnet can reach it (never Funnel), only the logins you allow, and only with the password; it turns itself
+off after 8 hours, and a browser left idle is logged out after 30 minutes. It needs Tailscale with HTTPS certificates
+on, ttyd and Go (the installer offers both); `lzr1-panel doctor` checks them. Setup, safety and the details:
+**[docs/remote.md](docs/remote.md)**. Something wrong: [Remote panel](docs/troubleshooting.md#remote-panel-in-a-browser).
+
 ### From the command line
 
 ```sh
@@ -191,6 +207,11 @@ lzr1-panel prs                              # your open pull requests
 lzr1-panel doctor                           # check everything, with fixes
 lzr1-panel notify                           # a sample alert: the tone and a notification
 lzr1-panel keys                             # every key
+lzr1-panel remote on                        # the panel in a browser, on your tailnet: prints the URL and password
+lzr1-panel remote url|password              # copy its URL / its password
+lzr1-panel remote status|who                # on or off, until when, its logins / who is signed in now
+lzr1-panel remote rotate                    # a new password: every browser is logged out, the URL stays
+lzr1-panel remote off                       # unpublish it and stop it all (docs/remote.md)
 ```
 
 Your shell also gets shortcuts:
@@ -261,13 +282,16 @@ opencode sessions. `lzr1-panel profile test NAME` tells you if something is miss
 1. **Tools**: zsh, tmux, fzf 0.74+, curl, openssl, git, gh and jq.
 2. **Claude Code**, and **Ghostty** on macOS (it asks first).
 3. **Copying**: Ctrl-C copies a Shift-selection in Ghostty (it asks first).
-4. **The `lzr1-panel` command**, in `~/.local/bin`.
-5. **The Claude Code skill** that creates profiles.
-6. **A shell hook**: the `cl-*` shortcuts (including `cl-opus` / `cl-sonnet` / `cl-opencode`, unless you have your
+4. **ttyd and Go**, for the panel in a browser (it asks first). Tailscale is yours to install
+   ([tailscale.com/download](https://tailscale.com/download)): the installer only says when it is missing.
+5. **The `lzr1-panel` command**, in `~/.local/bin`.
+6. **The remote's login gateway** (`gateway/`), built with Go when Go is there (`remote on` builds it otherwise).
+7. **The Claude Code skill** that creates profiles.
+8. **A shell hook**: the `cl-*` shortcuts (including `cl-opus` / `cl-sonnet` / `cl-opencode`, unless you have your
    own) and, if you want, the panel opening with Ghostty.
-7. **GitHub sign-in** (`gh auth login`), so the panel lists your pull requests.
-8. **Your first profile**.
-9. **`lzr1-panel doctor`**, to check it all.
+9. **GitHub sign-in** (`gh auth login`), so the panel lists your pull requests.
+10. **Your first profile**.
+11. **`lzr1-panel doctor`**, to check it all.
 
 | Option | What it does |
 |---|---|
@@ -293,6 +317,10 @@ Set these in your shell, for example in `~/.zshenv`:
 | `LZR1_SPLASH_SECONDS` | `5` | how long the animation lasts |
 | `LZR1_PANEL` | `1` | `0` stops the panel opening with Ghostty |
 | `LZR1_CONFIG` | `~/.config/lzr1-panel` | where your profiles live |
+| `LZR1_REMOTE_TTL` | `8h` | how long the panel in a browser stays on (`remote on --ttl` wins over it): `8h`, `90m`, `1h30m` |
+| `LZR1_REMOTE_IDLE` | `30m` | a browser that sends no input for this long is logged out and its panel ends |
+| `LZR1_REMOTE_NOTIFY` | `1` | `0` turns off the remote's alerts (logins, wrong passwords); `LZR1_NOTIFY=0` does not |
+| `LZR1_REMOTE_PWLEN` | `16` | the remote's password length, 12 at least |
 
 ---
 
@@ -311,10 +339,12 @@ Then see **[docs/troubleshooting.md](docs/troubleshooting.md)**: every common pr
 ## 🧱 Inside the repository
 
 ```
-bin/lzr1-panel                  the command: panel, viewer, sessions, PRs, menus, profiles
+bin/lzr1-panel                  the command: panel, viewer, sessions, PRs, menus, profiles, remote
+gateway/                        the remote's login gateway, lzr1-remote-gw (Go, standard library only)
 lib/splash.zsh                  the opening animation
 install.sh                      the installer, for macOS and Linux
 docs/troubleshooting.md         problems and their fixes
+docs/remote.md                  the panel in a browser, over Tailscale: setup, safety, turning it off
 docs/profiles.md                how to create a profile (for people and AI assistants)
 docs/*-options.html             the designs considered: splash, sidebar, PR section, menus
 skills/lzr1-panel-profiles/     the Claude Code skill that creates profiles
@@ -328,6 +358,7 @@ Changes are welcome. Before opening a pull request, check the scripts parse:
 ```sh
 zsh -n bin/lzr1-panel lib/splash.zsh
 bash -n install.sh          # it must also run on macOS's bash 3.2
+cd gateway && go vet ./... && go test ./... -race   # the remote's gateway
 ```
 
 Scripts sent to a profile's machine run as POSIX `sh`. [AGENTS.md](AGENTS.md) has the rest.

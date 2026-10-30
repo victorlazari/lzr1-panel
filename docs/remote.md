@@ -9,8 +9,13 @@ lzr1-panel remote password                                   copy the password
 lzr1-panel remote url                                        copy the URL again
 lzr1-panel remote status                                     on or off, the URL, who is allowed, when it expires,
                                                              the logins and wrong passwords so far
+lzr1-panel remote rotate                                     a new password, printed and copied: every browser is
+                                                             logged out; the URL, the expiry and the idle limit stay
+lzr1-panel remote who                                        the logins signed in now, and the browsers open now
 lzr1-panel remote off                                        unpublish and stop everything
 ```
+
+In the panel, `w` or the `[web]` button does the same: see [From the panel](#from-the-panel).
 
 | Variable | Default | What it sets |
 |----------|---------|--------------|
@@ -27,8 +32,35 @@ machine's Tailscale login), and keeps the answer in `~/.config/lzr1-panel/remote
 - **Tailscale**, connected, with **HTTPS certificates** turned on for the tailnet (admin console → DNS → HTTPS
   Certificates). On macOS the app's CLI is used when `tailscale` is not on PATH. On Linux, `tailscale serve` needs
   root unless you ran `sudo tailscale set --operator=$USER` once.
-- **ttyd** (`brew install ttyd`, `apt install ttyd`), **Go** to build the gateway (once; `./install.sh` does it),
-  **jq** and **openssl**.
+- **ttyd** (`brew install ttyd`, `apt install ttyd`), **Go** to build the gateway (once), **jq** and **openssl**.
+  `./install.sh` installs jq and openssl, offers ttyd and Go (it asks first), and builds the gateway when Go is there;
+  otherwise the first `remote on` builds it. Tailscale is never installed for you: it is a system VPN app.
+
+`lzr1-panel doctor` checks all of it in its "remote" section: Tailscale running, HTTPS certificates, Funnel off, ttyd,
+the gateway, on Linux the operator permission, the `LZR1_REMOTE_*` settings, and whether a remote is on. It only reads:
+it never starts, stops or cleans anything. Its ✗ lines (and every message `remote` prints) are in
+[troubleshooting](troubleshooting.md#remote-panel-in-a-browser).
+
+## From the panel
+
+**`w`**, or the **`[web]`** button in the panel's footer:
+
+- **Off:** it runs `remote on` in the panel: the allowlist question (prefilled with the last answer; Esc leaves it off),
+  then the URL, the password and the expiry, with the URL copied. A key brings the panel back.
+- **On:** a menu, headed with the expiry and how many browsers are connected: **copy the URL**, **copy the password**,
+  **who is connected** (`remote who`), **rotate the password…** and **turn it off…**. The last two ask first ("N
+  browsers will be logged out") when a browser is connected.
+
+While the remote is on, the panel's summary line (its first) ends in **`⇄ web`**.
+
+**A browser's own panel** offers only the two copies and who is connected: rotating or turning it off from there would
+cut off the browser you are using, and the panel refuses both even when asked directly ("not from a browser's panel:
+… it on the computer"). It is not a security boundary: a terminal in any session can still run `lzr1-panel remote
+off`. Copies made there (this menu, and a row's "copy" items) go to that browser's clipboard, not this computer's.
+
+`remote who` (and **who is connected**) reads the audit trail since the gateway last started: every login whose session
+has not logged out or idled out yet, then the browsers open now. A browser closed without logging out stays signed in
+until its idle logout, and the list says so.
 
 ## How it works
 
@@ -56,8 +88,8 @@ browser ──HTTPS (tailnet only)──▶ tailscale serve ──▶ lzr1-remot
    foreground (no `--bg`), so the path lives only as long as that process: Tailscale drops it when the process ends,
    is killed, or the machine reboots. `serve` is started from the gateway's output and ended as soon as the gateway
    exits (`--ttl`, a crash, a kill), so the path never points at a stopped gateway, even if the watcher is gone.
-5. The URL is copied to the clipboard. The password is copied only by `remote password`, so the two are not on the
-   clipboard together.
+5. The URL is copied to the clipboard. The password is copied only by `remote password` (and by `rotate`, which
+   copies the new one), so the two are not on the clipboard together.
 
 On Linux `tailscaled` runs as root and reaches the gateway's 0600 socket (`serve ... unix:<socket>`); `serve` strips
 its mount path and sends `Host: localhost` there, so the gateway puts `/<uuid>` back (`--stripped`) and checks `Origin`
@@ -130,9 +162,21 @@ remote's logins and wrong passwords so far, and who is locked out until when; af
 "off: the kill switch turned it off at HH:MM". `~/.cache/lzr1-panel/remote/remote.log` keeps the other messages: start
 errors, upstream errors and refused logins (a login not on the allowlist). Both files stay after `remote off`.
 
+## Rotating the password
+
+`lzr1-panel remote rotate`, or **rotate the password…** in the panel's `w` menu, makes a new password and starts a new
+gateway on the same URL. The old gateway's sessions lived only in its memory, so **every browser is logged out**: its
+panel ends and the page goes back to the login form, ready for the new password (the session each browser showed is
+kept for when it logs in again). Lockouts end with the old gateway too. **What stays:** the URL, the expiry, the idle
+limit, the allowlist and ttyd. The new password is printed and copied. Rotate before you give the URL to someone else
+for a while, or after you typed the password where someone could see it.
+
+It refuses in the last minute before the expiry ("it expires in under a minute"). If the new gateway cannot start, it
+turns the remote off rather than leave it half on ("rotate failed: …; remote is off").
+
 ## Turning it off
 
-`lzr1-panel remote off` ends the watcher and `serve`, stops the gateway, ttyd and every browser's layout, then checks
+`lzr1-panel remote off` (or **turn it off…** in the panel's `w` menu, on this computer) ends the watcher and `serve`, stops the gateway, ttyd and every browser's layout, then checks
 with `tailscale serve status` that the path is gone (removing it with `serve ... off` if not), and deletes the sockets,
 the session file and the `.last` picks. It is safe to run twice. It signals a process only while its command line still holds this
 remote's UUID (the watcher runs as `lzr1-panel remote watch <uuid>`, the gateway with `--base /<uuid>/`, ttyd with
@@ -199,31 +243,34 @@ Measured again on 2026-10-29 after the fixes of Tasks 2.2.1-2.2.4, through the r
 (xterm.js in the page), tmux 3.8 and fzf 0.74.2. Playwright 1.64 drove headless Chromium (build 1248, macOS) with real
 mouse events at xterm cell coordinates and real key presses; results were read back from xterm.js's screen, the
 `lzr1` server's panes and `tmux capture-pane` of the test sessions, and the browser's clipboard. The sessions ran a
-stand-in for Claude that echoes each line, reports Ctrl-C and copies with OSC 52. Safari and phones were out of the
-automation's reach: their cells say **needs a person** until someone measures them (the phone column's layout was
-measured in Chromium at a phone's width, see Phone-width).
+stand-in for Claude that echoes each line, reports Ctrl-C and copies with OSC 52.
 
-| Item | Chrome (headless Chromium, automated) | Safari | Phone |
-|------|---------------------------------------|--------|-------|
-| **Login** | pass: the URL shows the password form; the panel lists sessions 0.7 s after Enter. | needs a person | needs a person |
-| **Listing** sessions | pass: every session listed with its summary line; the first one shows in the viewer by itself. | needs a person | needs a person |
-| **Selecting** with ↑ ↓ | pass: each arrow shows that session in the viewer. | needs a person | needs a person |
-| **Typing** in a session | pass, once the keyboard is in the viewer (Enter or a double-click on the row, or a click in the viewer): the session read every character. | needs a person | needs a person |
-| **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | needs a person | needs a person |
-| **Right-click** menu | pass (2.2.1): the row's menu opens and "view it here" works; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | needs a person | needs a person (no right button: long-press) |
-| **Double-click** a row | pass (2.2.3): the row shows in the viewer and the keyboard moves there within 0.5 s and stays. | needs a person | needs a person |
-| **Footer** buttons | pass (2.2.2): right after a row's menu closed with Esc, the first click on `[?]` shows the keys; `[↻]` lists a session started a moment before. | needs a person | needs a person |
-| **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there. | needs a person | needs a person |
-| **Ctrl-C** to Claude | pass: the agent got SIGINT. | needs a person | needs a person (no Ctrl key on the keyboard) |
-| **Ctrl-b d** leaves a session | pass (2.2.2): after a click switched the viewer in place to another session of the same machine, Ctrl-b d leaves it; the viewer waits for a pick and no client is left on the session. | needs a person | needs a person |
-| **Copy** (OSC 52, drag) | pass (2.2.1): Claude's OSC 52 copy and a tmux drag-select in the session both land on the browser's clipboard; Option-drag selects in xterm.js itself over the panel's mouse mode. The session ran on this Mac, so its own tmux also put the copies on this Mac's clipboard (see "Copy, select and the right button"). | needs a person | needs a person |
-| **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | needs a person | needs a person |
-| **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel keeps its 56 columns (2.2.4; it used to shrink with the window). | needs a person | needs a person |
-| **Phone-width** layout | pass (2.2.4; Chromium at 390×844 px, 46 columns): the panel fills the window and lists every session by name; a tap on a row shows that session alone; a tap on the yellow bar brings the panel back; back at 1400×900 the panel is 56 columns beside the viewer again. | needs a person | needs a person (touch, the on-screen keyboard) |
-| **Reconnect** after the laptop sleeps | pass (2.2.3; simulated by closing the WebSocket, a real sleep needs a person): ttyd reconnects by itself to a working panel that shows the session the browser showed before. | needs a person | needs a person |
-| **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | needs a person for Cmd-W and Cmd-T: headless Chromium has no browser shortcuts. Ctrl-W reaches the session as the terminal's word erase. | needs a person | needs a person |
+Safari, Brave and phones were out of the automation's reach. The owner used the remote by hand on 2026-10-29, in
+Safari, Chrome and Brave on a Mac and on a phone, and reported that it works: a whole check of using the panel, not a
+measurement item by item, so their cells record that check.
 
-Every item Chromium can reach passes. What is left needs a person: the Safari and phone columns (Safari's clipboard
-falls back to the "click to copy" note, never exercised in a browser; a phone's touch and on-screen keyboard), and
-the browser's own shortcuts, which a page cannot see. A click made while the panel reloads (every 15 seconds, after a
-menu, after a resize) is dropped: click again (see docs/troubleshooting.md).
+| Item | Chrome (headless Chromium, automated) | Safari | Brave | Phone |
+|------|---------------------------------------|--------|-------|-------|
+| **Login** | pass: the URL shows the password form; the panel lists sessions 0.7 s after Enter. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Listing** sessions | pass: every session listed with its summary line; the first one shows in the viewer by itself. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Selecting** with ↑ ↓ | pass: each arrow shows that session in the viewer. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Typing** in a session | pass, once the keyboard is in the viewer (Enter or a double-click on the row, or a click in the viewer): the session read every character. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Left click** on a row | pass: the viewer shows that session; the keyboard stays in the panel. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Right-click** menu | pass (2.2.1): the row's menu opens and "view it here" works; the page cancels the `contextmenu` event over the terminal, so the browser draws no menu of its own. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Double-click** a row | pass (2.2.3): the row shows in the viewer and the keyboard moves there within 0.5 s and stays. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Footer** buttons | pass (2.2.2): right after a row's menu closed with Esc, the first click on `[?]` shows the keys; `[↻]` lists a session started a moment before. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **New-session picker** | pass: `[+opus]` opens it, a typed name + Enter starts the session and shows it; `[+sonnet]` then a click on a repository starts it there. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Ctrl-C** to Claude | pass: the agent got SIGINT. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Ctrl-b d** leaves a session | pass (2.2.2): after a click switched the viewer in place to another session of the same machine, Ctrl-b d leaves it; the viewer waits for a pick and no client is left on the session. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Copy** (OSC 52, drag) | pass (2.2.1): Claude's OSC 52 copy and a tmux drag-select in the session both land on the browser's clipboard; Option-drag selects in xterm.js itself over the panel's mouse mode. The session ran on this Mac, so its own tmux also put the copies on this Mac's clipboard (see "Copy, select and the right button"). | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Paste** | pass: Cmd-V pasted the browser's clipboard into the session. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Resize** | pass: 1400×900 → 1000×650 px gives a 139×42 terminal and tmux follows; the panel keeps its 56 columns (2.2.4; it used to shrink with the window). | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Phone-width** layout | pass (2.2.4; Chromium at 390×844 px, 46 columns): the panel fills the window and lists every session by name; a tap on a row shows that session alone; a tap on the yellow bar brings the panel back; back at 1400×900 the panel is 56 columns beside the viewer again. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Reconnect** after the laptop sleeps | pass (2.2.3; simulated by closing the WebSocket; a real sleep was not automated): ttyd reconnects by itself to a working panel that shows the session the browser showed before. | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+| **Browser keys** (Cmd-W, Cmd-T, Ctrl-W) | pass for Ctrl-W, which reaches the session as the terminal's word erase. Cmd-W and Cmd-T stay the browser's (headless Chromium has none to measure). | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works | checked by the owner on 2026-10-29: works |
+
+Every item passes in Chromium, and the owner's check found Safari, Brave and a phone working. Two things stay true in
+every browser: a click made while the panel reloads (every 15 seconds, after a menu, after a resize) is dropped, so
+click again (see [troubleshooting](troubleshooting.md#after-a-rows-menu-the-first-click-on-the-footer-does-nothing));
+and the browser keeps its own shortcuts, such as Cmd-W (closes the tab) and Cmd-T, which a page cannot see, so they
+never reach the session.
