@@ -721,6 +721,24 @@ remote_last() {
   local u; [[ -r $STATE/$1.remote ]] || return 0
   u=$(<$STATE/$1.remote)
   [[ $u == [0-9a-f-]## && -d $RDIR ]] && print -rn -- $2 >$RDIR/$u.last
+  remote_view $1 $2
+}
+
+# remote_view ID KEY: a browser's layout names what its viewer shows, KEY and its state (work, wait or idle), in its
+# title (_fit sets it as lzr1|list or lzr1|view|KEY|STATE): the phone's header reads it (gateway/client.js). The key is
+# parsed here, not with split_key, so the caller's KP and KS stay as they were.
+remote_view() {
+  local p=${2%%/*} n=${2#*/} st= line
+  local -a T=(tmux -L lzr1)
+  if [[ -r $STATE/raw-$p ]]; then
+    for line in ${(f)"$(<$STATE/raw-$p)"}; do
+      [[ ${line%%$'\037'*} == $n ]] && { st=${${line#*$'\037'}%%$'\037'*}; break }
+    done
+  fi
+  $T set -t "=lzr1-$1:" @lzr1_view "$2|$st" 2>/dev/null || return 0
+  $T list-clients -t "=lzr1-$1" -F '#{client_name}' 2>/dev/null | while read -r line; do
+    $T refresh-client -t "$line" 2>/dev/null
+  done
 }
 
 # zoom_pane PANE: PANE alone in its window (the narrow layout, _fit), with the keyboard
@@ -1674,6 +1692,16 @@ _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel list
   done
   ;;
 
+_prpos)  # _prpos ID: fzf's action that moves the highlight to the pull requests' heading (alt-p: a phone's tab), if any
+  local id=$2 i=0 line
+  [[ -r $STATE/$id.cache ]] || exit 0
+  local -a its=( "${(@0)$(<$STATE/$id.cache)}" )
+  for line in "${(@)its[2,-1]}"; do
+    [[ -n $line ]] || continue
+    (( i++ )); [[ ${line%%$'\t'*} == +pr/ ]] && { print -r -- "pos($i)"; exit 0 }
+  done
+  ;;
+
 _new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's profile (or take NAME); starts in the background,
        # shows it in the viewer; PROMPT is the first message
   local model=$2 id=$3 p=${4%%/*} name=$5 prompt=$6
@@ -1764,9 +1792,13 @@ _fit)  # _fit ID: the tmux layout's hooks (open): under NARROW columns the panel
        \; set -t $s status-left ' ◀ panel · tap here' \; set -t $s status-left-length 40 \; set -t $s status-right '' \
        \; set -t $s window-status-format '' \; set -t $s window-status-current-format '' 2>/dev/null
     (( z )) || zoom_pane $me  # already zoomed (the panel, or the viewer showing a session): keep it
+    # A browser's layout (a phone): the title says whether the list or a session shows (remote_view), for its header.
+    [[ -r $STATE/$id.remote ]] && $T set -t $s @lzr1_me $me \; set -t $s set-titles on \
+      \; set -t $s set-titles-string 'lzr1|#{?#{==:#{pane_id},#{@lzr1_me}},list,view|#{@lzr1_view}}' 2>/dev/null
   else
     [[ -e $STATE/$id.narrow ]] || (( ! z )) || exit 0  # never unzoom what this did not zoom
     rm -f $STATE/$id.narrow
+    $T set -t $s set-titles off 2>/dev/null
     (( z )) && $T resize-pane -Z -t $me 2>/dev/null
     $T set -t $s status off \; resize-pane -t $me -x $PANEL_W 2>/dev/null
   fi
@@ -2078,6 +2110,7 @@ _panel)  # _panel ID
     --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
     --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
     --bind "w:execute($S _web $id)+reload-sync($S _list $id)" \
+    --bind "alt-s:first" --bind "alt-p:transform($S _prpos $id)" \
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
