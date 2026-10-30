@@ -776,7 +776,7 @@ and a remote survives the terminal that turned it on closing.
 
 #### Task 3.1.2: `w` and `[web]`: turn it on from the panel, then its menu
 
-- [ ] Done
+- [x] Done
 
 **Context:** `_panel` (`bin/lzr1-panel:1759-1817`) builds the fzf call: footer at `:1797`, key binds at `:1798-1814`,
 the footer click is `transform:$S _footer $id` (`:1814`) and `_footer` (`:1572-1582`) prints an action per
@@ -1238,3 +1238,17 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   with its `.last` kept, `rotate` refused in the last minute, and a stub `tailscale` whose `serve` fails, after which
   `rotate` turns the remote off) and `verify-3.1.1-onfail.zsh` (`on` still names why it failed); each ended with "No
   serve config" and the real tmux sessions unchanged.
+- Task 3.1.2: `remote on`'s allowlist prompt now edits with an emacs-based keymap (`lzr1ask`) whatever `EDITOR` says:
+  with `EDITOR=vi` (this Mac's) zsh gave `vared` vi's insert mode, where neither Backspace nor Ctrl-U erases the
+  prefilled answer. Esc in that keymap answers nothing, so `remote on` stops with "no login allowed in" (the plan's
+  "Esc leaves it off"); Ctrl-C ends `remote on` and `_web` with no "press a key", and the panel comes back. `_web`
+  clears the screen before its output, since `execute` shows the normal screen with what earlier actions left on it.
+  `clip` ignores a `CLIP_OSC` from the environment (`unset` at the top). The menu's header counts browsers as "1
+  browser" / "N browsers", and the `[y/N]` before rotate or off names that count. Verified by `verify-3.1.2.zsh`
+  (offline with the stand-in remote, then live once). Its outer terminal is a tmux server of its own (`-L v312o`): the
+  default one holds the test's session, whose `start` sets a `-g` `pane-set-clipboard` hook to `pbcopy`, which a
+  browser's ttyd never has. Live finding for later checks: `tailscale serve status` without `--json` says "No serve
+  config" while a foreground `serve` is publishing. An early run of this verify published a remote by mistake (the
+  vi-mode prompt kept its prefill, which was lazari@lerian.studio, with a 15 min TTL), and the plain status still said
+  "No serve config". It was turned off at once with `remote off`. The verify now also checks that `serve status
+  --json` has no `Handlers`, and Enter is sent only when the line holds exactly the intended answer.

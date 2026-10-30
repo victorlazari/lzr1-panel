@@ -481,9 +481,13 @@ mode() { print -rn -- "$(<$STATE/$1.mode)" } 2>/dev/null
 
 browse() { if [[ $OSTYPE == darwin* ]]; then open $1; else xdg-open $1 >/dev/null 2>&1; fi }
 
-# clip TEXT: onto the clipboard of the computer in front of you (pbcopy, wl-copy, xclip, or the terminal's OSC 52)
+# clip TEXT: onto the clipboard of the computer in front of you (pbcopy, wl-copy, xclip, or the terminal's OSC 52).
+# CLIP_OSC (a shell variable, set by _web and _menu in a browser's panel): OSC 52 only, which ttyd's page puts on the
+# browser's clipboard; pbcopy would put it on this Mac's.
+unset CLIP_OSC
 clip() {
-  if command -v pbcopy >/dev/null; then print -rn -- $1 | pbcopy
+  if [[ -n $CLIP_OSC ]]; then printf '\e]52;c;%s\a' "$(print -rn -- $1 | base64 | tr -d '\n')" >/dev/tty
+  elif command -v pbcopy >/dev/null; then print -rn -- $1 | pbcopy
   elif [[ -n $WAYLAND_DISPLAY ]] && command -v wl-copy >/dev/null; then print -rn -- $1 | wl-copy
   elif [[ -n $DISPLAY ]] && command -v xclip >/dev/null; then print -rn -- $1 | xclip -selection clipboard
   else printf '\e]52;c;%s\a' "$(print -rn -- $1 | base64 | tr -d '\n')" >/dev/tty; fi
@@ -1707,6 +1711,7 @@ _footer)  # _footer ID: fzf's action for a click on the footer word $FZF_CLICK_F
     *opencode*) print -r -- "execute($SELF _new opencode $2 {1})$more" ;;
     *opus*)     print -r -- "execute($SELF _new opus $2 {1})$more" ;;
     *sonnet*)   print -r -- "execute($SELF _new sonnet $2 {1})$more" ;;
+    *web*)      print -r -- "execute($SELF _web $2)$more" ;;
     *↻*)        print -r -- "reload-sync($SELF _list $2)" ;;
     *\?*)       print -r -- "execute($SELF keys; read -k1 -s)" ;;
   esac
@@ -1748,6 +1753,7 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
   local -a acts  # ACTION<tab>label
   local name st att age url model dir title branch changed waitfor
   local repo num ptitle purl draft pbranch review checks updated
+  [[ -r $STATE/$id.remote ]] && CLIP_OSC=1  # a browser's panel: its copies go to the browser
   split_key $key
   if [[ $KP == +pr && -n $KS ]]; then
     for line in ${(f)"$(<$STATE/prs)"}; do
@@ -1882,6 +1888,47 @@ gh pr checks $num, fix it and push." ;;
   esac
   ;;
 
+_web)  # _web ID: w and [web]. Off: remote on here (its own allowlist prompt and output). On: copy the URL or the password,
+       # who is connected, rotate, off. A browser's own panel ($STATE/ID.remote) gets the copies, to the browser's
+       # clipboard, and who only: never the switch to the remote it is using.
+  local id=$2 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' web= n s pick act
+  local -a acts
+  [[ -r $STATE/$id.remote ]] && web=1 CLIP_OSC=1
+  _key() { print -n "press a key"; read -k1 -s }
+  clear  # not the text an earlier action left on this screen
+  if ! _remote_live; then
+    if [[ -n $web ]]; then print "remote is off"; else $SELF remote on; fi
+    _key; exit 0
+  fi
+  zmodload zsh/datetime
+  _remote_browsers $RS[uuid]; n=$REPLY; (( n == 1 )) && s="1 browser" || s="$n browsers"
+  acts=( $'url\tcopy the URL' $'password\tcopy the password' $'who\twho is connected' )
+  [[ -z $web ]] && acts+=( "rotate"$'\t'"${E}rotate the password: logs every browser out…$R" "off"$'\t'"${E}turn it off…$R" )
+  acts+=( "cancel"$'\t'"${D}cancel$R" )
+  _cut "web · on until $(strftime %H:%M $RS[expires]) · $s" $(( ${COLUMNS:-56} - 3 ))
+  pick=$(print -rl -- $acts | fzf --ansi --layout=reverse --no-input --no-sort --delimiter=$'\t' --with-nth=2 \
+    --info=hidden --gutter=' ' --pointer='▌' --highlight-line --color='header:bold,pointer:yellow,current-fg:bold' \
+    --header=" $REPLY" --header-border=bottom \
+    --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || exit 0
+  act=${pick%%$'\t'*}
+  clear
+  case $act in
+    url)      clip $RS[url]; print "copied the URL"; sleep 1 ;;
+    password) clip $RS[password]; print "copied the password"; sleep 1 ;;
+    who)      $SELF remote who; _key ;;
+    rotate|off)
+      # Asked again here: never from a browser's panel, whatever called this.
+      if [[ -r $STATE/$id.remote ]]; then print -r -- "not from a browser's panel: $act it on the computer"; _key; exit 0; fi
+      if (( n )); then
+        [[ $act == off ]] && print -rn -- "$s will be logged out. Turn it off? [y/N] " ||
+          print -rn -- "$s will be logged out. Rotate the password? [y/N] "
+        read -q || { print; exit 0 }
+        print
+      fi
+      $SELF remote $act; _key ;;
+  esac
+  ;;
+
 _attach)  # _attach KEY
   split_key $2; load $KP || exit 1
   on -t "$CLIP"'unset TMUX; exec tmux attach -t "=$1"' $KS
@@ -1925,7 +1972,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer='[+opus] [+sonnet] [+opencode] [↻] [?]' --footer-border=top \
+    --footer='[+opus] [+sonnet] [+opencode] [web] [↻] [?]' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
@@ -1939,6 +1986,7 @@ _panel)  # _panel ID
     --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
     --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
     --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
+    --bind "w:execute($S _web $id)+reload-sync($S _list $id)" \
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
@@ -2045,7 +2093,10 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       if [[ -z $allow ]]; then
         allow=$(sed -n 's/^allow=//p' $CONFIG/remote.conf 2>/dev/null); : ${allow:=$TS_LOGIN}
         if [[ -t 0 ]]; then
-          vared -p "Tailscale logins allowed in (comma-separated): " allow || die "remote on: no answer"
+          # Emacs keys whatever EDITOR says (vi's insert mode cannot erase the prefill); Esc answers nothing: stays off.
+          zmodload zsh/zle; _ask_esc() { BUFFER=; zle accept-line }; zle -N _ask_esc
+          bindkey -N lzr1ask emacs; bindkey -M lzr1ask '^[' _ask_esc
+          vared -M lzr1ask -p "Tailscale logins allowed in (comma-separated): " allow || die "remote on: no answer"
         else
           print -rnu2 -- "Tailscale logins allowed in [$allow] "; IFS= read -r a && [[ -n $a ]] && allow=$a
         fi
