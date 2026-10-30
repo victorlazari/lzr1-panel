@@ -5,3 +5,6 @@ profiles/
 *.pem
 .env*
 .DS_Store
+
+# The remote gateway binary, built by lzr1-panel remote and install.sh.
+gateway/lzr1-remote-gw
