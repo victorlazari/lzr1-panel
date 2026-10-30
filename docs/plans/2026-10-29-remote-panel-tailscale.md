@@ -883,7 +883,7 @@ each missing piece with its fix.
 
 #### Task 3.2.1: The installer offers ttyd and Go; `doctor` gets a remote section
 
-- [ ] Done
+- [x] Done
 
 **Context:** `install.sh` installs ttyd without asking (`install.sh:101-107`) and only builds the gateway when Go is
 already there (`:172-178`, after the command is linked, through `lzr1-panel remote build` with its output thrown
@@ -1266,3 +1266,17 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   with `navigator.clipboard.readText()`, who, `⇄ web`, the local panel's rotate logging it out, the new password back
   on the session it showed). The live run ended with "No serve config", `serve status --json` `{}`, and the real tmux
   sessions unchanged.
+- Task 3.2.1: beyond the plan, `install.sh`'s `ask` now answers no when `/dev/tty` cannot be opened. Before, the
+  failed `read` left the answer empty, which counted as yes to every question (the Ghostty key, the Claude Code
+  installer); case (d) found it. The Go package is picked with `if`/`elif` in `pkg_install`'s order (apt-get, then dnf),
+  not a `case`. On a failed build, the warning shows go's last line: the output without `remote build`'s own
+  "building the gateway" and "lzr1-panel: could not build" lines, which come after go's error. Doctor's remote section
+  also prints the Tailscale CLI's version as ✓, a `·` line with the effective TTL, idle logout and password length,
+  and, when on, `✓ on: URL (until HH:MM, for LOGINS; N login(s))`. A session file that cannot be read counts as "a path
+  may still be published". Funnel is checked only when Tailscale gives a host name. Verified by `verify-3.2.1.zsh`
+  (RED 17/53, GREEN 55/55; offline stand-ins for brew, apt-get, sudo, uname and tailscale, then doctor once against
+  the real Tailscale, read-only). Its doctor cases run a copy of the script whose PATH line drops `/opt/homebrew/bin`
+  and `/usr/local/bin`, because otherwise ttyd and Go cannot be missing on this Mac. Two cases beyond the plan: (e) a
+  stand-in go that is too old, whose message reaches the warning; and an "on" state with a stand-in gateway process,
+  stopped by its exact pid. The Linux operator check (`tailscale debug prefs`) was not run, since this is a Mac. Real
+  tmux sessions were unchanged, and `serve status --json` was `{}`.

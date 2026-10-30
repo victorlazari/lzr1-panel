@@ -6,10 +6,10 @@
 #   ./install.sh --no-shell   leave your shell rc files alone
 #   ./install.sh --uninstall  remove the links, the shell hook and the Claude skill (profiles stay)
 #
-# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh, jq and ttyd; Claude Code if it is missing; Ghostty on macOS if
-# you want it; the lzr1-panel command in ~/.local/bin; the Claude Code skill that creates profiles; a shell hook
-# with cl-* helpers and (optionally) the panel opening with Ghostty; Ctrl+C copying in Ghostty; GitHub sign-in; your
-# first profile; then lzr1-panel doctor checks it all.
+# What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh and jq; ttyd and Go if you want the panel in a browser;
+# Claude Code if it is missing; Ghostty on macOS if you want it; the lzr1-panel command in ~/.local/bin; the Claude
+# Code skill that creates profiles; a shell hook with cl-* helpers and (optionally) the panel opening with Ghostty;
+# Ctrl+C copying in Ghostty; GitHub sign-in; your first profile; then lzr1-panel doctor checks it all.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -35,7 +35,8 @@ step() { printf '\n%s▸ %s%s\n' "$c_bold" "$*" "$c_off"; }
 ok()   { printf '  %s✓%s %s\n' "$c_ok" "$c_off" "$*"; }
 info() { printf '  %s%s%s\n' "$c_dim" "$*" "$c_off"; }
 warn() { printf '  %s!%s %s\n' "$c_warn" "$c_off" "$*"; }
-ask()  { [[ $YES == 1 ]] && return 0; local r; read -r -p "  $1 [Y/n] " r </dev/tty; [[ -z $r || $r == [Yy]* ]]; }
+# No terminal to answer (cannot open /dev/tty) is a no, not an empty answer's yes.
+ask()  { [[ $YES == 1 ]] && return 0; local r; read -r -p "  $1 [Y/n] " r </dev/tty || return 1; [[ -z $r || $r == [Yy]* ]]; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 OS=$(uname -s)
@@ -98,14 +99,6 @@ for t in gh jq; do
   else warn "could not install $t: your pull requests need it (https://cli.github.com)"; fi
 done
 
-# ttyd shows the panel in a browser for lzr1-panel remote (with Tailscale and Go); the panel works without it.
-if have ttyd; then ok "ttyd"
-else
-  info "installing ttyd (lzr1-panel remote: the panel in a browser on your tailnet)"
-  if ( pkg_install ttyd ) >/dev/null 2>&1; then ok "ttyd installed"
-  else warn "could not install ttyd: lzr1-panel remote needs it (https://github.com/tsl0922/ttyd)"; fi
-fi
-
 fzf_version() { fzf --version 2>/dev/null | awk '{print $1}'; }
 if have fzf && version_ge "$(fzf_version)" "$FZF_MIN"; then
   ok "fzf $(fzf_version)"
@@ -159,6 +152,26 @@ if [[ $OS == Darwin ]]; then
   fi
 fi
 
+# lzr1-panel remote (the panel in a browser on your tailnet) needs ttyd, Go (to build its gateway) and Tailscale; the
+# panel works without them. Tailscale is a system VPN app: never installed from here.
+if have ttyd && have go; then ok "ttyd and Go"
+elif ask "Install ttyd and Go for lzr1-panel remote (the panel in a browser on your tailnet)?"; then
+  for t in ttyd go; do
+    have "$t" && { ok "$t"; continue; }
+    pkg=$t
+    if [[ $t == go ]] && [[ $OS != Darwin ]]; then
+      if have apt-get; then pkg=golang-go; elif have dnf; then pkg=golang; fi
+    fi
+    info "installing $pkg"
+    if ( pkg_install "$pkg" ) >/dev/null 2>&1; then hash -r; ok "$t installed"
+    else warn "could not install $pkg: lzr1-panel remote needs it"; fi
+  done
+else
+  info "skipped: lzr1-panel remote needs ttyd and Go"
+fi
+have tailscale || [[ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]] ||
+  info "no Tailscale: lzr1-panel remote also needs it (https://tailscale.com/download)"
+
 # ---- lzr1-panel itself ----------------------------------------------------------------------------------------------
 
 step "Installing lzr1-panel"
@@ -171,8 +184,12 @@ case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN is not on your PATH yet: the shel
 
 # lzr1-panel remote's login gateway (gateway/, Go standard library only); remote on builds it too when missing.
 if have go; then
-  "$REPO/bin/lzr1-panel" remote build >/dev/null 2>&1 && ok "remote gateway built (go build)" ||
-    warn "could not build the remote gateway: cd $REPO/gateway && go build ."
+  # On failure, go's own last line (a Go too old says so), not the "could not build" that follows it.
+  if out=$("$REPO/bin/lzr1-panel" remote build 2>&1); then ok "remote gateway built (go build)"
+  else
+    last=$(printf '%s\n' "$out" | grep -v -e '^lzr1-panel: ' -e '^building the gateway' | tail -1 || true)
+    warn "could not build the remote gateway: ${last:-${out##*$'\n'}} (cd $REPO/gateway && go build .)"
+  fi
 else
   info "no Go: lzr1-panel remote builds its gateway with it (brew install go, or your distribution's golang)"
 fi

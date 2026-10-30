@@ -979,13 +979,18 @@ _dur() {
   (( REPLY > 0 )) || die "$2 must be more than 0"
 }
 
+# _remote_gw_state: the gateway's path in REPLY; 0 when it is built and newer than its source, 1 when stale or missing
+_remote_gw_state() {
+  local f; REPLY=$RDIR/lzr1-remote-gw
+  [[ -x $REPLY ]] || return 1
+  for f in ${SELF:h:h}/gateway/*.(go|mod|html|js)(N); do [[ $f -nt $REPLY ]] && return 1; done
+  return 0
+}
+
 # _remote_gw: builds the gateway into $RDIR when it is missing or older than its source; its path in REPLY
 _remote_gw() {
-  local src=${SELF:h:h}/gateway f stale=
-  REPLY=$RDIR/lzr1-remote-gw
-  [[ -x $REPLY ]] || stale=1
-  for f in $src/*.(go|mod|html|js)(N); do [[ $f -nt $REPLY ]] && stale=1; done
-  [[ -z $stale ]] && return 0
+  local src=${SELF:h:h}/gateway
+  _remote_gw_state && return 0
   (( $+commands[go] )) || die "remote needs Go to build its gateway: brew install go (Linux: your distribution's golang package)"
   mkdir -p $RDIR && chmod 700 $RDIR
   print -r -- "building the gateway (gateway/, Go standard library only)"
@@ -1275,6 +1280,70 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
     fi
   fi
   _hint "lzr1-panel notify sends a test"
+  # Informational (·) until the remote is set up here (remote.conf, the gateway built, or a session file): then a piece
+  # remote on cannot work without is ✗. Funnel on is ✗ always. Read-only: it starts, stops and cleans nothing.
+  print "\nremote (the panel in a browser: docs/remote.md)"
+  local setup= j st= certs=0 host= rv
+  local -a f
+  [[ -e $CONFIG/remote.conf || -e $RDIR/lzr1-remote-gw || -e $RDIR/session ]] && setup=1
+  _rno() { if [[ -n $setup ]]; then _no $1; else print -r -- "  · $1"; fi; _hint $2 }
+  if [[ ! -x $TSBIN ]]; then _rno "no Tailscale" "tailscale.com/download"
+  else
+    v=$($TSBIN version 2>/dev/null); _ok "tailscale ${${(f)v}[1]}"
+    if (( ! $+commands[jq] )); then
+      _rno "no jq: Tailscale's state, HTTPS and Funnel cannot be read" "./install.sh installs it"
+    elif ! j=$($TSBIN status --json 2>/dev/null) || [[ -z $j ]]; then
+      _rno "Tailscale is not running" "open Tailscale, or run tailscale up"
+    else
+      f=( "${(@f)$(print -r -- $j | jq -r '(.BackendState // "unknown"), ((.CertDomains // []) | length),
+        ((.Self.DNSName // "") | rtrimstr("."))' 2>/dev/null)}" )
+      st=${f[1]:-unknown} certs=${f[2]:-0} host=$f[3]
+      if [[ $st == Running ]]; then _ok "Tailscale: Running"
+      else _rno "Tailscale is not connected ($st)" "open Tailscale, or run tailscale up"; fi
+      if [[ $certs == <1-> && -n $host ]]; then _ok "HTTPS certificates: $host"
+      else _rno "HTTPS certificates are off" "admin console: DNS → HTTPS Certificates (login.tailscale.com/admin/dns)"; fi
+      if [[ -n $host ]]; then
+        _remote_funnel $host; case $? in
+          0) _no "Funnel is on for $host:443"; _hint "remote refuses to publish while Funnel is on: tailscale funnel reset" ;;
+          1) _ok "Funnel is off" ;;
+          *) print -r -- "  · cannot tell whether Funnel is on (tailscale serve status --json failed)" ;;
+        esac
+      fi
+    fi
+  fi
+  if (( $+commands[ttyd] )); then v=$(ttyd --version 2>/dev/null); v=${${=v}[3]}; _ok "ttyd ${v%-unknown}"
+  elif [[ $OSTYPE == darwin* ]]; then _rno "no ttyd" "brew install ttyd"
+  else _rno "no ttyd" "apt install ttyd (or your distribution's ttyd package)"; fi
+  if _remote_gw_state; then _ok "gateway built: $REPLY"
+  elif (( $+commands[go] )); then v=$(go env GOVERSION 2>/dev/null); print -r -- "  · ${v:-go}: the gateway is built on the first remote on"
+  elif [[ $OSTYPE == darwin* ]]; then _rno "no Go to build the gateway" "brew install go"
+  else _rno "no Go to build the gateway" "your distribution's golang package (golang-go on Debian/Ubuntu)"; fi
+  # Linux: serve needs root, or this user as Tailscale's operator.
+  if [[ $OSTYPE != darwin* && -x $TSBIN ]] && (( $+commands[jq] )); then
+    if (( EUID == 0 )); then _ok "root: tailscale serve is allowed"
+    elif ! v=$($TSBIN debug prefs 2>/dev/null | jq -r '.OperatorUser // ""' 2>/dev/null); then
+      print -r -- "  · cannot tell whether $USER may run tailscale serve (tailscale debug prefs failed)"
+    elif [[ $v == $USER ]]; then _ok "Tailscale operator: $USER"
+    else _rno "$USER is not Tailscale's operator: tailscale serve needs root" "sudo tailscale set --operator=\$USER"; fi
+  fi
+  # The settings remote on checks (the pattern of _dur, which would die here).
+  for v in LZR1_REMOTE_TTL LZR1_REMOTE_IDLE; do
+    rv=${(P)v}; [[ -z $rv ]] && continue
+    [[ $rv == ([0-9]##[hms])## && $rv == *[1-9]* ]] ||
+      _rno "$v=$rv: remote on refuses it" "hours, minutes or seconds, like 8h, 90m or 1h30m"
+  done
+  rv=${LZR1_REMOTE_PWLEN:-16}
+  [[ $rv == <-> ]] && (( rv >= 12 )) || _rno "LZR1_REMOTE_PWLEN=$rv: remote on refuses it" "12 or more"
+  print -r -- "  · expires after ${LZR1_REMOTE_TTL:-8h}, idle logout after ${LZR1_REMOTE_IDLE:-30m}, ${LZR1_REMOTE_PWLEN:-16}-character password"
+  # The state, from the session file only: never the password.
+  if [[ ! -e $RDIR/session ]]; then print "  · off"
+  elif _remote_read && _ours "$RS[gwpid]" gw $RS[uuid]; then
+    zmodload zsh/datetime
+    _remote_audit ${RS[auditpos]:-0}; f=( ${(M)reply:#[^ ]# login *} )
+    _ok "on: $RS[url] (until $(strftime '%H:%M' ${RS[expires]:-0}), for ${RS[allow]//,/, }; $#f login(s))"
+  else
+    _no "a path may still be published: ${RS[url]:-the session in $RDIR/session}"; _hint "lzr1-panel remote off"
+  fi
   print "\nprofiles"
   (( $#all )) || { _no "no profiles yet"; _hint "lzr1-panel profile add" }
   for p in $all; do profile_test $p | sed 's/^/  /' || bad=1; done
