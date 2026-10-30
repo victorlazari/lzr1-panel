@@ -615,6 +615,16 @@ minute, a remote is not rotated.
 
 **Fix:** read the reason after "rotate failed:", then `lzr1-panel remote on`.
 
+### `another lzr1-panel remote command is still running after 30 s (or … cannot be locked)`
+
+`remote on`, `off` and `rotate`, and the check every other remote command makes first, run one at a time (a lock in
+`~/.cache/lzr1-panel/remote/lock`), so a `status` or a second panel's `w` during a rotate waits for it instead of
+taking the old, stopped gateway for a dead remote. This one waited 30 s, though a `remote on` or `rotate` holds the
+lock for seconds (never during the allowlist prompt): another remote command is stuck, likely waiting on Tailscale.
+
+**Fix:** finish or Ctrl-C the other command, then try again. The lock ends with the process that holds it; the file
+itself can stay.
+
 ### A copy in the browser does not reach its clipboard ("Copied text ready — click to copy")
 
 Safari lets a page write the clipboard only right after a click, so the copy waits in that note for 15 seconds.

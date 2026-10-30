@@ -153,9 +153,12 @@ if [[ $OS == Darwin ]]; then
 fi
 
 # lzr1-panel remote (the panel in a browser on your tailnet) needs ttyd, Go (to build its gateway) and Tailscale; the
-# panel works without them. Tailscale is a system VPN app: never installed from here.
-if have ttyd && have go; then ok "ttyd and Go"
+# panel works without them. Tailscale is a system VPN app: never installed from here. remote is set when they were
+# there or the answer was yes: the gateway is built only then (a built gateway counts as a set-up remote in doctor).
+remote=
+if have ttyd && have go; then ok "ttyd and Go"; remote=1
 elif ask "Install ttyd and Go for lzr1-panel remote (the panel in a browser on your tailnet)?"; then
+  remote=1
   for t in ttyd go; do
     have "$t" && { ok "$t"; continue; }
     pkg=$t
@@ -183,7 +186,8 @@ ok "$BIN/lzr1-panel → $REPO/bin/lzr1-panel"
 case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN is not on your PATH yet: the shell hook below adds it" ;; esac
 
 # lzr1-panel remote's login gateway (gateway/, Go standard library only); remote on builds it too when missing.
-if have go; then
+if [[ -z $remote ]]; then :  # declined above
+elif have go; then
   # On failure, go's own last line (a Go too old says so), not the "could not build" that follows it.
   if out=$("$REPO/bin/lzr1-panel" remote build 2>&1); then ok "remote gateway built (go build)"
   else

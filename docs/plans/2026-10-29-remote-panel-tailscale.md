@@ -1294,3 +1294,21 @@ remote error has a troubleshooting entry, and the fidelity table records the own
   checks every in-repo `#anchor` link in the three files with GitHub's anchor rule, and every backtick- or
   double-quoted message in the section's headings (split at `…`) against `bin/lzr1-panel`, `install.sh` and the
   gateway's non-test sources.
+- Phase 3 review findings: (1) the gateway now starts through `RDET` too (`exec $RDET $RDIR/lzr1-remote-gw ...`,
+  after `gw.pid`; setsid as a non-leader and perl's `setpgrp; exec` keep the pid), so a Ctrl-C at a later prompt of
+  the panel that turned the remote on no longer reaches it (Go's `NotifyContext` un-ignores SIGINT). The keeper and
+  watcher already ignore INT and stay in the caller's group. (2) A lock (`zsystem flock` on `$RDIR/lock`, held until
+  the process exits; `_remote_lock`/`_remote_unlock`) serializes `on` (taken after the allowlist prompt, with the
+  already-on checks repeated under it), `off`, `rotate` and `_remote_live`, which keeps a lock its caller holds and
+  releases one it took, so `_web` holds none across its menu or the `remote on` it starts. zsh's flock does not create
+  the file (`: >>` first). Live, the finding's last step does not happen as described: the new gateway prints `ready`
+  only once ttyd's socket answers, so the rotate after a concurrent cleanup failed and turned the remote off ("rotate
+  failed: the gateway did not start") rather than republish onto a 502; a concurrent `status` still turned a healthy
+  remote off, and that is what the lock fixes. `remote off` during a rotate now waits for it and then turns it off.
+  doctor stays lock-free (read-only). (3) `install.sh` builds the gateway only when ttyd and Go were both there or the
+  answer was yes; README's installer step 6 says so. A new troubleshooting entry covers the lock's 30 s timeout.
+  Verified by `verify-p3-findings.zsh` (offline: a stand-in tailscale that keeps a path published for 2 s after its
+  serve ends, the real ttyd and gateway; RED 11/25 on the code before, GREEN 25/25), plus `verify-3.2.1.zsh` (55/55),
+  `verify-3.1.1.zsh` live (GREEN, only lazari@lerian.studio, 15 min, ending "No serve config") and `verify-3.1.3.zsh`
+  with `LIVE=0`. `verify-3.1.2.zsh`'s "panel after Ctrl-C" case failed in one of two runs after these fixes and in
+  the one run on the code before them (a timing flake of that check, not a regression). Real tmux sessions were unchanged.

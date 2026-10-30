@@ -285,7 +285,7 @@ opencode sessions. `lzr1-panel profile test NAME` tells you if something is miss
 4. **ttyd and Go**, for the panel in a browser (it asks first). Tailscale is yours to install
    ([tailscale.com/download](https://tailscale.com/download)): the installer only says when it is missing.
 5. **The `lzr1-panel` command**, in `~/.local/bin`.
-6. **The remote's login gateway** (`gateway/`), built with Go when Go is there (`remote on` builds it otherwise).
+6. **The remote's login gateway** (`gateway/`), built with Go when you said yes to step 4, or had both (`remote on` builds it otherwise).
 7. **The Claude Code skill** that creates profiles.
 8. **A shell hook**: the `cl-*` shortcuts (including `cl-opus` / `cl-sonnet` / `cl-opencode`, unless you have your
    own) and, if you want, the panel opening with Ghostty.

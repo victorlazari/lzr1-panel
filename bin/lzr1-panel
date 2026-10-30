@@ -862,11 +862,27 @@ _remote_off() {
   RS=()
 }
 
-# _remote_live: a session is on (its gateway runs); a stale one (expired, or a reboot) is cleaned up
+# _remote_lock: one remote change at a time across processes (on, off, rotate, and _remote_live's cleanup, which would
+# otherwise take a rotate's gap, its old gateway gone, for a dead remote): an fcntl lock on $RDIR/lock, held until this
+# process exits or _remote_unlock. Waits up to 30 s.
+RLOCK=0
+_remote_lock() {
+  (( RLOCK )) && return 0
+  zmodload zsh/system; mkdir -p $RDIR && chmod 700 $RDIR; : >>$RDIR/lock  # flock opens, never creates
+  zsystem flock -t 30 -f RLOCK $RDIR/lock ||
+    { RLOCK=0; die "another lzr1-panel remote command is still running after 30 s (or $RDIR/lock cannot be locked)" }
+}
+_remote_unlock() { (( RLOCK )) && zsystem flock -u $RLOCK; RLOCK=0 }
+
+# _remote_live: a session is on (its gateway runs); a stale one (expired, or a reboot) is cleaned up. Under the lock,
+# kept when the caller holds it already, released otherwise (so a menu or a remote on it starts is never kept waiting).
 _remote_live() {
-  _remote_read || { RS=(); rm -f $RDIR/session; return 1 }
-  _ours "$RS[gwpid]" gw $RS[uuid] && return 0
-  _remote_off; return 1
+  local held=$RLOCK r=0
+  _remote_lock
+  if ! _remote_read; then RS=(); rm -f $RDIR/session; r=1
+  elif ! _ours "$RS[gwpid]" gw $RS[uuid]; then _remote_off; r=1; fi
+  (( held )) || _remote_unlock
+  return $r
 }
 
 # _remote_keeper UUID: on the gateway's stdout. Publishes the address the gateway prints once ready with a foreground
@@ -1053,14 +1069,15 @@ _remote_start() {
   # The password reaches the gateway on its stdin, never in a command line or the environment. Its stdout goes to
   # the keeper, which publishes it and ends serve when the gateway exits. On macOS the app's serve cannot reach a
   # Unix socket, so the gateway listens on 127.0.0.1 there: any local user or process can reach that port and claim
-  # any login, so only the password protects it there (docs/remote.md). It ignores HUP, like the keeper and the watcher
-  # (serve runs in a process group of its own, RDET), so a remote outlives the terminal or panel that turned it on (Go
-  # keeps an ignored SIGHUP ignored).
+  # any login, so only the password protects it there (docs/remote.md). It runs in a process group of its own (RDET,
+  # which keeps its pid), like ttyd and serve, and ignores HUP, like the keeper and the watcher, so a remote outlives the
+  # terminal or panel that turned it on, and a later Ctrl-C there (the panel's prompts) never reaches it: Go's
+  # NotifyContext un-ignores SIGINT (it keeps an ignored SIGHUP ignored).
   local -a listen=(--listen $RDIR/gw.sock --stripped)
   [[ $OSTYPE == darwin* ]] && listen=(--listen 127.0.0.1:0)
   zmodload zsh/system
   print -r -- $RS[password] | ( print $sysparams[pid] >$RDIR/gw.pid; trap '' HUP
-      exec $RDIR/lzr1-remote-gw $listen --host $RS[host] --upstream $RDIR/ttyd.sock --base /$u/ --allow $RS[allow] \
+      exec $RDET $RDIR/lzr1-remote-gw $listen --host $RS[host] --upstream $RDIR/ttyd.sock --base /$u/ --allow $RS[allow] \
         --ttl $ttl --log $RDIR/remote.log --audit $RDIR/audit.log --idle $RS[idle] 2>>$RDIR/remote.log ) |
     _remote_keeper $u >>$RDIR/remote.log 2>&1 &!
   # gw.pid is written just before the exec, so until then its command line is still this shell's: only a pid that
@@ -1108,6 +1125,7 @@ _remote_start() {
 _remote_rotate() {
   zmodload zsh/datetime
   local u n=${LZR1_REMOTE_PWLEN:-16} left i
+  _remote_lock
   _remote_live || die "remote is off"
   u=$RS[uuid] left=$(( ${RS[expires]:-0} - EPOCHSECONDS ))
   (( left >= 60 )) || die "it expires in under a minute: lzr1-panel remote on after it ends"
@@ -2176,6 +2194,10 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       fi
       allow=${(j:,:)${(s:,:)${allow//[[:space:]]/}}:l}
       [[ -n $allow ]] || die "remote on: no login allowed in"
+      # From here one remote command at a time; checked again, since another could have turned it on during the prompt.
+      _remote_lock
+      if _remote_live; then _remote_status; die "remote is already on (lzr1-panel remote off turns it off)"; fi
+      [[ -e $RDIR/session ]] && die "remote on: the last remote is still published (above)"
       # Tailscale logins: an e-mail, or name@github, name@passkey (no dot after the @).
       for a in ${(s:,:)allow}; do [[ $a == [^@]##@[^@]## ]] || die "not a Tailscale login (like you@example.com): $a"; done
       print -r -- "allow=$allow" >$CONFIG/remote.conf
@@ -2212,6 +2234,7 @@ remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | p
       print -r -- "copied the URL; lzr1-panel remote password copies the password, lzr1-panel remote off ends it"
       ;;
     off)
+      _remote_lock
       if _remote_read; then _remote_off || exit 1; print "remote: off (unpublished, stopped)"
       else _remote_off; print "remote: off"; fi
       ;;
