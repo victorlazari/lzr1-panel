@@ -62,7 +62,7 @@
    ✓ #1398 chore: bump dependencies              3d
      atlas · ⎇ chore/deps · checks passed
  ────────────────────────────────────────────────────
- [+opus] [+sonnet] [+opencode] [web] [↻] [?]
+ [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]
 ```
 
 <p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
@@ -152,6 +152,7 @@ flowchart LR
 | `t` | the session in a new Ghostty tab |
 | `o` | its Remote Control link (on a PR: the PR) |
 | `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
+| `f`, or `[full]` | the viewer alone, so a terminal app's own text selection (Termius on a phone) stays inside the session; tap the yellow bar at the bottom to bring the panel back |
 | `w`, or `[web]` | the panel in a browser: turns it on (asks who may come in, copies the URL); while it is on, its menu: copy the URL or the password, who is connected, rotate the password, turn it off |
 | `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
 | `?` / `q` | all the keys / quit: closes the panel, the viewer and the window |

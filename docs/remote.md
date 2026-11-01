@@ -226,7 +226,8 @@ same with this Mac's clipboard; here the clipboard is on another device.
 
 A tmux layout narrower than `LZR1_NARROW` columns (86 by default: the panel's 56 plus 30) shows one pane at a time: a
 phone's browser (390 px is about 46 columns), a narrow terminal or a split. The panel fills the window, with a yellow
-bar at the bottom, "◀ panel · tap here".
+bar at the bottom over a session, "◀ panel · tap here" (never over the panel itself). In a browser the page has its own
+header and back button instead, and that bar is not shown.
 
 - **A tap on a session's row** shows that session alone, with the keyboard in it (what Enter does on a wide layout).
   A tap on a machine's line or a pull request moves nothing.
@@ -236,6 +237,24 @@ bar at the bottom, "◀ panel · tap here".
 - Each browser decides alone: a phone and a laptop on the same remote each get the layout that fits them.
 
 `LZR1_NARROW=0` keeps the side-by-side layout at any width. A Ghostty split is never narrowed.
+
+In a terminal app on a phone (Termius) a wide layout still shows both panes, and the app's own long-press selection runs
+across the divider into the panel. **`f`**, or **`[full]`** in the footer, shows the viewer alone (tap the yellow bar to
+bring the panel back), so the selection stays inside the session.
+
+On a phone's browser:
+
+- **Swipe** over the terminal to scroll it (the list, a session's history).
+- The **on-screen keyboard** opens only when you tap inside a session. Opening a session, the list, the pull requests
+  and Remote never open it; the key bar (esc, tab, ^C, arrows, back) works without it.
+
+## Install it as an app
+
+Chrome (Android: menu → **Install app**, or **Add to Home screen**) installs the remote panel as an app: it opens
+without the address bar and browser buttons, which gives a phone's screen back to the panel. Safari on iOS: Share →
+**Add to Home Screen**. The app opens the same remote URL and asks for the same sign-in and password; when the remote is
+turned off or its URL changes, install it again from the new URL. It needs the HTTPS address
+`tailscale serve` publishes, which it is.
 
 ## Fidelity in a browser
 

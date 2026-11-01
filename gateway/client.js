@@ -112,8 +112,10 @@
   // and remote_view in bin/lzr1-panel); the tabs drive the panel with keys it binds for them (alt-s: the top of the
   // list, alt-p: the pull requests), leaving a session first as back does (Ctrl-b d). Remote is a page of its own, read
   // from the gateway (lzr1-status): nothing on it changes the remote but Log out. Every key acts on pointerdown with the
-  // default prevented, so the focus, and the on-screen keyboard with it, stays where it was. Text from the panel goes
-  // in with textContent only.
+  // default prevented, so the focus, and the on-screen keyboard with it, stays where it was. A swipe over the terminal
+  // scrolls it (as wheel events: a phone sends none, and the panel and tmux scroll on them). The on-screen keyboard
+  // opens only on a tap inside a session: never in the list, the pull requests or Remote, and not on opening a session.
+  // Text from the panel goes in with textContent only.
   if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
     const BG = '#1c1c1e', LINE = '#3a3a3c', INK = '#f2f2f7', DIM = '#8e8e93', ACCENT = '#ffd60a';
     const UI = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
@@ -138,6 +140,61 @@
 
     // What shows: the list, or a session (its key and state).
     let view = { list: true, key: '', state: '' };
+    let paged = false; // the Remote page shows: no keys, which would type into a terminal out of sight
+
+    // The keyboard: xterm's hidden textarea takes focus on every tap, which opens the on-screen keyboard. inputmode
+    // "none" keeps it shut; only a tap inside a session (typing) turns it on, and changing what shows turns it off.
+    let typing = false;
+    const field = () => document.querySelector('.xterm-helper-textarea');
+    const applyKeyboard = () => {
+      const f = field();
+      if (!f) return;
+      const on = typing && !view.list && !paged;
+      f.setAttribute('inputmode', on ? 'text' : 'none');
+      if (!on && document.activeElement === f) f.blur();
+    };
+    const closeKeyboard = () => { typing = false; applyKeyboard(); };
+    const box = () => document.getElementById('terminal-container');
+
+    // A swipe over the terminal scrolls it. A tap is left alone (it reaches xterm as a click, as before).
+    let touch = null;
+    document.addEventListener('touchstart', e => {
+      const b = box();
+      if (e.touches.length !== 1 || !b || !b.contains(e.target)) { touch = null; return; }
+      applyKeyboard(); // inputmode is right before xterm's mousedown focuses the field
+      touch = { y: e.touches[0].clientY, x: e.touches[0].clientX, total: 0, acc: 0, swipe: false };
+    }, { capture: true, passive: true });
+    document.addEventListener('touchmove', e => {
+      if (!touch || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY, dy = touch.y - y;
+      touch.y = y;
+      touch.total += dy;
+      if (!touch.swipe && Math.abs(touch.total) > 8) { touch.swipe = true; touch.acc = touch.total; }
+      else if (touch.swipe) touch.acc += dy;
+      if (!touch.swipe) return;
+      e.preventDefault();
+      const t = window.term, rows = (t && t.rows) || 24, b = box();
+      const cell = Math.max(8, (b ? b.clientHeight : 400) / rows);
+      const lines = Math.trunc(touch.acc / cell);
+      if (!lines) return;
+      touch.acc -= lines * cell;
+      const target = document.querySelector('.xterm-screen') || b;
+      if (target) {
+        target.dispatchEvent(new WheelEvent('wheel', { deltaY: lines, deltaMode: 1, bubbles: true, cancelable: true,
+          clientX: touch.x, clientY: y }));
+      }
+    }, { capture: true, passive: false });
+    document.addEventListener('touchend', e => {
+      const was = touch;
+      touch = null;
+      // A tap in a session asks for the keyboard.
+      if (!was || was.swipe || view.list || paged) return;
+      typing = true;
+      applyKeyboard();
+      const f = field();
+      if (f) { f.blur(); f.focus(); }
+    }, { capture: true, passive: true });
+    document.addEventListener('touchcancel', () => { touch = null; }, { capture: true, passive: true });
     // Back to the list: leave the session (Ctrl-b d), then KEYS once the panel has the keyboard again.
     const toList = keys => {
       if (view.list) { if (keys) send(keys); return; }
@@ -239,9 +296,9 @@
       r.append(el('span', { color: DIM }, label), el('span', { textAlign: 'right', minWidth: '0', overflowWrap: 'anywhere' }, value));
       return r;
     };
-    let paged = false; // the Remote page shows: no keys, which would type into a terminal out of sight
     const showPage = on => {
       paged = on;
+      closeKeyboard();
       page.style.display = on ? 'block' : 'none';
       layout();
       if (!on) return;
@@ -285,7 +342,9 @@
     onTitle = title => {
       const f = String(title || '').split('|');
       if (f[0] !== 'lzr1') return;
+      const was = view.list ? '' : view.key;
       view = f[1] === 'view' ? { list: false, key: f[2] || '', state: f[3] || '' } : { list: true, key: '', state: '' };
+      if (view.list || view.key !== was) closeKeyboard(); // a session just opened: the keyboard waits for a tap
       glyph.textContent = STATES[view.state] || '';
       glyph.style.color = view.state === 'wait' ? ACCENT : view.state === 'work' ? '#64d2ff' : DIM;
       name.textContent = view.key.slice(view.key.indexOf('/') + 1);
@@ -309,11 +368,13 @@
       keys.style.top = (top + h - tabH - keyH) + 'px';
       page.style.top = top + 'px';
       page.style.height = (h - tabH) + 'px';
-      const box = document.getElementById('terminal-container');
-      if (box) {
-        Object.assign(box.style, { position: 'fixed', left: '0', right: '0', top: (top + headH) + 'px',
-          height: Math.max(0, h - headH - keyH - tabH) + 'px' });
+      const tb = box();
+      if (tb) {
+        Object.assign(tb.style, { position: 'fixed', left: '0', right: '0', top: (top + headH) + 'px',
+          height: Math.max(0, h - headH - keyH - tabH) + 'px', touchAction: 'none', overscrollBehavior: 'none' });
       }
+      document.documentElement.style.overscrollBehavior = 'none';
+      applyKeyboard();
       window.dispatchEvent(new Event('resize'));
     };
     const start = () => { document.body.append(page, head, keys, tabs); layout(); };

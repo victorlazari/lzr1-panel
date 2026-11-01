@@ -746,6 +746,37 @@ zoom_pane() {
   local -a T=(tmux -L lzr1)
   $T select-pane -Z -t $1 2>/dev/null || return 0  # -Z: a zoomed window stays zoomed, on PANE now
   [[ $($T display -p -t $1 '#{window_zoomed_flag}') == 1 ]] || $T resize-pane -Z -t $1 2>/dev/null
+  status_sync $($T display -p -t $1 '#{session_name}' 2>/dev/null)
+}
+
+# status_sync SESSION: the yellow "◀ panel · tap here" line shows only while a session fills the window (zoomed on the
+# viewer): never over the panel itself, where it used to stay after a tap on it, and never in a browser's layout, whose
+# page has its own back button (gateway/client.js).
+status_sync() {
+  local s=$1 id=${1#lzr1-} on=off me
+  local -a T=(tmux -L lzr1)
+  [[ $s == lzr1-<-> && -r $STATE/$id.me ]] || return 0
+  me=$(<$STATE/$id.me)
+  if [[ ! -r $STATE/$id.remote && $($T display -p -t "=$s:" '#{window_zoomed_flag}' 2>/dev/null) == 1 \
+        && $($T display -p -t "=$s:" '#{pane_id}' 2>/dev/null) != $me ]]; then on=on; fi
+  $T set -t "=$s:" status-position bottom \; set -t "=$s:" status-style 'fg=black,bg=yellow' \
+     \; set -t "=$s:" status-left ' ◀ panel · tap here' \; set -t "=$s:" status-left-length 40 \
+     \; set -t "=$s:" status-right '' \; set -t "=$s:" window-status-format '' \
+     \; set -t "=$s:" window-status-current-format '' \; set -t "=$s:" status $on 2>/dev/null
+}
+
+# to_panel ID: back to the panel: alone in a narrow layout, beside the viewer again in a wide one after `full`.
+to_panel() {
+  local id=$1 s=lzr1-$1 me
+  local -a T=(tmux -L lzr1)
+  [[ -r $STATE/$id.me ]] && me=$(<$STATE/$id.me)
+  [[ -n $me ]] || return 0
+  if [[ -e $STATE/$id.narrow ]]; then
+    zoom_pane $me
+  elif [[ $($T display -p -t "=$s:" '#{window_zoomed_flag}' 2>/dev/null) == 1 ]]; then
+    $T resize-pane -Z -t $me 2>/dev/null && $T select-pane -t $me 2>/dev/null
+    status_sync $s
+  fi
 }
 
 viewer_detach() {  # viewer_detach ID KEY: detach the viewer's client from KEY's machine
@@ -1529,16 +1560,15 @@ open)  # panel on the left, viewer on the right
   print -rn -- $vpane >$STATE/$id.vterm
   $T split-window -hb -l $PANEL_W -t $sess -P -F '#{pane_id}' "$SELF _panel $id" >$STATE/$id.me
   # Narrow (a phone in a browser, a small terminal): one pane at a time, the panel first (_fit, on every attach and
-  # resize, so a phone turned sideways follows). A tap on the status line it shows brings the panel back (_back).
-  if (( NARROW )); then
-    local envs="LZR1_CONFIG=${(q)CONFIG} XDG_CACHE_HOME=${(q)STATE:h} LZR1_PANEL_WIDTH=$PANEL_W LZR1_NARROW=$NARROW"
-    $T set-hook -t $sess client-attached "run-shell -b '$envs $SELF _fit $id'" \
-       \; set-hook -t $sess client-resized "run-shell -b '$envs $SELF _fit $id'" \
-       \; bind -n MouseDown1Status "run-shell '$envs $SELF _back #{session_name}'" \
-       \; bind -n MouseDown1StatusLeft "run-shell '$envs $SELF _back #{session_name}'" \
-       \; bind -n MouseDown1StatusRight "run-shell '$envs $SELF _back #{session_name}'" \
-       \; bind -n MouseDown1StatusDefault "run-shell '$envs $SELF _back #{session_name}'" >/dev/null 2>&1
-  fi
+  # resize, so a phone turned sideways follows). A tap on the status line it shows over a session brings the panel back
+  # (_back), also after `full` in a wide layout.
+  local envs="LZR1_CONFIG=${(q)CONFIG} XDG_CACHE_HOME=${(q)STATE:h} LZR1_PANEL_WIDTH=$PANEL_W LZR1_NARROW=$NARROW"
+  (( NARROW )) && $T set-hook -t $sess client-attached "run-shell -b '$envs $SELF _fit $id'" \
+     \; set-hook -t $sess client-resized "run-shell -b '$envs $SELF _fit $id'" >/dev/null 2>&1
+  $T bind -n MouseDown1Status "run-shell '$envs $SELF _back #{session_name}'" \
+     \; bind -n MouseDown1StatusLeft "run-shell '$envs $SELF _back #{session_name}'" \
+     \; bind -n MouseDown1StatusRight "run-shell '$envs $SELF _back #{session_name}'" \
+     \; bind -n MouseDown1StatusDefault "run-shell '$envs $SELF _back #{session_name}'" >/dev/null 2>&1
   # A browser's panel (lzr1-panel remote): its layout ends when the browser goes, and remote off finds it by the mark.
   [[ -n $LZR1_REMOTE ]] &&
     TMUX= exec $T attach -t $sess \; set -t $sess destroy-unattached on \; set -t $sess @lzr1_remote $LZR1_REMOTE
@@ -1555,7 +1585,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
   while true; do
     target=$(<$tfile 2>/dev/null)
     if [[ -z $target ]]; then
-      [[ -e $STATE/$id.narrow ]] && zoom_pane $(<$STATE/$id.me)  # narrow: nothing to show, so the panel
+      to_panel $id  # nothing to show: the panel (narrow: alone; after full: beside the viewer again)
       clear; print -P '\n  %F{8}← pick a session in the panel: click it, or use the arrow keys%f'
       print -P '  %F{8}inside a session, Ctrl-b d leaves it (Ctrl-C goes to Claude)%f'
       until [[ -s $tfile ]]; do sleep 0.3; done
@@ -1600,7 +1630,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
       if first_key $id $ended; then
         print -rn -- $REPLY >$tfile; print -rn -- $REPLY >$STATE/$id.follow; remote_last $id $REPLY
       else ended=(); : >$tfile; fi
-      [[ -e $STATE/$id.narrow ]] && zoom_pane $(<$STATE/$id.me)  # narrow: back to the list
+      to_panel $id  # back to the list
       continue
     fi
     # Detached (Ctrl-b d): wait for the next pick. The panel's refreshes re-send its highlighted row; .detached
@@ -1788,10 +1818,8 @@ _fit)  # _fit ID: the tmux layout's hooks (open): under NARROW columns the panel
   z=${w#* } w=${w% *}
   if (( NARROW && w < NARROW )); then
     : >$STATE/$id.narrow
-    $T set -t $s status on \; set -t $s status-position bottom \; set -t $s status-style 'fg=black,bg=yellow' \
-       \; set -t $s status-left ' ◀ panel · tap here' \; set -t $s status-left-length 40 \; set -t $s status-right '' \
-       \; set -t $s window-status-format '' \; set -t $s window-status-current-format '' 2>/dev/null
     (( z )) || zoom_pane $me  # already zoomed (the panel, or the viewer showing a session): keep it
+    status_sync $s
     # A browser's layout (a phone): the title says whether the list or a session shows (remote_view), for its header.
     [[ -r $STATE/$id.remote ]] && $T set -t $s @lzr1_me $me \; set -t $s set-titles on \
       \; set -t $s set-titles-string 'lzr1|#{?#{==:#{pane_id},#{@lzr1_me}},list,view|#{@lzr1_view}}' 2>/dev/null
@@ -1806,7 +1834,12 @@ _fit)  # _fit ID: the tmux layout's hooks (open): under NARROW columns the panel
 
 _back)  # _back SESSION: a tap on a narrow layout's status line: the panel alone again
   local id=${2#lzr1-}
-  [[ $2 == lzr1-<-> && -e $STATE/$id.narrow && -r $STATE/$id.me ]] && zoom_pane $(<$STATE/$id.me)
+  [[ $2 == lzr1-<-> ]] && to_panel $id
+  ;;
+
+_full)  # _full ID: the viewer alone, so a terminal app's own selection (Termius on a phone) cannot run across the panel
+  local vt=$(<$STATE/$2.vterm 2>/dev/null)
+  [[ -n $vt && $(mode $2) == tmux ]] && zoom_pane $vt
   ;;
 
 _url)  # _url KEY: the session's Remote Control link
@@ -1834,6 +1867,7 @@ _footer)  # _footer ID: fzf's action for a click on the footer word $FZF_CLICK_F
     *opencode*) print -r -- "execute($SELF _new opencode $2 {1})$more" ;;
     *opus*)     print -r -- "execute($SELF _new opus $2 {1})$more" ;;
     *sonnet*)   print -r -- "execute($SELF _new sonnet $2 {1})$more" ;;
+    *full*)     print -r -- "execute-silent($SELF _full $2)" ;;
     *web*)      print -r -- "execute($SELF _web $2)$more" ;;
     *↻*)        print -r -- "reload-sync($SELF _list $2)" ;;
     *\?*)       print -r -- "execute($SELF keys; read -k1 -s)" ;;
@@ -2095,7 +2129,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer='[+opus] [+sonnet] [+opencode] [web] [↻] [?]' --footer-border=top \
+    --footer='[+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
@@ -2110,6 +2144,7 @@ _panel)  # _panel ID
     --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
     --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
     --bind "w:execute($S _web $id)+reload-sync($S _list $id)" \
+    --bind "f:execute-silent($S _full $id)" \
     --bind "alt-s:first" --bind "alt-p:transform($S _prpos $id)" \
     --bind "r:reload-sync($S _list $id)" \
     --bind "?:execute($S keys; read -k1 -s)" \
@@ -2153,6 +2188,7 @@ keys)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
   x                end the session (asks first); the next one shows
+  f  or [full]     the viewer alone (select text without the panel; tap the yellow bar to return)
   w  or [web]      in a browser too: on, copy, who, off
   r  or [↻]        refresh now (it refreshes every 15s)
   q                close the panel and the viewer (the window closes)
