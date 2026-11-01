@@ -187,6 +187,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}
+	if name := strings.TrimPrefix(r.URL.Path, s.base); serveApp(w, r, name) {
+		return
+	}
 	switch r.URL.Path {
 	case s.base + clientPath:
 		serveClient(w, r)
