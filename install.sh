@@ -9,7 +9,9 @@
 # What it sets up: zsh, tmux, fzf (0.74+), curl, openssl, git, gh and jq; ttyd and Go if you want the panel in a browser;
 # Claude Code if it is missing; Ghostty on macOS if you want it; the lzr1-panel command in ~/.local/bin; the Claude
 # Code skill that creates profiles; a shell hook with cl-* helpers and (optionally) the panel opening with Ghostty;
-# Ctrl+C copying in Ghostty; GitHub sign-in; your first profile; then lzr1-panel doctor checks it all.
+# Ctrl+C copying in Ghostty; ImageMagick (the Pokémon sprites) and terminal-notifier (alerts) on request; GitHub sign-in;
+# your first profile, with a name and a repositories folder it suggests (Enter, Enter) and an offer to add more
+# machines over SSH; then lzr1-panel doctor checks it all.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,7 +27,7 @@ for a in "$@"; do
     --yes|-y) YES=1 ;;
     --no-shell) SHELL_HOOK=0 ;;
     --uninstall) UNINSTALL=1 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 1 ;;
   esac
 done
@@ -175,6 +177,29 @@ fi
 have tailscale || [[ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]] ||
   info "no Tailscale: lzr1-panel remote also needs it (https://tailscale.com/download)"
 
+# The Pokémon theme (sprites beside each session, and the strip in a browser; on by default) cuts the art with curl and
+# ImageMagick, through brew on macOS. Declining leaves text tags.
+if have magick || have convert; then ok "ImageMagick"
+elif ask "Install ImageMagick for the Pokémon sprites (on by default; without it the panel shows text tags)?"; then
+  info "installing imagemagick"
+  if ( pkg_install imagemagick ) >/dev/null 2>&1; then hash -r; ok "ImageMagick installed"
+  else warn "could not install imagemagick: Pokémon stay as text tags (brew install imagemagick)"; fi
+else
+  info "skipped: the Pokémon sprites need ImageMagick (text tags until then)"
+fi
+
+# Alerts on macOS: terminal-notifier groups a session's notifications; without it the panel uses osascript.
+if [[ $OS == Darwin ]]; then
+  if have terminal-notifier; then ok "terminal-notifier"
+  elif ask "Install terminal-notifier (groups the alert notifications per session; optional)?"; then
+    info "installing terminal-notifier"
+    if ( pkg_install terminal-notifier ) >/dev/null 2>&1; then hash -r; ok "terminal-notifier installed"
+    else warn "could not install terminal-notifier: alerts use osascript"; fi
+  else
+    info "skipped: alerts use osascript"
+  fi
+fi
+
 # ---- lzr1-panel itself ----------------------------------------------------------------------------------------------
 
 step "Installing lzr1-panel"
@@ -244,13 +269,65 @@ fi
 
 # ---- first profile --------------------------------------------------------------------------------------------------
 
+# A profile is one machine whose Claude Code sessions the panel lists. The first one is this computer: the name comes from
+# its hostname and the folder from the usual places for repositories, so most of the time it is Enter, Enter.
+ask_no() { [[ $YES == 1 ]] && return 1; local r; read -r -p "  $1 [y/N] " r </dev/tty || return 1; [[ $r == [Yy]* ]]; }
+prompt() {  # prompt VAR "question" default: Enter takes the default
+  local r; read -r -p "  $2 [$3]: " r </dev/tty || r=; printf -v "$1" '%s' "${r:-$3}"
+}
+first_profile() {
+  local hn name n dir pick i=0 repos
+  local -a cands=()
+  hn=$(hostname -s 2>/dev/null | tr '[:upper:]_' '[:lower:]-' | tr -c 'a-z0-9-\n' '-')
+  [[ $hn == [a-z0-9]* ]] || hn=my-computer
+  for dir in "$HOME/github" "$HOME/Github" "$HOME/GitHub" "$HOME/code" "$HOME/Code" "$HOME/dev" "$HOME/Developer" \
+             "$HOME/src" "$HOME/projects" "$HOME/Projects" "$HOME/work" "$HOME/repos" "$HOME/Documents/GitHub"; do
+    [[ -d $dir ]] || continue
+    for n in "${cands[@]+"${cands[@]}"}"; do [[ $n -ef $dir ]] && continue 2; done  # github and Github: one folder on a Mac
+    cands+=("$dir")
+  done
+  info "A profile is one machine whose Claude Code sessions the panel lists. This computer first:"
+  if [[ $YES == 1 ]]; then
+    name=$hn
+    [[ ${#cands[@]} -gt 0 ]] && repos=${cands[0]} || repos=
+  else
+    prompt name "Name for this computer" "$hn"
+    if [[ ${#cands[@]} -gt 0 ]]; then
+      info "Where do your repositories live? (the panel lists the sessions started inside this folder)"
+      for dir in "${cands[@]}"; do i=$((i + 1)); info "  $i) $dir ($(ls -1 "$dir" 2>/dev/null | wc -l | tr -d ' ') folders)"; done
+      info "  or type another folder"
+      prompt pick "Choose" 1
+      if [[ $pick == [0-9]* && $pick -ge 1 && $pick -le ${#cands[@]} ]]; then repos=${cands[$((pick - 1))]}; else repos=$pick; fi
+    else
+      read -r -p "  Folder with your repositories (e.g. ~/code): " repos </dev/tty || repos=
+    fi
+  fi
+  repos=${repos/#\~/$HOME}
+  if [[ -z $repos ]]; then
+    info "no repositories folder found: run 'lzr1-panel profile add' when you know it (it asks, with suggestions)"
+    return 0
+  fi
+  if "$BIN/lzr1-panel" profile add "$name" --local --repos "$repos"; then
+    ok "profile $name created (this computer)"
+  else
+    warn "profile not created: run 'lzr1-panel profile add' later (it asks, with suggestions)"
+  fi
+}
 step "Profiles"
 if compgen -G "$CONFIG/profiles/*.conf" >/dev/null; then
   "$BIN/lzr1-panel" profile list | sed 's/^/  /'
-elif [[ -t 0 ]] && ask "Create your first profile now?"; then
-  "$BIN/lzr1-panel" profile add || warn "profile not created: run 'lzr1-panel profile add' later"
+elif [[ -t 0 || $YES == 1 ]] && ask "Create your first profile now (this computer)?"; then
+  first_profile
 else
-  info "none yet: run 'lzr1-panel profile add', or ask Claude to create a new lzr1-panel profile"
+  info "none yet: run 'lzr1-panel profile add' (it asks, with suggestions), or ask Claude to create a new lzr1-panel profile"
+fi
+# More machines are the same: a server over SSH takes a user@host and, if you use one, a key.
+if [[ -t 0 && $YES == 0 ]] && compgen -G "$CONFIG/profiles/*.conf" >/dev/null &&
+   ask_no "Add another machine (a server over SSH) now?"; then
+  while :; do
+    "$BIN/lzr1-panel" profile add || warn "profile not created: run 'lzr1-panel profile add' later"
+    ask_no "Add one more?" || break
+  done
 fi
 
 # ---- GitHub ---------------------------------------------------------------------------------------------------------
@@ -272,5 +349,8 @@ step "Checking everything"
 "$BIN/lzr1-panel" doctor || warn "fix the items marked ✗ above (docs/troubleshooting.md explains each)"
 
 step "Done"
-info "open a new terminal (or: source ~/.zshrc), then run: lzr1-panel open"
-info "keys: lzr1-panel keys · profiles: lzr1-panel profile help"
+info "1. open a new terminal (or: source ~/.zshrc), then run: lzr1-panel open"
+info "2. start a session: n (Opus), s (Sonnet) or c (opencode) in the panel; click a session to see it"
+info "3. the Pokémon theme is on: p picks a session's Pokémon, [...] in the footer turns the theme on or off"
+info "4. the panel in a browser or on your phone: lzr1-panel remote on (needs Tailscale; docs/remote.md)"
+info "keys: lzr1-panel keys · profiles: lzr1-panel profile help · anything wrong: lzr1-panel doctor"

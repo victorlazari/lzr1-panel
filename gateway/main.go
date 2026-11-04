@@ -35,6 +35,7 @@ type config struct {
 	lockAfter, killAfter   int           // 0: the defaults (5 and 20); tests set them
 	lockFor                time.Duration // 0: the default (15 min)
 	idle                   time.Duration // --idle; 0 (tests): the default (30 min)
+	state                  string        // --state: the panel's state directory, for the Pokémon strip (none when empty)
 }
 
 // errUsage marks a bad command line: exit 2.
@@ -55,6 +56,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&c.logPath, "log", "", "append the log to this file (default stderr)")
 	fs.DurationVar(&c.idle, "idle", defaultIdle, "log a browser out, closing its terminal, after this long without input")
 	fs.StringVar(&c.auditPath, "audit", "", "append the audit trail (logins, failures, lockouts, shutdown) to this file, 0600")
+	fs.StringVar(&c.state, "state", "", "the panel's state directory (sessions snapshot, Pokémon art, panel picks) for the browser strip; none when empty")
 	if err := fs.Parse(args); err != nil {
 		return c, errUsage
 	}

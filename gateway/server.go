@@ -49,6 +49,7 @@ type server struct {
 	lockFor              time.Duration
 	kill                 chan struct{}
 	idle                 time.Duration // a session with no input for longer is ended (idle.go)
+	state                string        // the panel's state directory (pokemon.go); empty: no strip data
 	deadline             time.Time     // when --ttl ends the gateway (expire sets it; status.go reports it)
 
 	mu          sync.Mutex
@@ -70,7 +71,7 @@ const (
 func newServer(c config, pwHash [32]byte, logger *log.Logger) *server {
 	s := &server{base: c.base, host: c.host, stripped: c.stripped, allow: c.allow, pwHash: pwHash, log: logger,
 		now: time.Now, lockAfter: c.lockAfter, lockFor: c.lockFor, killAfter: c.killAfter, kill: make(chan struct{}),
-		idle: c.idle, sessions: map[string]*liveSession{}, fails: map[string]int{}, lockedUntil: map[string]time.Time{}}
+		idle: c.idle, state: c.state, sessions: map[string]*liveSession{}, fails: map[string]int{}, lockedUntil: map[string]time.Time{}}
 	if s.lockAfter <= 0 {
 		s.lockAfter = defaultLockAfter
 	}
@@ -196,6 +197,16 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case s.base + statusPath:
 		s.serveStatus(w, r, tok)
+		return
+	case s.base + sessionsPath:
+		s.serveSessions(w, r)
+		return
+	case s.base + pickPath:
+		s.servePick(w, r)
+		return
+	}
+	if rest, ok := strings.CutPrefix(r.URL.Path, s.base+pokemonPrefix); ok {
+		s.servePokemon(w, r, rest)
 		return
 	}
 	if r.Header.Get("Upgrade") != "" {

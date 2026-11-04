@@ -18,6 +18,7 @@
 #   lzr1-panel notify                                a sample alert: the tone and a notification, to check them
 #   lzr1-panel profile list|show|add|edit|test|remove manage profiles (lzr1-panel profile help)
 #   lzr1-panel keys                                  the panel's keys
+#                                                    (LZR1_POKEMON=off|text|sprite: a Pokémon per session; docs/pokemon.md)
 #   lzr1-panel splash                                the opening animation (LZR1_SPLASH=0 skips it everywhere)
 #   lzr1-panel remote on [--allow EMAIL] [--ttl 8h]  the panel in a browser on your tailnet: prints a private URL and
 #                                                    password, copies the URL (docs/remote.md); LZR1_REMOTE_TTL (8h),
@@ -39,6 +40,9 @@ CONFIG=${LZR1_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel}
 PROFILES=$CONFIG/profiles
 STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
 PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
+# A sprite takes 10 columns: wider by default when sprites are on and can be cut (the mode is lib/pokemon.zsh's).
+{ _pk0=${LZR1_POKEMON:-$(<$CONFIG/pokemon 2>/dev/null)}; [[ -z $LZR1_PANEL_WIDTH && ${_pk0:-sprite} == sprite ]] &&
+  (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )) && PANEL_W=66; unset _pk0 } 2>/dev/null
 NARROW=${LZR1_NARROW:-$(( PANEL_W + 30 ))}  # a tmux layout under this many columns shows one pane at a time; 0: never
 [[ $NARROW == <-> ]] || NARROW=$(( PANEL_W + 30 ))
 MENU_BUTTON=${LZR1_MENU_BUTTON:-right}  # the mouse button that opens a row's menu: right or left
@@ -48,6 +52,7 @@ chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
 die() { print -ru2 -- "lzr1-panel: $*"; exit 1 }
 
 source ${SELF:h:h}/lib/splash.zsh
+source ${SELF:h:h}/lib/pokemon.zsh
 
 # ---- profiles -------------------------------------------------------------------------------------------------------
 
@@ -229,21 +234,35 @@ profile_name() {
   [[ -z $WHY ]]
 }
 
+# repos_guess: the first of the usual folders for repositories that exists, in REPLY (empty, and false, when none does)
+repos_guess() {
+  local d
+  for d in ~/github ~/Github ~/GitHub ~/code ~/Code ~/dev ~/Developer ~/src ~/projects ~/Projects ~/work ~/repos ~/Documents/GitHub; do
+    [[ -d $d ]] && { REPLY=$d; return 0 }
+  done
+  REPLY=; return 1
+}
+
 profile_add() {
-  local name type host key port repos claude opencode REPLY WHY
+  local name type host key port repos claude opencode REPLY WHY dflt
   # One guided answer: the prompt shows even when the answers are piped in; the end of input stops the questions.
   ask() { print -rnu2 -- "$2"; IFS= read -r $1 || { print -u2; die "profile add: no answer" } }
+  # The same with a suggestion: Enter takes it.
+  askd() { ask $1 "$2 [$3]: "; [[ -n ${(P)1} ]] || typeset -g $1=$3 }
   if (( $# == 0 )); then
-    # Guided: the same questions an agent asks, then the same command.
+    # Guided: the same questions an agent asks, then the same command. Enter takes the suggestion in [brackets].
     print "New lzr1-panel profile (Claude Code sessions only, for now)"
+    print "  A profile is one machine whose sessions the panel lists."
+    dflt=${${(L)$(hostname -s 2>/dev/null)}//[^a-z0-9-]/-}
     while :; do
-      ask name "  Profile name (e.g. macbook-pro-lazari): "
+      if [[ $dflt == [a-z0-9][a-z0-9-]# && ! -e $PROFILES/$dflt.conf ]]; then askd name "  Profile name" $dflt
+      else ask name "  Profile name (e.g. macbook-pro-lazari): "; fi
       profile_name "$name" && break
       print -r -- "  $WHY"
     done
     name=$REPLY
     print "  Target: 1) this computer   2) another machine over SSH"
-    ask type "  Choose 1 or 2: "
+    askd type "  Choose 1 or 2" 1
     if [[ $type == 2 ]]; then
       type=ssh
       ask host "  SSH user@host: "
@@ -252,7 +271,11 @@ profile_add() {
     else
       type=local
     fi
-    while [[ -z $repos ]]; do ask repos "  Folder with your repositories (e.g. ~/Github/my-repositories): "; done
+    repos_guess && dflt=$REPLY || dflt=
+    while [[ -z $repos ]]; do
+      if [[ $type == local && -n $dflt ]]; then askd repos "  Folder with your repositories" $dflt
+      else ask repos "  Folder with your repositories (e.g. ~/Github/my-repositories): "; fi
+    done
   else
     name=$1; shift
     while (( $# )); do
@@ -609,6 +632,19 @@ list_rows() {
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   local US=$'\037' track= seeded= f fn pts pst pwf ak
   local -a alerts fresh live sf sv uf uv
+  # A Pokémon for every session (lib/pokemon.zsh): its number, mood and, in sprite mode, three lines of art. The art is
+  # cut in the background for the strip of a browser too, so ⇄ web is read first.
+  local pkm=$PK_MODE pkn pkt pkw mw=0 TW=$W idles isdone sleeping ar PK_PANEL=${1:-}
+  local web=; local -A RS PK_TAKEN
+  _remote_read && _ours "$RS[gwpid]" gw $RS[uuid] && web=' · ⇄ web'
+  local -a needart pkrows
+  if [[ $pkm == sprite ]] && ! (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then pkm=text; fi
+  if [[ $pkm != off ]]; then
+    mw=5
+    for f in $STATE/pokemon/*/*(N); do PK_TAKEN[$(<$f)]=1; done 2>/dev/null
+    [[ $pkm == sprite ]] && TW=$(( W - 11 ))
+    (( TW < 36 )) && { pkm=text; TW=$W }
+  fi
   if [[ -n $1 ]]; then
     # One refresh at a time compares and writes; one that cannot get the lock in 2s skips tracking this time (the
     # next refresh catches up).
@@ -659,24 +695,40 @@ list_rows() {
         *)    (( i++ )); glyph="$D·$R" ;;
       esac
       mk= u=$STATE/unread/$p/$fn
+      if [[ $pkm != off ]]; then
+        _pk_pick $p $fn $p/$name; pkn=$REPLY
+        idles=$age; [[ $idles == <-> ]] || idles=0
+        isdone=; [[ $st != work && ( $ak == done || ( -r $u && $(<$u) == done ) ) ]] && isdone=1
+        _pk_mood $st $idles $isdone
+        sleeping=; [[ $PK_MOOD == zZz ]] && sleeping=1
+        [[ -s $PK_ART/${(l:4::0:)pkn}/term.png ]] || needart+=( $pkn )
+        [[ -n $web ]] && pkrows+=( "$p/$name$US${${st:#(work|wait)}:-idle}$US$idles$US${isdone:-0}$US$pkn" )
+      fi
       if [[ -n $1 && $p/$name == "$cur" ]]; then rm -f $u
       elif [[ -n $1 && ( -e $u || -n $ak ) ]]; then mk="$B$Y✱$R "; (( a++ )); fi
       _ago $age; age=$REPLY
       right="${model:+$model · }$age"
-      pw=$(( W - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
+      pw=$(( TW - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
       _cut $name $pw; l1=" $glyph $mk${(r:pw:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
-      if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( W - 4 )); l2="   $Y$REPLY$R"
-      elif [[ -n $title ]]; then _cut $title $(( W - 4 )); l2="   $M$REPLY$R"
-      else l2="   ${D}no task yet$R"; fi
-      if [[ -n $branch ]]; then _cut "⎇ $branch${${changed:#0}:+ +$changed} · ${dir:t}" $(( W - 4 ))
-      else _cut "${dir:t}" $(( W - 4 )); fi
+      if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( TW - 4 - mw )); l2="   $Y${(r:TW-4-mw:)REPLY}$R"
+      elif [[ -n $title ]]; then _cut $title $(( TW - 4 - mw )); l2="   $M${(r:TW-4-mw:)REPLY}$R"
+      else l2="   ${D}${(r:TW-4-mw:)${:-no task yet}}$R"; fi
+      (( mw )) && l2+=" $PK_MC${(l:4:)PK_MOOD}$R"
+      pkt=; pkw=0; [[ $pkm == text ]] && { pkt="#${(l:3::0:)pkn} $PK_DEX[$pkn]"; pkw=$(( ${#pkt} + 1 )) }
+      if [[ -n $branch ]]; then _cut "⎇ $branch${${changed:#0}:+ +$changed} · ${dir:t}" $(( TW - 4 - pkw ))
+      else _cut "${dir:t}" $(( TW - 4 - pkw )); fi
       l3="   $D$REPLY$R"
+      [[ -n $pkt ]] && l3="   $D${(r:TW-4-pkw:)REPLY}$R $M$pkt$R"
+      if [[ $pkm == sprite ]]; then
+        _pk_art_lines $pkn $sleeping; ar=( "${reply[@]}" )
+        l1="$ar[1] $l1" l2="$ar[2] $l2" l3="$ar[3] $l3"
+      fi
       items+=( "$p/$name"$'\t'"$l1"$'\n'"$l2"$'\n'"$l3" )
     done
     # A session that ended leaves no state behind, so a new one with its name starts fresh.
     if [[ -n $track ]]; then
       live=( ${got%%$US*} ); live=( ${${live//\%/%25}//\//%2F} )
-      for f in $STATE/(seen|unread)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -rf $f; done
+      for f in $STATE/(seen|unread|pokemon)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -rf $f; done
     fi
   done
   rm -rf $tmp
@@ -696,10 +748,14 @@ list_rows() {
     mkdir -p $STATE/seen $STATE/unread; touch $STATE/seen $STATE/unread  # open sweeps what is a day old
     _seen_unlock
   fi
-  # ⇄ web while the remote's gateway runs: one ps, no cleanup of a stale session file (_remote_live's job), and RS
-  # local, so the caller's is untouched.
-  local web=; local -A RS
-  _remote_read && _ours "$RS[gwpid]" gw $RS[uuid] && web=' · ⇄ web'
+  # The browser strip's snapshot, and the art it and the sprites need (cut in the background, off fzf's pipe).
+  [[ -n $web && -n $1 ]] && _pk_snapshot $pkrows
+  if (( $#needart )) && [[ $pkm == sprite || -n $web ]] && (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then
+    local -a pdet=(); local an
+    if (( $+commands[setsid] )); then pdet=( setsid ); elif (( $+commands[perl] )); then pdet=( perl -e 'setpgrp; exec @ARGV' ); fi
+    for an in ${(u)needart[1,3]}; do { $pdet $SELF _art $an </dev/null >/dev/null 2>&1 &! }; done
+  fi
+  # ⇄ web was read above: one ps, no cleanup of a stale session file (_remote_live's job), RS local.
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}$web"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
   pr_rows $W
@@ -1149,7 +1205,7 @@ _remote_start() {
   zmodload zsh/system
   print -r -- $RS[password] | ( print $sysparams[pid] >$RDIR/gw.pid; trap '' HUP
       exec $RDET $RDIR/lzr1-remote-gw $listen --host $RS[host] --upstream $RDIR/ttyd.sock --base /$u/ --allow $RS[allow] \
-        --ttl $ttl --log $RDIR/remote.log --audit $RDIR/audit.log --idle $RS[idle] 2>>$RDIR/remote.log ) |
+        --ttl $ttl --log $RDIR/remote.log --audit $RDIR/audit.log --idle $RS[idle] --state $STATE 2>>$RDIR/remote.log ) |
     _remote_keeper $u >>$RDIR/remote.log 2>&1 &!
   # gw.pid is written just before the exec, so until then its command line is still this shell's: only a pid that
   # is gone means the gateway died (and after 5 s it has long exec'd, so _remote_off recognizes it to stop it).
@@ -1324,6 +1380,16 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   v=${commands[opencode]:-$HOME/.opencode/bin/opencode}
   if [[ -x $v ]]; then v=${${=$($v --version 2>/dev/null)}[-1]}; _ok "opencode${v:+ ${v#v}}"
   else print "  · no opencode: opencode sessions unavailable"; _hint "brew install sst/tap/opencode, or see opencode.ai"; fi
+  if [[ $PK_MODE == off ]]; then print "  · Pokémon off (LZR1_POKEMON=off, or off in the panel's [...] menu)"
+  elif (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then
+    _ok "Pokémon ($PK_MODE): sprites can be cut (curl and ImageMagick)"
+    if [[ ${LZR1_POKEMON_IMAGES:-auto} != 0 && -z $TMUX && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR || -n $KITTY_WINDOW_ID ) ]]
+    then _ok "Pokémon pictures: this terminal shows real images (Kitty graphics)"
+    else print "  · Pokémon pictures: half blocks here (real images need Ghostty or kitty, outside tmux)"; fi
+  else
+    print "  · Pokémon ($PK_MODE): no ImageMagick (magick), so no sprites; the panel shows text tags"
+    _hint "brew install imagemagick (apt install imagemagick): sprites and the browser strip need it"
+  fi
   if [[ $OSTYPE == darwin* ]]; then
     if [[ -d /Applications/Ghostty.app ]]; then
       _ok "Ghostty"
@@ -1526,7 +1592,7 @@ profile)
 open)  # panel on the left, viewer on the right
   local id=$$ term
   # A reused ID is a new panel: its first refresh only records, it starts wide, and it is not a browser's layout.
-  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded $STATE/$id.narrow $STATE/$id.fit $STATE/$id.remote
+  rm -rf $STATE/^remote(Nmd+1) $STATE/$id.seeded $STATE/$id.narrow $STATE/$id.fit $STATE/$id.remote $STATE/kitty/$id.*
   lzr1_splash open
   if [[ $OSTYPE == darwin* && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR ) && -z $TMUX ]]; then
     # Ghostty: split this pane; it becomes the viewer.
@@ -1754,6 +1820,58 @@ _prpos)  # _prpos ID: fzf's action that moves the highlight to the pull requests
   done
   ;;
 
+_theme)  # _theme: the [...] footer menu: the Pokémon theme on (sprites or text tags) or off, kept in $CONFIG/pokemon
+  local cur=$PK_MODE pick m D=$'\e[90m' G=$'\e[32m' R=$'\e[0m' hdr=" Pokémon theme"
+  local -a acts
+  [[ -n $LZR1_POKEMON ]] && hdr+=" ${D}(LZR1_POKEMON=$LZR1_POKEMON in your shell wins over this)$R"
+  local k lbl mark
+  for m in "sprite"$'\t'"on, with sprites" "text"$'\t'"on, text tags only" "off"$'\t'"off"; do
+    k=${m%%$'\t'*} lbl=${m#*$'\t'} mark="  "
+    [[ $k == $cur ]] && mark="$G●$R "
+    acts+=( "$k"$'\t'"$mark$lbl" )
+  done
+  acts+=( "cancel"$'\t'"${D}cancel$R" )
+  pick=$(print -rl -- $acts | fzf --ansi --layout=reverse --no-input --no-sort --delimiter=$'\t' --with-nth=2 \
+    --info=hidden --gutter=' ' --pointer='▌' --highlight-line --color='header:bold,pointer:yellow,current-fg:bold' \
+    --header=$hdr --header-border=bottom \
+    --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || exit 0
+  pick=${pick%%$'\t'*}
+  [[ $pick == (sprite|text|off) ]] || exit 0
+  mkdir -p $CONFIG; print -r -- $pick >$CONFIG/pokemon
+  ;;
+
+_art)  # _art N: cut Pokémon N's art into the cache (curl and ImageMagick; from list_rows, in the background)
+  pk_fetch $2
+  ;;
+
+_pkpreview)  # _pkpreview N: the picker's preview: Pokémon N's sprite, cut now if it is not yet
+  [[ $2 == <1-151> ]] || exit 0
+  local PK_PANEL=pick
+  if _pk_art_lines $2; then print -rl -- $reply
+  else
+    print -rl -- $reply; print -r -- $'\e[90m'"cutting the sprite…"$'\e[0m'
+    [[ -s $PK_ART/${(l:4::0:)2}/meta.json ]] || { $SELF _art $2 </dev/null >/dev/null 2>&1 &! }
+  fi
+  ;;
+
+_pokemon)  # _pokemon ID KEY: choose the session's Pokémon from the 151: type a name or number, enter or click picks
+  local id=$2 key=$3 pn i cur sel
+  split_key $key
+  [[ -n $KP && -n $KS && $KP != +pr ]] || exit 0
+  _fname $KS; pn=$STATE/pokemon/$KP/$REPLY
+  [[ -r $pn ]] && cur=$(<$pn)
+  [[ $cur == <1-151> ]] || cur=
+  local -a rows; for (( i = 1; i <= 151; i++ )); do rows+=( "${(l:3::0:)i} $PK_DEX[$i]" ); done
+  sel=$(print -rl -- $rows | fzf --layout=reverse --no-sort --info=inline --prompt="Pokémon for $KS › " \
+    --gutter=' ' --pointer='▌' --highlight-line --color='header:dim,pointer:yellow,current-fg:bold' \
+    ${cur:+--header="now #${(l:3::0:)cur} $PK_DEX[$cur]"} --header-border=bottom \
+    --preview "$SELF _pkpreview {1}" --preview-window=down,5,border-top \
+    ${cur:+"--bind=load:pos($cur)"} --bind 'left-click:accept,double-click:accept,esc:abort') || exit 0
+  sel=${sel%% *}; [[ $sel == <-> ]] || exit 0
+  mkdir -p ${pn:h}; print -rn -- $(( 10#$sel )) >$pn
+  [[ -s $PK_ART/${(l:4::0:)sel}/meta.json ]] || { $SELF _art $(( 10#$sel )) </dev/null >/dev/null 2>&1 &! }
+  ;;
+
 _new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's profile (or take NAME); starts in the background,
        # shows it in the viewer; PROMPT is the first message
   local model=$2 id=$3 p=${4%%/*} name=$5 prompt=$6
@@ -1843,12 +1961,17 @@ _fit)  # _fit ID: the tmux layout's hooks (open): under NARROW columns the panel
     (( z )) || zoom_pane $me  # already zoomed (the panel, or the viewer showing a session): keep it
     status_sync $s
     # A browser's layout (a phone): the title says whether the list or a session shows (remote_view), for its header.
+    # The last field, id=N, is this panel's: the strip's clicks name it (gateway/pokemon.go).
     [[ -r $STATE/$id.remote ]] && $T set -t $s @lzr1_me $me \; set -t $s set-titles on \
-      \; set -t $s set-titles-string 'lzr1|#{?#{==:#{pane_id},#{@lzr1_me}},list,view|#{@lzr1_view}}' 2>/dev/null
+      \; set -t $s set-titles-string "lzr1|#{?#{==:#{pane_id},#{@lzr1_me}},list,view|#{@lzr1_view}}|id=$id" 2>/dev/null
   else
     [[ -e $STATE/$id.narrow ]] || (( ! z )) || exit 0  # never unzoom what this did not zoom
     rm -f $STATE/$id.narrow
-    $T set -t $s set-titles off 2>/dev/null
+    # A browser's wide layout: lzr1|wide|KEY|STATE|id=N, for the strip (the page's own title stays as it was).
+    if [[ -r $STATE/$id.remote ]]; then
+      $T set -t $s @lzr1_me $me \; set -t $s set-titles on \
+        \; set -t $s set-titles-string "lzr1|wide|#{@lzr1_view}|id=$id" 2>/dev/null
+    else $T set -t $s set-titles off 2>/dev/null; fi
     (( z )) && $T resize-pane -Z -t $me 2>/dev/null
     $T set -t $s status off \; resize-pane -t $me -x $PANEL_W 2>/dev/null
   fi
@@ -1886,6 +2009,7 @@ _footer)  # _footer ID: fzf's action for a click on the footer word $FZF_CLICK_F
          # that fzf fills in, quoted, when it runs the action: the transform's own text never holds a session's name.
   local more="+reload-sync($SELF _list $2)"
   case $FZF_CLICK_FOOTER_WORD in
+    *\.\.\.*)    print -r -- "execute($SELF _theme)$more" ;;
     *opencode*) print -r -- "execute($SELF _new opencode $2 {1})$more" ;;
     *opus*)     print -r -- "execute($SELF _new opus $2 {1})$more" ;;
     *sonnet*)   print -r -- "execute($SELF _new sonnet $2 {1})$more" ;;
@@ -1976,6 +2100,7 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
       done
     fi
     [[ -n $dir ]] && acts+=( $'github\topen its repository on GitHub' )
+    [[ $PK_MODE != off ]] && acts+=( $'pokemon\tchoose its Pokémon' )
     acts+=( $'attach\tcopy the attach command' )
     [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
     acts+=( $'new\tnew session on this machine' $'newoc\tnew opencode session on this machine' )
@@ -2037,6 +2162,7 @@ gh pr checks $num, fix it and push." ;;
     view)  $SELF _select $id $key force ;;
     focus) $SELF _select $id $key force; $SELF _focus $id ;;
     tab)   $SELF _tab $id $key ;;
+    pokemon) $SELF _pokemon $id $key ;;
     rc)    browse $url ;;
     copyrc) clip $url ;;
     pr)    browse $pr ;;
@@ -2151,7 +2277,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer='[+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]' --footer-border=top \
+    --footer='[...] [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
@@ -2161,6 +2287,7 @@ _panel)  # _panel ID
     --bind "$button:$menu" --bind "m:$menu" \
     --bind "t:execute-silent($S _tab $id {1})" \
     --bind "o:execute-silent($S _open_url {1})" \
+    --bind "p:execute($S _pokemon $id {1})+reload-sync($S _list $id)" \
     --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
     --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
     --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
@@ -2209,6 +2336,8 @@ keys)
   c  or [+opencode]  new opencode session (auto-approve on)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
+  p                choose its Pokémon (docs/pokemon.md)
+  [...]            the Pokémon theme: sprites, text tags or off (LZR1_POKEMON in your shell wins)
   x                end the session (asks first); the next one shows
   f  or [full]     the viewer alone (select text without the panel; tap the yellow bar to return)
   w  or [web]      in a browser too: on, copy, who, off
@@ -2223,6 +2352,7 @@ keys)
 
   glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
           ✱ finished or asking since you last looked
+  Pokémon: ! waiting on you  ✓ finished, not looked at yet  zZz idle 3 minutes or more
   PRs:    ✓ checks passed  ✗ failed or changes requested  ⧗ running or review pending  ◌ draft
 
   press a key

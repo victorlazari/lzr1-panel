@@ -7,9 +7,13 @@
 // 5. On a touch screen, native navigation around the terminal: a slim header while a session shows (back, its state,
 //    its name), a key bar with the keys a phone keyboard lacks, and tabs for Sessions, Pull requests and Remote (who
 //    is signed in, when the remote ends, log out).
+// 6. A strip along the bottom with a pixel-art Pokémon for every session (docs/pokemon.md): working ones walk, a
+//    waiting one stops under a pulsing "!", a finished one shows a check, an idle one strolls and falls asleep. A click
+//    shows that session in the panel.
 (() => {
   'use strict';
   const MAX = 1 << 20; // a copy larger than 1 MiB is dropped
+  const COARSE = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 
   // 1. ttyd's socket. A 401 for this script means no session; a 200 leaves ttyd's own reconnect alone. Anything else (a
   // network error, a 502 while `remote rotate` swaps the gateway) is asked again every second for a minute, so a
@@ -78,7 +82,8 @@
 
   // ttyd sets window.term once its xterm.js is up; hook each terminal it sets.
   const hooked = new WeakSet();
-  let onTitle = () => {}; // section 5 sets it on a phone
+  const titleHooks = []; // sections 5 and 6 listen to the panel's title
+  let onTitle = t => titleHooks.forEach(f => f(t));
   const hook = term => {
     if (!term || typeof term !== 'object' || hooked.has(term)) return;
     try {
@@ -106,6 +111,244 @@
     if (e.target && e.target.closest && e.target.closest('.xterm')) e.preventDefault();
   }, true);
 
+  // 6. The strip. The panel writes what it listed (and the Pokémon it gave each session) where the gateway reads it
+  // (lzr1-sessions); the sprites it cut are served as lzr1-pokemon/NNNN/<name> (only a short list of names). Nothing
+  // here comes from the page's own origin but the gateway, and everything from the sessions goes in as text. A click
+  // posts the session's key and the panel's id (the last field of its title, id=N) to lzr1-pick; the gateway hands it
+  // to that panel only. Sizes and speeds are the reference mod's: a strip 112 px tall (84 on a phone), a column of
+  // 128 px (84) per Pokémon, 70 px/s walking, 32 px/s strolling, asleep after 3 minutes idle.
+  const PK = (() => {
+    const H = COARSE ? 84 : 112, COL = COARSE ? 84 : 128, GROUND = COARSE ? 16 : 20, SCALE = COARSE ? 0.75 : 1;
+    const BG = '#1c1c1e', LINE = '#3a3a3c', INK = '#f2f2f7', DIM = '#8e8e93', ACCENT = '#ffd60a';
+    const STATE_COLOR = { work: '#64d2ff', wait: ACCENT, done: '#30d158', idle: DIM };
+    const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const api = { onChange: () => {}, height: () => 0, place: () => {}, hide: () => {} };
+    let strip = null, shown = 0, panelId = '', selected = '', baseTitle = '';
+    const items = new Map(); // key -> { el, img, bub, tag, x, ... }
+    const metas = new Map(); // dex -> meta, 'wait' while asked, or { retry: ms }
+    let at = 0, receivedAt = 0, timer = 0, poll = 0;
+    const box = () => document.getElementById('terminal-container');
+
+    const css = document.createElement('style');
+    css.textContent =
+      '.lzr1pk{position:fixed;left:0;right:0;bottom:0;overflow:hidden;user-select:none;-webkit-user-select:none;' +
+      'background:' + BG + ';border-top:.5px solid ' + LINE + ';z-index:2147483000;touch-action:manipulation}' +
+      '.lzr1pk .g{position:absolute;left:0;right:0;height:1px;background:' + LINE + '}' +
+      '.lzr1pk .p{position:absolute;cursor:pointer;transition-property:left;transition-timing-function:linear;' +
+      'transition-duration:0s;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit}' +
+      '.lzr1pk .p:focus-visible{outline:2px solid ' + ACCENT + ';outline-offset:2px}' +
+      '.lzr1pk img{position:absolute;image-rendering:pixelated;max-width:none;pointer-events:none}' +
+      '.lzr1pk .t{position:absolute;left:0;right:0;text-align:center;white-space:nowrap;overflow:hidden;' +
+      'text-overflow:ellipsis;font:10.5px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:' + DIM + '}' +
+      '.lzr1pk .on .t{color:' + INK + '}' +
+      '.lzr1pk .t i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:1px}' +
+      '.lzr1pk .b{position:absolute;left:50%;transform:translateX(-50%);display:none;white-space:nowrap;' +
+      'font:600 12.5px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#fff;background:' + LINE + ';' +
+      'border-radius:7px;padding:1px 7px}' +
+      '.lzr1pk .b.q{display:block;color:#1c1c1e;background:' + ACCENT + ';animation:lzr1pulse .9s ease-in-out infinite alternate}' +
+      '.lzr1pk .b.d{display:block;color:#1c1c1e;background:#30d158}' +
+      '.lzr1pk .b.z{display:block;background:none;color:' + DIM + ';font-weight:500}' +
+      '.lzr1pk .ball{position:absolute;left:50%;margin-left:-9px;bottom:0;width:18px;height:18px;border-radius:50%;' +
+      'border:1.5px solid ' + INK + ';box-sizing:border-box;background:linear-gradient(#e3350d 50%,#f4f4f4 50%);' +
+      'animation:lzr1pulse .9s ease-in-out infinite alternate}' +
+      '@keyframes lzr1pulse{from{opacity:.6}to{opacity:1}}' +
+      '@media (prefers-reduced-motion:reduce){.lzr1pk .b.q,.lzr1pk .ball{animation:none}}';
+
+    const mk = (tag, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+    const dexOf = v => (Number.isInteger(v) && v >= 1 && v <= 151) ? ('000' + v).slice(-4) : '';
+    const nameOf = key => key.slice(key.indexOf('/') + 1);
+
+    const ensureStrip = () => {
+      if (strip || !document.body) return;
+      document.head.appendChild(css);
+      strip = mk('div', 'lzr1pk');
+      strip.style.height = H + 'px';
+      strip.style.display = 'none';
+      const g = mk('div', 'g'); g.style.bottom = GROUND + 'px';
+      strip.appendChild(g);
+      document.body.appendChild(strip);
+    };
+
+    // The strip's height is what the terminal gives up. A phone's layout (section 5) places it between the terminal and
+    // its key bar; elsewhere it sits at the bottom and the terminal is shortened here.
+    const apply = () => {
+      if (!strip) return;
+      const h = items.size ? H : 0;
+      if (h === shown) return;
+      shown = h;
+      strip.style.display = h ? 'block' : 'none';
+      if (!COARSE) {
+        const tb = box();
+        if (tb) tb.style.height = h ? 'calc(100% - ' + h + 'px)' : '';
+        window.dispatchEvent(new Event('resize'));
+      } else api.onChange();
+    };
+    api.height = () => shown;
+    api.place = top => { if (strip) { strip.style.bottom = 'auto'; strip.style.top = top + 'px'; } };
+    api.hide = on => { if (strip) strip.style.visibility = on ? 'hidden' : 'visible'; }; // under the Remote page
+
+    const wantMeta = dex => {
+      const m = metas.get(dex), now = Date.now();
+      if (m === 'wait' || (m && m.retry && m.retry > now)) return null;
+      if (m && m.walkR) return m;
+      metas.set(dex, 'wait');
+      fetch('lzr1-pokemon/' + dex + '/meta.json', { credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status))))
+        .then(j => metas.set(dex, j && j.walkR ? j : { retry: Date.now() + 60000 }))
+        .catch(() => metas.set(dex, { retry: Date.now() + 60000 })); // not cut yet: ask again in a minute
+      return null;
+    };
+
+    const mood = (s, now) => {
+      if (s.state === 'wait') return 'wait';
+      if (s.done) return 'done';
+      if (s.state === 'idle' && s.idle + (now - receivedAt) / 1000 >= 180) return 'sleep';
+      return s.state === 'work' ? 'walk' : 'stroll';
+    };
+
+    const rebuild = list => {
+      ensureStrip();
+      if (!strip) return;
+      const seen = new Set();
+      list.forEach((s, i) => {
+        seen.add(s.key);
+        let it = items.get(s.key);
+        if (!it) {
+          const el = mk('button', 'p'); el.type = 'button';
+          const img = mk('img'), ball = mk('div', 'ball'), bub = mk('div', 'b'), tag = mk('div', 't');
+          img.alt = ''; img.style.display = 'none';
+          el.append(img, ball, bub, tag);
+          el.style.width = COL + 'px'; el.style.bottom = GROUND + 'px'; el.style.height = (H - GROUND - 2) + 'px';
+          el.dataset.key = s.key;
+          el.addEventListener('click', () => pick(s.key));
+          strip.appendChild(el);
+          const w = Math.max(strip.clientWidth || window.innerWidth, COL); // it may not be shown yet
+          const x = Math.max(0, ((i + 0.5) / Math.max(list.length, 1)) * w - COL / 2);
+          el.style.left = x + 'px';
+          it = { el, img, ball, bub, tag, x, until: 0, moveEnd: 0, mode: '', dir: 1, shot: '', s, dex: '' };
+          items.set(s.key, it);
+        }
+        it.s = s;
+        const nm = nameOf(s.key);
+        const col = STATE_COLOR[s.state === 'wait' ? 'wait' : s.done ? 'done' : s.state === 'work' ? 'work' : 'idle'];
+        it.tag.textContent = '';
+        const dot = mk('i'); dot.style.background = col;
+        it.tag.append(dot, document.createTextNode(nm));
+        it.el.title = nm;
+        it.el.setAttribute('aria-label', nm);
+      });
+      items.forEach((it, key) => { if (!seen.has(key)) { it.el.remove(); items.delete(key); } });
+      apply();
+      mark();
+    };
+
+    const mark = () => items.forEach((it, key) => it.el.classList.toggle('on', key === selected));
+
+    const pick = key => {
+      if (!panelId) return;
+      fetch('lzr1-pick', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: panelId, key }) }).catch(() => {});
+      selected = key; mark(); // the panel's title says so too once the viewer has moved
+    };
+
+    const draw = (it, m, mode, now) => {
+      const s = it.s, meta = it.dex && metas.get(it.dex);
+      if (!meta || !meta.walkR) { it.img.style.display = 'none'; it.ball.style.display = 'block'; return; }
+      it.ball.style.display = 'none';
+      const moving = now < it.moveEnd && (mode === 'walk' || mode === 'stroll');
+      const g = mode === 'sleep' ? 'sleep' : (moving ? 'walk' : 'idle') + (mode === 'sleep' ? '' : (it.dir < 0 ? 'L' : 'R'));
+      const gm = meta[g] || meta.walkR;
+      const shot = it.dex + g;
+      if (it.shot === shot) return;
+      it.shot = shot;
+      // Pokémon whose walk frame is taller than 64 px (before doubling) are drawn at half size.
+      const sc = SCALE * (meta.walkR.h / 2 > 64 ? 0.5 : 1);
+      it.img.src = 'lzr1-pokemon/' + it.dex + '/' + g + '.gif';
+      it.img.style.display = 'block';
+      it.img.style.width = gm.w * sc + 'px'; it.img.style.height = gm.h * sc + 'px';
+      // The visible box: feet on the ground, body in the middle of the column.
+      it.img.style.left = (COL / 2 - (gm.x + gm.bw / 2) * sc) + 'px';
+      it.img.style.bottom = (-(gm.h - (gm.y + gm.bh)) * sc) + 'px';
+      it.vh = gm.bh * sc;
+    };
+
+    const tick = () => {
+      if (!strip || !items.size || document.hidden) return;
+      const now = performance.now(), wall = Date.now();
+      const room = Math.max(strip.clientWidth - COL, 0);
+      items.forEach(it => {
+        const s = it.s;
+        it.dex = dexOf(s.dex);
+        if (it.dex) wantMeta(it.dex);
+        let mode = mood(s, wall);
+        if (reduced && (mode === 'walk' || mode === 'stroll')) mode = 'stand';
+        if (mode === 'wait' || mode === 'done') mode = 'stand';
+        if (it.mode !== mode) {
+          // A new mood stops it where it is, mid-walk too.
+          const cur = it.el.offsetLeft;
+          it.el.style.transitionDuration = '0s'; it.el.style.left = cur + 'px'; void it.el.offsetWidth;
+          it.x = cur; it.mode = mode; it.until = 0; it.moveEnd = 0; it.shot = '';
+        }
+        if ((mode === 'walk' || mode === 'stroll') && now >= it.until) {
+          let tx = it.x, n = 0;
+          while (Math.abs(tx - it.x) < 60 && n++ < 20) tx = Math.random() * room;
+          const d = Math.abs(tx - it.x) / (mode === 'walk' ? 70 : 32);
+          it.dir = tx > it.x ? 1 : -1;
+          it.el.style.transitionDuration = d + 's'; it.el.style.left = tx + 'px'; it.x = tx;
+          it.moveEnd = now + d * 1000;
+          it.until = it.moveEnd + (mode === 'walk' ? 300 + Math.random() * 1500 : 4000 + Math.random() * 8000);
+        }
+        draw(it, s, mode, now);
+        const m = mood(s, wall);
+        const txt = m === 'wait' ? '!' : m === 'done' ? '✓' : m === 'sleep' ? ['z', 'zZ', 'zZz', 'zZ'][Math.floor(now / 700) % 4] : '';
+        it.bub.className = 'b' + (m === 'wait' ? ' q' : m === 'done' ? ' d' : m === 'sleep' ? ' z' : '');
+        if (it.bub.textContent !== txt) it.bub.textContent = txt;
+        it.bub.style.bottom = ((it.vh || 18) + 4) + 'px'; // above the head
+        it.tag.style.top = (H - GROUND - 2 + 4) + 'px';
+      });
+    };
+
+    const fetchSessions = () => {
+      if (document.hidden) return;
+      fetch('lzr1-sessions', { cache: 'no-store', credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : null)
+        .then(j => {
+          if (!j || !Array.isArray(j.sessions)) return;
+          at = j.at; receivedAt = Date.now();
+          rebuild(j.sessions.filter(s => s && typeof s.key === 'string' && s.key.indexOf('/') > 0 &&
+            ['work', 'wait', 'idle'].includes(s.state)).map(s => ({
+            key: s.key, state: s.state, idle: Number(s.idle) || 0, done: !!s.done, dex: s.dex })));
+        })
+        .catch(() => {});
+    };
+
+    titleHooks.push(t => {
+      const f = String(t || '').split('|');
+      if (f[0] !== 'lzr1') return;
+      const idf = f.find(x => /^id=[0-9]{1,10}$/.test(x));
+      if (idf) panelId = idf.slice(3);
+      selected = (f[1] === 'view' || f[1] === 'wide') ? (f[2] || '') : '';
+      mark();
+      // ttyd shows the terminal's title as the page's: a desktop tab keeps its own.
+      if (!COARSE) setTimeout(() => { document.title = baseTitle || 'lzr1'; }, 0);
+    });
+
+    const start = () => {
+      baseTitle = document.title;
+      ensureStrip();
+      fetchSessions();
+      poll = setInterval(fetchSessions, 3000);
+      timer = setInterval(tick, 250);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchSessions(); });
+      window.addEventListener('resize', () => items.forEach(it => {
+        const room = Math.max(strip.clientWidth - COL, 0);
+        if (it.x > room) { it.x = room; it.el.style.transitionDuration = '0s'; it.el.style.left = room + 'px'; }
+      }));
+    };
+    if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+    return api;
+  })();
+
   // 5. A phone: native navigation around the terminal, top to bottom: a slim header while a session shows (back, its
   // state, its name), the terminal, a key bar with the keys a phone keyboard lacks (Esc, Tab, Ctrl-C, arrows), and tabs
   // for Sessions, Pull requests and Remote. The panel's title says what shows (lzr1|list or lzr1|view|KEY|STATE: _fit
@@ -116,7 +359,7 @@
   // scrolls it (as wheel events: a phone sends none, and the panel and tmux scroll on them). The on-screen keyboard
   // opens only on a tap inside a session: never in the list, the pull requests or Remote, and not on opening a session.
   // Text from the panel goes in with textContent only.
-  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+  if (COARSE) {
     const BG = '#1c1c1e', LINE = '#3a3a3c', INK = '#f2f2f7', DIM = '#8e8e93', ACCENT = '#ffd60a';
     const UI = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
     const el = (tag, style, text) => {
@@ -339,7 +582,7 @@
     select('sessions');
 
     const STATES = { work: '▶', wait: '⧗', idle: '·' };
-    onTitle = title => {
+    titleHooks.push(title => {
       const f = String(title || '').split('|');
       if (f[0] !== 'lzr1') return;
       const was = view.list ? '' : view.key;
@@ -349,7 +592,7 @@
       glyph.style.color = view.state === 'wait' ? ACCENT : view.state === 'work' ? '#64d2ff' : DIM;
       name.textContent = view.key.slice(view.key.indexOf('/') + 1);
       layout();
-    };
+    });
 
     // Sizes: the terminal gets what stays between the header and the key bar, above the tabs and the on-screen keyboard.
     // While the keyboard is open the tabs step aside, as in a native app.
@@ -362,22 +605,25 @@
       const headH = view.list ? 0 : head.offsetHeight, tabH = keyboard ? 0 : tabs.offsetHeight;
       keys.style.display = 'flex';
       const keyH = keys.offsetHeight; // measured even under the Remote page, so the terminal keeps its size there
+      const stripH = paged ? 0 : PK.height(); // the Pokémon strip sits between the terminal and the key bar
       keys.style.display = paged ? 'none' : 'flex';
       head.style.top = top + 'px';
       tabs.style.top = (top + h - tabH) + 'px';
       keys.style.top = (top + h - tabH - keyH) + 'px';
+      PK.place(top + h - tabH - keyH - stripH);
+      PK.hide(paged);
       page.style.top = top + 'px';
       page.style.height = (h - tabH) + 'px';
       const tb = box();
       if (tb) {
         Object.assign(tb.style, { position: 'fixed', left: '0', right: '0', top: (top + headH) + 'px',
-          height: Math.max(0, h - headH - keyH - tabH) + 'px', touchAction: 'none', overscrollBehavior: 'none' });
+          height: Math.max(0, h - headH - keyH - tabH - stripH) + 'px', touchAction: 'none', overscrollBehavior: 'none' });
       }
       document.documentElement.style.overscrollBehavior = 'none';
       applyKeyboard();
       window.dispatchEvent(new Event('resize'));
     };
-    const start = () => { document.body.append(page, head, keys, tabs); layout(); };
+    const start = () => { document.body.append(page, head, keys, tabs); PK.onChange = layout; layout(); };
     if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', layout);
