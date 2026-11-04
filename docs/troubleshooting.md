@@ -18,6 +18,7 @@ Still stuck? Find your problem below. Each one is: what you see, why, and the fi
 - [Mouse and menus](#mouse-and-menus)
 - [Looks wrong](#looks-wrong)
 - [Remote panel (in a browser)](#remote-panel-in-a-browser)
+- [Pokémon](#pokémon)
 - [Starting over](#starting-over)
 
 ---
@@ -642,6 +643,41 @@ session on this computer is the exception: its copies land on both). More in
 [remote.md, copy](remote.md#copy-select-and-the-right-button).
 
 ---
+
+## Pokémon
+
+### I see text tags but no sprites
+
+Sprites are the default, and the panel falls back to text when it cannot cut them. Check that the footer's `[...]` menu
+is not on text or off, and that `LZR1_POKEMON` is not set to something else in your shell. **Fix:** run `lzr1-panel doctor`: it says whether `curl` and
+ImageMagick (`magick`) are there. `./install.sh` offers ImageMagick, or `brew install imagemagick` (`apt install
+imagemagick`). Then, once, `rm -rf ~/.cache/lzr1-panel/pokemon-art` if a first try left a half-cut Pokémon.
+
+### The sprites are blocky, or the pictures look wrong
+
+Half blocks are only six pixels tall. Real pictures need Ghostty or kitty, outside tmux; `lzr1-panel doctor` says which
+one you get. If the pictures show as odd characters or leave gaps, the terminal lacks Kitty graphics placeholders:
+**Fix:** set `LZR1_POKEMON_IMAGES=0` in your shell to go back to half blocks. Pictures that stay blocky after an
+update: the old art has no PNG yet; the panel cuts it again by itself, a few Pokémon per refresh.
+
+### A Pokémon stays a Poké Ball
+
+Its art is not cut yet: the panel cuts at most three per refresh, in the background. A failed download (no network,
+GitHub unreachable) is tried again after a minute. **Fix:** wait a refresh or two; `r` refreshes now. Still a ball after
+a few minutes: run `lzr1-panel _art 25` (the Pokémon's number) and read what it prints, or `lzr1-panel doctor`.
+
+### There is no strip in the browser
+
+It needs the remote to be on **and** to know the state directory, which a gateway started before this feature does not.
+**Fix:** `lzr1-panel remote off`, then `remote on` again (it rebuilds the gateway). Then check that sessions exist
+(`~/.cache/lzr1-panel/web-sessions.json` appears after the panel's next refresh while the remote is on) and that the
+page was reloaded.
+
+### Clicking a Pokémon does nothing in the browser
+
+The click names the panel by the `id=N` in its terminal title, which the panel sets when the browser attaches. **Fix:**
+reload the page. If the layout was started before this feature, quit the panel in the browser (`q`) and reload. Not
+working in a very wide window with `LZR1_NARROW=0`: that setting turns the title hooks off.
 
 ## Starting over
 

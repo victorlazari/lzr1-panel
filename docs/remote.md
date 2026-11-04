@@ -97,6 +97,14 @@ against the published name (`--host`). On macOS the app's `serve` cannot reach a
 502), so the gateway listens on loopback TCP and the target is `http://127.0.0.1:<port>/<uuid>`, which puts the prefix
 back.
 
+## The Pokémon strip
+
+Along the bottom of the page, one Pokémon per session, drawn by `client.js` from three more things the gateway serves
+once the identity, Origin and session checks pass: `lzr1-sessions` (the panel's last list, from its state directory,
+`--state`), `lzr1-pokemon/NNNN/NAME` (sprite files, a short list of names) and `lzr1-pick` (a click: the panel's id and
+a session's key, handed to that panel's `.follow` file). Without `--state` they answer with no sessions or 404. What it
+shows and how it is built: [pokemon.md](pokemon.md).
+
 ## Safety layers
 
 Each request has to pass all of these, in order:

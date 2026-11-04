@@ -62,7 +62,7 @@
    ✓ #1398 chore: bump dependencies              3d
      atlas · ⎇ chore/deps · checks passed
  ────────────────────────────────────────────────────
- [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]
+ [...] [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]
 ```
 
 <p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
@@ -83,7 +83,8 @@ Then open a new terminal and run:
 lzr1-panel open
 ```
 
-That's it. The installer sets everything up and checks it at the end.
+That's it. The installer sets everything up, walks you through your first profile (a name and the folder with your
+repositories, both suggested: usually Enter, Enter) and checks it all at the end.
 If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix it.
 
 ---
@@ -101,6 +102,7 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
 | 🌐 **The panel in a browser** | One key publishes the whole panel to your tailnet, behind your Tailscale login and a password: use it from another laptop or a phone, as here. See [docs/remote.md](docs/remote.md). |
+| 🐾 **A Pokémon for every session** | Each session gets one of the first 151, from a hash of its name, kept until the session ends and changeable with `p`. Its mood is the state the panel already tracks: `!` waiting on you, `✓` finished and not looked at yet, `zZz` idle for 3 minutes. Half-block sprites beside each card (text tags without ImageMagick), turned on or off from the `[...]` menu in the footer; and in a browser a strip where they walk, stroll and sleep. See [docs/pokemon.md](docs/pokemon.md). |
 | 🛟 **Sessions survive** | If Claude or opencode exits (two Ctrl-Cs, Claude's `/exit`, a crash), the session stays. Enter resumes the same conversation. |
 | ✂️ **Copy just works** | Drag to select, Ctrl-C, and it's on your clipboard: in any terminal, from any machine. |
 
@@ -151,6 +153,8 @@ flowchart LR
 | `c`, or `[+opencode]` | a new opencode session, with auto-approve on (`--auto`) |
 | `t` | the session in a new Ghostty tab |
 | `o` | its Remote Control link (on a PR: the PR) |
+| `p` | choose the session's Pokémon (type a name or a number, enter or click) |
+| `[...]` (footer) | the Pokémon theme: sprites, text tags or off; kept for next time |
 | `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
 | `f`, or `[full]` | the viewer alone, so a terminal app's own text selection (Termius on a phone) stays inside the session; tap the yellow bar at the bottom to bring the panel back |
 | `w`, or `[web]` | the panel in a browser: turns it on (asks who may come in, copies the URL); while it is on, its menu: copy the URL or the password, who is connected, rotate the password, turn it off |
@@ -303,6 +307,8 @@ opencode sessions. `lzr1-panel profile test NAME` tells you if something is miss
 1. **Tools**: zsh, tmux, fzf 0.74+, curl, openssl, git, gh and jq.
 2. **Claude Code**, and **Ghostty** on macOS (it asks first).
 3. **Copying**: Ctrl-C copies a Shift-selection in Ghostty (it asks first).
+3b. **The Pokémon theme's tools**: ImageMagick (sprites), through brew on macOS, and on macOS terminal-notifier
+   (alerts grouped per session). Both are optional and it asks first.
 4. **ttyd and Go**, for the panel in a browser (it asks first). Tailscale is yours to install
    ([tailscale.com/download](https://tailscale.com/download)): the installer only says when it is missing.
 5. **The `lzr1-panel` command**, in `~/.local/bin`.
@@ -311,7 +317,9 @@ opencode sessions. `lzr1-panel profile test NAME` tells you if something is miss
 8. **A shell hook**: the `cl-*` shortcuts (including `cl-opus` / `cl-sonnet` / `cl-opencode`, unless you have your
    own) and, if you want, the panel opening with Ghostty.
 9. **GitHub sign-in** (`gh auth login`), so the panel lists your pull requests.
-10. **Your first profile**.
+10. **Your first profile**, guided: this computer's name comes from its hostname, the repositories folder is picked from
+    the usual places (`~/github`, `~/code`, `~/dev`, ...) or typed, and it then offers to add more machines over SSH.
+    Later: `lzr1-panel profile add` asks the same questions, with the same suggestions.
 11. **`lzr1-panel doctor`**, to check it all.
 
 | Option | What it does |
@@ -332,6 +340,9 @@ Set these in your shell, for example in `~/.zshenv`:
 | `LZR1_NARROW` | `86` (the panel's width + 30) | a tmux layout narrower than this (a phone) shows the panel or the session, one at a time; `0` never does |
 | `LZR1_MENU_BUTTON` | `right` | `left` opens menus with the left button |
 | `LZR1_PRS` | `1` | `0` hides the pull requests |
+| `LZR1_POKEMON` | `sprite` | `sprite`: a sprite beside each card (needs curl and ImageMagick, which `./install.sh` installs with brew; else text tags; the panel is 66 columns wide unless `LZR1_PANEL_WIDTH` says otherwise); `text`: a mood and the Pokémon's name on each card; `off`: no Pokémon. Set, it wins over the footer's `[...]` menu, which keeps its choice in `~/.config/lzr1-panel/pokemon` |
+| `LZR1_POKEMON_SLEEP` | `180` | seconds idle before a Pokémon sleeps (`zZz`) |
+| `LZR1_POKEMON_IMAGES` | `auto` | in Ghostty and kitty (outside tmux) the sprites are real pictures (Kitty graphics); `0` always half blocks, `1` pictures wherever the terminal has them |
 | `LZR1_SOUND` | `1` | `0` turns the alert tone off; a sound file's path plays that instead |
 | `LZR1_NOTIFY` | `1` | `0` turns the system notifications off (the `✱` stays) |
 | `LZR1_SPLASH` | `1` | `0` skips the opening animation |
@@ -387,3 +398,10 @@ Scripts sent to a profile's machine run as POSIX `sh`. [AGENTS.md](AGENTS.md) ha
 <div align="center">
 <sub>Made for people who run Claude Code everywhere.</sub>
 </div>
+
+## 🐾 Credits
+
+The Pokémon idea comes from [herdr-pokemon-agents](https://github.com/mathieucroset/herdr-pokemon-agents). Sprites are
+[PMD SpriteCollab](https://github.com/PMDCollab/SpriteCollab) by the PMDCollab artists, CC BY-NC 4.0 (per-sprite credits
+in their repository); they are downloaded when first needed and never shipped here. Pokémon and all related names are
+trademarks of Nintendo, Creatures and GAME FREAK; this is an unofficial fan feature, not affiliated with them.
