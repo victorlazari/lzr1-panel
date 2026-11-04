@@ -802,6 +802,12 @@ RDIR=$STATE/remote
 typeset -gA RS  # the session file, key => value
 
 TSBIN=${commands[tailscale]:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}  # PATH, then the macOS app's
+# The macOS app installs /usr/local/bin/tailscale as a `#!/bin/sh` wrapper that does not exec the app's binary. Signals
+# to a serve started through it hit the shell, never the real client, which then never ends its foreground session
+# cleanly, and tailscaled keeps the route published for good. So use the app's binary itself when PATH holds a script.
+if [[ -r $TSBIN && $(head -c 2 $TSBIN 2>/dev/null) == '#!' && -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]]; then
+  TSBIN=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+fi
 # A command prefix that runs it in a process group of its own (setsid, else perl), out of the terminal's: a terminal or
 # panel closing hangs its foreground group up, and ttyd and serve end on SIGHUP even when it is ignored.
 RDET=(); if (( $+commands[setsid] )); then RDET=( setsid ); elif (( $+commands[perl] )); then RDET=( perl -e 'setpgrp; exec @ARGV' ); fi
@@ -846,13 +852,16 @@ _remote_read() {  # the session file into RS; false without one
 
 _remote_save() { local k; ( umask 077; for k in ${(ko)RS}; do print -r -- "$k=$RS[$k]"; done >$RDIR/session ) }
 
-# _stop PID WHAT UUID: TERM, then KILL after 5 s; each signal only while _ours still recognizes the process
+# _stop PID WHAT UUID: TERM (INT for serve, with its children: the Tailscale client only ends its foreground session,
+# and so drops the path, on SIGINT), then KILL after 5 s; each signal only while _ours still recognizes the process
 _stop() {
-  local i
+  local i sig=TERM
   _ours "$@" || return 0
-  kill $1 2>/dev/null
+  if [[ $2 == serve ]]; then sig=INT; pkill -INT -P $1 2>/dev/null; fi
+  kill -$sig $1 2>/dev/null
   for i in {1..50}; do _ours "$@" || return 0; sleep 0.1; done
-  _ours "$@" && kill -9 $1 2>/dev/null
+  _ours "$@" && { pkill -KILL -P $1 2>/dev/null; kill -9 $1 2>/dev/null }
+  return 0
 }
 
 # _remote_funnel HOST: Funnel is on for HOST:443 (0), off (1), or Tailscale cannot say (2)
@@ -897,7 +906,20 @@ _remote_off() {
     _remote_browsers $u kill
     _remote_published $u; r=$?
     if (( r == 0 )); then
-      $TSBIN serve --https=443 --set-path /$u off >/dev/null 2>&1; _remote_published $u; r=$?
+      # Give tailscaled a moment to drop the foreground path of the serve just stopped, then try the background one.
+      for n in {1..20}; do _remote_published $u || break; sleep 0.25; done
+      _remote_published $u && { $TSBIN serve --https=443 --set-path /$u off >/dev/null 2>&1; }
+      _remote_published $u; r=$?
+    fi
+    # A foreground route whose client is gone (killed, or a version that left one behind) cannot be removed by
+    # `serve ... off`, which only knows the background config; only `serve reset` drops it. Safe only when the route is
+    # the sole thing served (no background config, no other foreground handler), so nobody else's serve is touched.
+    if (( r == 0 )); then
+      local sj; sj=$($TSBIN serve status --json 2>/dev/null)
+      if print -r -- $sj | jq -e --arg p /$u '[.. | objects | .Handlers? | objects | keys[]] == [$p]' >/dev/null 2>&1 &&
+         print -r -- $sj | jq -e '(has("TCP") or has("Web")) | not' >/dev/null 2>&1; then
+        $TSBIN serve reset >/dev/null 2>&1; _remote_published $u; r=$?
+      fi
     fi
   fi
   rm -f $RDIR/*.sock(N) $RDIR/*.last(N) $RDIR/gw.out $RDIR/gw.pid $RDIR/serve.out $RDIR/serve.pid

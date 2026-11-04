@@ -226,9 +226,9 @@ if [[ $SHELL_HOOK == 1 ]]; then
       echo "# cl-opus / cl-sonnet [claude args], cl-opencode [opencode args]: Claude, or opencode with auto-approve on, in a"
       echo "# new tmux session in this folder; the panel lists it inside a profile's repositories folder. Your own,"
       echo "# defined earlier in this file, wins."
-      echo 'type cl-opus >/dev/null 2>&1 || cl-opus() { lzr1-panel run --model opus "$@"; }'
-      echo 'type cl-sonnet >/dev/null 2>&1 || cl-sonnet() { lzr1-panel run --model sonnet "$@"; }'
-      echo 'type cl-opencode >/dev/null 2>&1 || cl-opencode() { lzr1-panel run --opencode "$@"; }'
+      echo 'type cl-opus >/dev/null 2>&1 || function cl-opus { lzr1-panel run --model opus "$@"; }'
+      echo 'type cl-sonnet >/dev/null 2>&1 || function cl-sonnet { lzr1-panel run --model sonnet "$@"; }'
+      echo 'type cl-opencode >/dev/null 2>&1 || function cl-opencode { lzr1-panel run --opencode "$@"; }'
       if [[ $autoopen == 1 && $rc == "$HOME/.zshrc" ]]; then
         echo "# Opens the panel in the first Ghostty shell; LZR1_PANEL=0 (in ~/.zshenv) turns it off."
         echo 'if [[ -o interactive && $TERM_PROGRAM == ghostty && ${LZR1_PANEL:-1} == 1 && -z $TMUX ]] &&'

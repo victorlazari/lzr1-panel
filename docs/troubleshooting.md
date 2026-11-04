@@ -597,9 +597,17 @@ operator permission removed), so the session file, the only record of that path,
 may still be published". `remote on` refuses until it is cleaned: "remote on: the last remote is still published".
 Nothing answers on that path while the gateway is stopped.
 
-**Fix:** start Tailscale, then `lzr1-panel remote off` again. By hand: `tailscale serve status --json` lists what is
+A second cause, on macOS: the app installs `/usr/local/bin/tailscale` as a `#!/bin/sh` wrapper that does not `exec` the
+real client, so signals to a serve started through it never reached the client, and `tailscaled` kept its foreground
+route for good (`tailscale serve --set-path … off` answers "handler does not exist": it only knows the background
+config). The panel now uses the app's own binary and ends serve with SIGINT; if a route of an older version is still
+there, `remote off` runs `tailscale serve reset`, but only when that route is the only thing served.
+
+**Fix:** update the panel, then `lzr1-panel remote off`. If it still says so (Tailscale not running, or other serves
+of yours on the machine), start Tailscale and run it again. By hand: `tailscale serve status --json` lists what is
 published (the plain `tailscale serve status` can say "No serve config" while a path is published), and
-`tailscale serve --https=443 --set-path /<uuid> off` removes it.
+`tailscale serve --https=443 --set-path /<uuid> off` removes a background one, and `tailscale serve reset` any (it
+also drops your other serves).
 
 ### `w` in a browser has no rotate or turn off ("not from a browser's panel: …")
 
