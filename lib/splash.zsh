@@ -82,8 +82,10 @@ lzr1_splash() {
   local -a grad=( 51 45 39 33 63 99 135 171 207 213 219 225 )
   local host=${HOST%%.*} arch=$(uname -m) t0=$EPOCHREALTIME t frac=0 frame=0 key cols rows done=0 p v
   local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' i r x y ch col out line cls top left msg bar bw fill pct nses=0 nrep=0 okp=0 failp=0
+  local lw mem shown room first s shake phase wi tn sp small x0 cur row
+  local tag="▸ claude code sessions, on every machine you own ◂"
   local -A res
-  local -a log logc vv
+  local -a sz f log logc vv word logo scr
 
   print -n '\e[?1049h\e[?25l'  # alternate screen, hidden cursor
   trap 'print -n "\e[?2026l\e[?25h\e[?1049l"; rm -f $sfile; trap - INT; return 130' INT
@@ -91,14 +93,14 @@ lzr1_splash() {
   while true; do
     t=$(( EPOCHREALTIME - t0 ))
     read -rs -t 0.045 -k1 key && break
-    local -a sz=( $(stty size </dev/tty 2>/dev/null) )
+    sz=( $(stty size </dev/tty 2>/dev/null) )
     rows=${sz[1]:-24} cols=${sz[2]:-80}
     (( frame++ ))
 
     # What the machines answered so far.
     res=() okp=0 failp=0 nses=0 nrep=0
     for line in ${(f)"$(grep '^reach ' $sfile 2>/dev/null)"}; do
-      local -a f=( ${=line} )
+      f=( ${=line} )
       res[$f[2]]="$f[3] $f[4] $f[5]"
       if [[ $f[3] == ok ]]; then (( okp++, nses += f[4], nrep += f[5] )); else (( failp++ )); fi
     done
@@ -120,18 +122,15 @@ lzr1_splash() {
     else msg="ready. go build something."; fi
     [[ $mode == install ]] && (( frac >= 0.30 && frac < 0.72 )) && msg="installed: command, Claude skill, shell hook"
 
-    # Each frame is one synchronized update (mode 2026): the terminal shows it whole, never the cleared screen in
-    # between, which flashed in Ghostty. Terminals without the mode ignore it.
-    out='\e[?2026h'
-    for y in {1..$rows}; do out+="\e[${y};1H\e[K"; done
+    scr=()
 
     if (( t < boot )); then
       # ---- the boot log --------------------------------------------------------------------------------------------
       log=() logc=()
-      local lw=$(( cols - 6 )); (( lw > 64 )) && lw=64
+      lw=$(( cols - 6 )); (( lw > 64 )) && lw=64
       log+=( "LZR1 BIOS v${VERSION:-0}  (c) lzr1 tech" ) logc+=( head )
       log+=( "CPU: $arch · host: $host · zsh $ZSH_VERSION" ) logc+=( 250 )
-      local mem=$(( t < 0.6 ? t / 0.6 * 640 : 640 )); mem=${mem%.*}
+      mem=$(( t < 0.6 ? t / 0.6 * 640 : 640 )); mem=${mem%.*}
       _lzr1_dots "Memory test" "${mem}K$( (( mem >= 640 )) && print ' OK')" $lw; log+=( "$REPLY" ) logc+=( 250 )
       _lzr1_dots "Detecting profiles" "$#names" $lw; log+=( "$REPLY" ) logc+=( 250 )
       if [[ $mode == open ]]; then
@@ -157,69 +156,77 @@ lzr1_splash() {
       log+=( "Press any key to skip" ) logc+=( 240 )
 
       # Lines appear one by one; only as many as fit above the status area.
-      local shown=$(( t / (boot * 0.85) * $#log + 1 )); shown=${shown%.*}; (( shown > $#log )) && shown=$#log
-      local room=$(( rows - 6 )); (( room < 1 )) && room=1
-      local first=$(( shown > room ? shown - room + 1 : 1 ))
+      shown=$(( t / (boot * 0.85) * $#log + 1 )); shown=${shown%.*}; (( shown > $#log )) && shown=$#log
+      room=$(( rows - 6 )); (( room < 1 )) && room=1
+      first=$(( shown > room ? shown - room + 1 : 1 ))
       y=2
       for (( i = first; i <= shown; i++ )); do
         line=${log[i]}; (( ${#line} > cols - 4 )) && line="${line[1,cols - 5]}…"
+        cur=; (( i == shown && frame % 6 < 3 )) && cur=" \e[97m█\e[0m"  # the blinking cursor
         case ${logc[i]} in
-          head) out+="\e[${y};3H\e[1;97m${line}\e[0m" ;;
-          ok)   out+="\e[${y};3H\e[38;5;250m${line%\[*}\e[1;38;5;46m[${line##*\[}\e[0m" ;;
-          fail) out+="\e[${y};3H\e[38;5;250m${line%\[*}\e[1;38;5;196m[${line##*\[}\e[0m" ;;
-          *)    out+="\e[${y};3H\e[38;5;${logc[i]}m${line}\e[0m" ;;
+          head) scr[y]="  \e[1;97m${line}\e[0m${cur}" ;;
+          ok)   scr[y]="  \e[38;5;250m${line%\[*}\e[1;38;5;46m[${line##*\[}\e[0m${cur}" ;;
+          fail) scr[y]="  \e[38;5;250m${line%\[*}\e[1;38;5;196m[${line##*\[}\e[0m${cur}" ;;
+          *)    scr[y]="  \e[38;5;${logc[i]}m${line}\e[0m${cur}" ;;
         esac
         (( y++ ))
       done
-      (( frame % 6 < 3 )) && out+="\e[$(( y - 1 ));$(( 3 + ${#line} + 1 ))H\e[97m█\e[0m"  # the blinking cursor
     elif (( cols >= W + 4 && rows >= 22 )); then
       # ---- the logo: slams in with a decaying shake, then the word switches every 1.6s ----------------------------
-      local s=$(( t - boot )) shake=0 phase wi
+      s=$(( t - boot )) shake=0
       if (( s < 0.6 )); then shake=$(( (RANDOM % 5 - 2) * (1 - s / 0.6) )); shake=${shake%.*}; fi
       phase=$(( s / 1.6 )); wi=$(( ${phase%.*} % 2 ))
-      local -a word; if (( wi )); then word=( $panel ); else word=( $tech ); fi
-      local -a logo=( $lzr '' $word )
-      top=$(( (rows - 4 - 15) / 2 )); (( top < 1 )) && top=1
-      left=$(( (cols - W) / 2 + 1 + shake ))
+      if (( wi )); then word=( $panel ); else word=( $tech ); fi
+      logo=( $lzr '' $word )
+      top=$(( (rows - 4 - 15) / 2 + (s < 0.3 ? shake : 0) )); (( top < 1 )) && top=1
+      left=$(( (cols - W) / 2 + 1 + shake )); (( left < 1 )) && left=1
       for r in {1..13}; do
         line=${logo[r]}; [[ -z ${line// } ]] && continue
-        y=$(( top + r + (s < 0.3 && r % 2 ? shake : 0) ))
-        out+="\e[${y};${left}H"; cls=
+        y=$(( top + r ))
+        row="${(l:left - 1:: :)}" cls=
         for (( x = 1; x <= ${#line}; x++ )); do
           ch=${line[x]}
-          if [[ $ch == ' ' ]]; then [[ $cls != sp ]] && { out+='\e[0m'; cls=sp }; out+=' '; continue; fi
+          if [[ $ch == ' ' ]]; then [[ $cls != sp ]] && { row+='\e[0m'; cls=sp }; row+=' '; continue; fi
           if (( s < 0.08 )); then col=231                       # the flash as it lands
           elif [[ $ch == █ ]]; then col=${grad[$(( r <= 6 ? r : r - 1 ))]}
           else col=60; fi                                     # the ╔═╝ edges: the 3D shadow
-          [[ $cls != $col ]] && { out+="\e[38;5;${col}m"; cls=$col }
-          out+=$ch
+          [[ $cls != $col ]] && { row+="\e[38;5;${col}m"; cls=$col }
+          row+=$ch
         done
-        out+='\e[0m'
+        scr[y]="${row}\e[0m"
       done
-      local tag="▸ claude code sessions, on every machine you own ◂"
-      local tn=$(( s < 0.8 ? ${#tag} * s / 0.8 : ${#tag} )); tn=${tn%.*}
-      out+="\e[$(( top + 15 ));$(( (cols - ${#tag}) / 2 + 1 ))H\e[38;5;245m${tag[1,tn]}\e[0m"
+      tn=$(( s < 0.8 ? ${#tag} * s / 0.8 : ${#tag} )); tn=${tn%.*}
+      left=$(( (cols - ${#tag}) / 2 )); (( left < 0 )) && left=0
+      scr[$(( top + 15 ))]="${(l:left:: :)}\e[38;5;245m${tag[1,tn]}\e[0m"
     else
       # ---- small terminal: one line of logo ------------------------------------------------------------------------
-      local sp=$(( (t - boot) / 1.6 )) small
+      sp=$(( (t - boot) / 1.6 ))
       if (( ${sp%.*} % 2 )); then small="▟ LZR1 ▸ PANEL ▙"; else small="▟ LZR1 ▸ TECH ▙"; fi
       top=$(( rows / 2 - 2 )); (( top < 1 )) && top=1
-      out+="\e[${top};$(( (cols - ${#small}) / 2 + 1 ))H\e[1;38;5;${grad[$(( frame / 3 % 12 + 1 ))]}m${small}\e[0m"
+      left=$(( (cols - ${#small}) / 2 )); (( left < 0 )) && left=0
+      scr[top]="${(l:left:: :)}\e[1;38;5;${grad[$(( frame / 3 % 12 + 1 ))]}m${small}\e[0m"
     fi
 
     # ---- status line, bar and footer, pinned to the bottom -------------------------------------------------------
     bw=$(( cols - 16 )); (( bw > 56 )) && bw=56; (( bw < 10 )) && bw=10
     msg="${spin[$(( frame % 10 + 1 ))]} $msg"
-    local x0=$(( (cols - bw - 6) / 2 + 1 )); (( x0 < 1 )) && x0=1
-    (( ${#msg} > cols - x0 )) && msg="${msg[1,cols - x0 - 1]}…"
-    out+="\e[$(( rows - 3 ));${x0}H\e[38;5;252m${msg}\e[0m"
+    x0=$(( (cols - bw - 6) / 2 )); (( x0 < 0 )) && x0=0
+    (( ${#msg} > cols - x0 - 1 )) && msg="${msg[1,cols - x0 - 2]}…"
+    scr[$(( rows - 3 ))]="${(l:x0:: :)}\e[38;5;252m${msg}\e[0m"
     fill=$(( bw * frac )); fill=${fill%.*}
     pct=$(( frac * 100 )); pct=${pct%.*}
     bar="\e[38;5;51m${(l:fill::━:)}\e[38;5;201m╸\e[38;5;238m${(l:bw - fill::─:)}\e[0m"
-    out+="\e[$(( rows - 2 ));${x0}H${bar} \e[1m${(l:3:)pct}%\e[0m"
+    scr[$(( rows - 2 ))]="${(l:x0:: :)}${bar} \e[1m${(l:3:)pct}%\e[0m"
     line="$(printf '0x%04x' $RANDOM) · $#names profiles · $nses sessions · $nrep repos · any key skips"
     (( ${#line} > cols - 2 )) && line="any key skips"
-    out+="\e[$(( rows - 1 ));$(( (cols - ${#line}) / 2 + 1 ))H\e[38;5;240m${line}\e[0m\e[?2026l"
+    left=$(( (cols - ${#line}) / 2 )); (( left < 0 )) && left=0
+    scr[$(( rows - 1 ))]="${(l:left:: :)}\e[38;5;240m${line}\e[0m"
+
+    # Each frame is one synchronized update (mode 2026) and writes each line once with \e[K at its end, never clearing
+    # the screen first, so the terminal never shows a blank or scrolled frame in between.
+    out='\e[?2026h\e[0m'
+    for (( y = 1; y <= rows; y++ )); do out+="\e[${y};1H${scr[y]}\e[K"; done
+    out+='\e[?2026l'
     print -n -- "$out"
   done
 

@@ -71,6 +71,14 @@ expected and works the same way.
 
 **Fix:** press any key to skip it. `LZR1_SPLASH_SECONDS=2` shortens it, `LZR1_SPLASH=0` turns it off.
 
+### The opening animation flashes or jumps in Ghostty
+
+In an older version, a `local` variable redeclared inside the splash loop printed to the terminal outside synchronized
+update mode (`\e[?2026h`) once the logo appeared, scrolling the alternate screen by a line before each redraw, and each
+frame cleared all rows before drawing.
+
+**Fix:** update the panel (`git pull` in the lzr1-panel folder). `LZR1_SPLASH=0` skips the animation altogether.
+
 ---
 
 ## Machines and sessions
@@ -223,6 +231,20 @@ another session ends the wait. A session that ended moves the viewer to the firs
 With text selected, Ctrl-C copies it instead of reaching Claude.
 
 **Fix:** click once in the viewer to clear the selection, then press Ctrl-C.
+
+### Multi-line input in Claude Code grows below the bottom of the viewer instead of scrolling
+
+Claude Code grows its input box downward until it reaches the bottom row of the session's tmux window, and only starts
+scrolling the input box once it hits that row. When the tmux window is taller than your viewer pane—because a taller
+second window is attached to the same session, or a previous `lzr1` tmux layout was left running in the background when
+a terminal window was closed without pressing `q`—the bottom rows of the session sit below the viewer's edge, and new
+lines disappear there.
+
+The panel now sets `window-size smallest` on sessions, marks its tmux layouts `destroy-unattached on`, and cleans up
+any unattached `lzr1-*` layouts when `lzr1-panel open` runs.
+
+**Fix:** quit the panel (`q`) and run `lzr1-panel open` again (or pick the session again in the panel so its viewer
+refreshes the session's window size).
 
 ---
 
@@ -388,12 +410,12 @@ export LZR1_MENU_BUTTON=left   # in ~/.zshenv
 
 ### After a row's menu, the first click on the footer does nothing
 
-The footer (`[+opus]`, `[↻]`, `[?]`, ...) acts when the mouse button comes up, and only after fzf saw that button go
+The footer (`[≡ menu]`) acts when the mouse button comes up, and only after fzf saw that button go
 down. A click opens the menu as the button goes down, and the menu takes the release, so fzf reads your next press as
 a drag. In the tmux layout (which a browser also gets) the panel sends fzf a release when the menu closes, so this does
 not happen. A Ghostty split cannot be sent one.
 
-**Fix:** in a Ghostty split, click the footer button again. You can also open the menu with **`m`**.
+**Fix:** in a Ghostty split, click `[≡ menu]` again. You can also open the row's menu with **`m`**.
 
 While the panel reloads its list (just after a menu, after the window is resized or a phone turned, or on its
 15-second refresh), fzf ignores clicks and keys. When your machines answer slowly, a click right then does nothing.
@@ -653,12 +675,18 @@ is not on text or off, and that `LZR1_POKEMON` is not set to something else in y
 ImageMagick (`magick`) are there. `./install.sh` offers ImageMagick, or `brew install imagemagick` (`apt install
 imagemagick`). Then, once, `rm -rf ~/.cache/lzr1-panel/pokemon-art` if a first try left a half-cut Pokémon.
 
-### The sprites are blocky, or the pictures look wrong
+### The sprites are blocky, or blurry in macOS Terminal while clear in Ghostty
 
-Half blocks are only six pixels tall. Real pictures need Ghostty or kitty, outside tmux; `lzr1-panel doctor` says which
-one you get. If the pictures show as odd characters or leave gaps, the terminal lacks Kitty graphics placeholders:
-**Fix:** set `LZR1_POKEMON_IMAGES=0` in your shell to go back to half blocks. Pictures that stay blocky after an
-update: the old art has no PNG yet; the panel cuts it again by itself, a few Pokémon per refresh.
+In Ghostty (and kitty, outside tmux), the panel sends a crisp 240×144 PNG for each card using the Kitty graphics
+protocol (`term.png`). macOS Terminal (`Terminal.app`) does not support the Kitty graphics protocol (nor inline terminal
+images) and runs the panel inside `tmux`, so it falls back to drawing each sprite with Unicode half-block characters
+(`▀` and `▄`, `term.ans`), which is only 10 columns wide by 6 half-rows tall. `lzr1-panel doctor` says which mode your
+current terminal gets.
+
+**Fix:** open the panel in **Ghostty** (outside tmux) for full-resolution PNG sprites. If the pictures show as odd
+characters or leave gaps in another terminal, set `LZR1_POKEMON_IMAGES=0` in your shell to force half blocks, or choose
+`text` / `off` in the `[...]` menu at the bottom of the panel. Pictures that stay blocky in Ghostty after an update: the
+old art has no PNG yet; the panel cuts it again by itself, a few Pokémon per refresh.
 
 ### A Pokémon stays a Poké Ball
 

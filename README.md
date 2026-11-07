@@ -14,7 +14,7 @@
 ██          ██      ██  ██      ██  ██████████  ██████████
 </pre>
 
-**Every Claude Code and opencode session you run, on every machine you own, in one clickable list.**<br>
+**Every Claude Code, agy and opencode session you run, on every machine you own, in one clickable list.**<br>
 **Your pull requests right under them. Told when a session needs you. Open it from any browser on your tailnet.**
 
 ![macOS](https://img.shields.io/badge/macOS-supported-555?logo=apple&logoColor=white)
@@ -62,7 +62,7 @@
    ✓ #1398 chore: bump dependencies              3d
      atlas · ⎇ chore/deps · checks passed
  ────────────────────────────────────────────────────
- [...] [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]
+  [≡ menu]
 ```
 
 <p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
@@ -95,15 +95,15 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 |---|---|
 | 🖥 **All your machines** | This computer and any server over SSH, each one a *profile*. A machine that does not answer is left out until it does. |
 | 📋 **Every session, at a glance** | Three lines each: its state (`▶` working, `⧗` waiting on you, `·` idle; `✱` finished or asking since you last looked), name, model and age; what Claude is doing, or the question it is waiting on; its git branch and folder. |
-| 🤖 **opencode too** | New opencode sessions, with auto-approve on, start from the same keys, menus and shortcuts, and are listed and alerted like Claude's (model `opencode`). |
-| 🔔 **Told when it's your turn** | When a session finishes its reply or asks you something, its row gets `✱`, a tone plays and your system shows a notification (macOS and Linux). Looking at it in the viewer clears the mark. |
+| 🤖 **agy and opencode too** | New `agy` (`--dangerously-skip-permissions`) and `opencode` (`--auto`) sessions start from the same keys, menus and shortcuts, and are listed and alerted like Claude's (models `agy` and `opencode`). |
+| 🔔 **Told when it's your turn** | When a session finishes its reply or asks you something, its row gets `✱`, a tone plays and your system shows a detailed notification with the tmux session name, profile, repo/branch, and the exact agent request or completion summary (macOS and Linux). Looking at it in the viewer clears the mark. |
 | 🔀 **Your pull requests** | Below the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
 | 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
 | 🌐 **The panel in a browser** | One key publishes the whole panel to your tailnet, behind your Tailscale login and a password: use it from another laptop or a phone, as here. See [docs/remote.md](docs/remote.md). |
-| 🐾 **A Pokémon for every session** | Each session gets one of the first 151, from a hash of its name, kept until the session ends and changeable with `p`. Its mood is the state the panel already tracks: `!` waiting on you, `✓` finished and not looked at yet, `zZz` idle for 3 minutes. Half-block sprites beside each card (text tags without ImageMagick), turned on or off from the `[...]` menu in the footer; and in a browser a strip where they walk, stroll and sleep. See [docs/pokemon.md](docs/pokemon.md). |
-| 🛟 **Sessions survive** | If Claude or opencode exits (two Ctrl-Cs, Claude's `/exit`, a crash), the session stays. Enter resumes the same conversation. |
+| 🐾 **A Pokémon for every session** | Each session gets one of the first 151, from a hash of its name, kept until the session ends and changeable with `p`. Its mood is the state the panel already tracks: `!` waiting on you, `✓` finished and not looked at yet, `zZz` idle for 3 minutes. Half-block sprites beside each card (text tags without ImageMagick), turned on or off from `[≡ menu]` in the footer; and in a browser a strip where they walk, stroll and sleep. See [docs/pokemon.md](docs/pokemon.md). |
+| 🛟 **Sessions survive** | If Claude, agy or opencode exits (two Ctrl-Cs, Claude's `/exit`, a crash), the session stays. Enter resumes the same conversation. |
 | ✂️ **Copy just works** | Drag to select, Ctrl-C, and it's on your clipboard: in any terminal, from any machine. |
 
 ---
@@ -149,16 +149,17 @@ flowchart LR
 | **click** a row, or `↑` `↓` | the session shows in the viewer |
 | **enter** or double-click | you type in that session (on a PR: it opens in the browser) |
 | **right-click**, or `m` | the row's menu |
-| `n` / `s`, or `[+opus]` / `[+sonnet]` | a new Opus / Sonnet session (type a name, or click a repository) |
-| `c`, or `[+opencode]` | a new opencode session, with auto-approve on (`--auto`) |
+| **`[≡ menu]`** (footer) | opens the footer menu list: new Opus / Sonnet / Agy / opencode sessions, refresh, web, full, Pokémon theme, keys, quit (never clips when the sidebar is narrow) |
+| `n` / `s` | a new Opus / Sonnet session (type a name, or click a repository) |
+| `a` | a new Agy session, with `--dangerously-skip-permissions` |
+| `c` | a new opencode session, with auto-approve on (`--auto`) |
 | `t` | the session in a new Ghostty tab |
 | `o` | its Remote Control link (on a PR: the PR) |
 | `p` | choose the session's Pokémon (type a name or a number, enter or click) |
-| `[...]` (footer) | the Pokémon theme: sprites, text tags or off; kept for next time |
-| `x` | ends the session: stops Claude and closes its tmux session (asks first), then shows the first one left |
-| `f`, or `[full]` | the viewer alone, so a terminal app's own text selection (Termius on a phone) stays inside the session; tap the yellow bar at the bottom to bring the panel back |
-| `w`, or `[web]` | the panel in a browser: turns it on (asks who may come in, copies the URL); while it is on, its menu: copy the URL or the password, who is connected, rotate the password, turn it off |
-| `r`, or `[↻]` | refresh (it also refreshes every 15 seconds) |
+| `x` | ends the session: stops the agent and closes its tmux session (asks first), then shows the first one left |
+| `f` | the viewer alone, so a terminal app's own text selection (Termius on a phone) stays inside the session; tap the yellow bar at the bottom to bring the panel back |
+| `w` | the panel in a browser: turns it on (asks who may come in, copies the URL); while it is on, its menu: copy the URL or the password, who is connected, rotate the password, turn it off |
+| `r` | refresh (it also refreshes every 15 seconds) |
 | `?` / `q` | all the keys / quit: closes the panel, the viewer and the window |
 
 In a narrow window (a phone, or a tmux layout under `LZR1_NARROW` columns), the panel and the session show one at a
@@ -218,8 +219,9 @@ on, ttyd and Go (the installer offers both); `lzr1-panel doctor` checks them. Se
 lzr1-panel open                             # the panel
 lzr1-panel run [--model M] [--effort E]     # Claude here, in a new tmux session, attached; listed when here is
                                             # inside a profile's repositories folder
+lzr1-panel run --agy                        # agy here (--dangerously-skip-permissions), the same way
 lzr1-panel run --opencode                   # opencode here (auto-approve on), the same way
-lzr1-panel start PROFILE opus|sonnet|opencode NAME  # a session, without the panel
+lzr1-panel start PROFILE opus|sonnet|agy|opencode NAME  # a session, without the panel
 lzr1-panel attach PROFILE NAME              # this terminal into a session
 lzr1-panel list                             # every session, then your PRs
 lzr1-panel prs                              # your open pull requests
@@ -244,14 +246,16 @@ Your shell also gets shortcuts:
 - **`cl-opus`** / **`cl-sonnet`**: Claude in the folder you're in, inside a new tmux session, so the panel lists it
   when that folder is inside a profile's repositories folder (a profile lists only the sessions there). If you
   already have your own `cl-opus` or `cl-sonnet`, yours stay; point them at `lzr1-panel run` to get the same.
+- **`cl-agy`**: agy, with `--dangerously-skip-permissions`, the same way (`lzr1-panel run --agy`), listed under the
+  same rule. Yours wins here too.
 - **`cl-opencode`**: opencode, with auto-approve on, the same way (`lzr1-panel run --opencode`), listed under the
   same rule. Yours wins here too.
-- **`cl-<profile>-opus NAME`** / **`cl-<profile>-sonnet NAME`** / **`cl-<profile>-opencode NAME`**: a session on that
+- **`cl-<profile>-opus NAME`** / **`cl-<profile>-sonnet NAME`** / **`cl-<profile>-agy NAME`** / **`cl-<profile>-opencode NAME`**: a session on that
   profile's machine.
 
 > [!NOTE]
 > The panel only sees sessions that run **inside tmux**. A plain `claude` in a terminal tab never shows up: start
-> it with `cl-opus`, `lzr1-panel run`, or the panel's `n` / `s` (opencode: `cl-opencode`, or `c`).
+> it with `cl-opus`, `lzr1-panel run`, or the panel's `n` / `s` (`agy`: `cl-agy` or `a`; `opencode`: `cl-opencode` or `c`).
 
 ---
 
