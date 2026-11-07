@@ -43,6 +43,7 @@ STATE=${XDG_CACHE_HOME:-$HOME/.cache}/lzr1-panel
 PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
 # A sprite takes 10 columns: wider by default when sprites are on and can be cut (the mode is lib/pokemon.zsh's).
 { _pk0=${LZR1_POKEMON:-$(<$CONFIG/pokemon 2>/dev/null)}; [[ -z $LZR1_PANEL_WIDTH && ${_pk0:-sprite} == sprite ]] &&
+  [[ ${LZR1_POKEMON_IMAGES:-auto} == (0|1|halfblocks) || ( -z $TMUX && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR || -n $KITTY_WINDOW_ID ) ) ]] &&
   (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )) && PANEL_W=66; unset _pk0 } 2>/dev/null
 NARROW=${LZR1_NARROW:-$(( PANEL_W + 30 ))}  # a tmux layout under this many columns shows one pane at a time; 0: never
 [[ $NARROW == <-> ]] || NARROW=$(( PANEL_W + 30 ))
@@ -669,7 +670,7 @@ list_rows() {
   prs_refresh &
   wait
   local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
-  local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur
+  local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur hd fl
   local name st att age url model dir title branch changed waitfor detail
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   local US=$'\037' track= seeded= f fn pts pst pwf ak
@@ -680,7 +681,8 @@ list_rows() {
   local web=; local -A RS PK_TAKEN
   _remote_read && _ours "$RS[gwpid]" gw $RS[uuid] && web=' · ⇄ web'
   local -a needart pkrows
-  if [[ $pkm == sprite ]] && ! (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then pkm=text; fi
+  if [[ $pkm == sprite ]] && { ! (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )) ||
+     { ! _pk_kitty_ok && [[ ${LZR1_POKEMON_IMAGES:-auto} != (0|halfblocks) ]] } }; then pkm=text; fi
   if [[ $pkm != off ]]; then
     mw=5
     for f in $STATE/pokemon/*/*(N); do PK_TAKEN[$(<$f)]=1; done 2>/dev/null
@@ -705,7 +707,7 @@ list_rows() {
     load $p 2>/dev/null; kind=$P_TYPE
     got=( ${(f)"$(<$tmp/$p.out)"} )
     cp $tmp/$p.out $STATE/raw-$p  # the menu reads a session's details from here
-    local hd=" $p $kind · online · $#got " fl
+    hd=" $p $kind · online · $#got "
     fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
     items+=( "$p/"$'\t'" $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$R" )
     for line in $got; do
@@ -1451,7 +1453,9 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
     _ok "Pokémon ($PK_MODE): sprites can be cut (curl and ImageMagick)"
     if [[ ${LZR1_POKEMON_IMAGES:-auto} != 0 && -z $TMUX && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR || -n $KITTY_WINDOW_ID ) ]]
     then _ok "Pokémon pictures: this terminal shows real images (Kitty graphics)"
-    else print "  · Pokémon pictures: half blocks here (real images need Ghostty or kitty, outside tmux)"; fi
+    elif [[ ${LZR1_POKEMON_IMAGES:-auto} == (0|halfblocks) ]]
+    then print "  · Pokémon pictures: half blocks here (LZR1_POKEMON_IMAGES=$LZR1_POKEMON_IMAGES)"
+    else print "  · Pokémon pictures: text tags here (real images in Ghostty or kitty, outside tmux)"; fi
   else
     print "  · Pokémon ($PK_MODE): no ImageMagick (magick), so no sprites; the panel shows text tags"
     _hint "brew install imagemagick (apt install imagemagick): sprites and the browser strip need it"
@@ -1882,12 +1886,13 @@ _ticker)  # _ticker ID PORT: show the first session in the viewer (a reconnectin
 
 _pos)  # _pos ID PORT KEY: move the panel's highlight to KEY once the panel lists it (tries for ~6s)
   local id=$2 port=$3 key=$4 i line api=(curl -s -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$3")
+  local -a its
   repeat 20; do
     sleep 0.3
     $api -XPOST -d "reload($SELF _list $id)" >/dev/null
     sleep 0.5
     i=0
-    local -a its=( "${(@0)$(<$STATE/$id.cache)}" )
+    its=( "${(@0)$(<$STATE/$id.cache)}" )
     for line in "${(@)its[2,-1]}"; do
       [[ -n $line ]] || continue
       (( i++ )); [[ ${line%%$'\t'*} == $key ]] || continue

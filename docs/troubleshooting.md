@@ -670,23 +670,23 @@ session on this computer is the exception: its copies land on both). More in
 
 ### I see text tags but no sprites
 
-Sprites are the default, and the panel falls back to text when it cannot cut them. Check that the footer's `[...]` menu
-is not on text or off, and that `LZR1_POKEMON` is not set to something else in your shell. **Fix:** run `lzr1-panel doctor`: it says whether `curl` and
-ImageMagick (`magick`) are there. `./install.sh` offers ImageMagick, or `brew install imagemagick` (`apt install
-imagemagick`). Then, once, `rm -rf ~/.cache/lzr1-panel/pokemon-art` if a first try left a half-cut Pokémon.
+Sprites are the default, and the panel falls back to text tags when the terminal cannot display real images (such as
+macOS `Terminal.app` or inside `tmux`), or when `curl` and ImageMagick are missing. Check that the footer's `[≡ menu]`
+is not on text or off, and that `LZR1_POKEMON` is not set to something else in your shell. **Fix:** open the panel in
+**Ghostty** (or **kitty**, outside tmux) for real PNG sprites, and run `lzr1-panel doctor` to check that `curl` and
+ImageMagick (`magick`) are installed.
 
 ### The sprites are blocky, or blurry in macOS Terminal while clear in Ghostty
 
 In Ghostty (and kitty, outside tmux), the panel sends a crisp 240×144 PNG for each card using the Kitty graphics
 protocol (`term.png`). macOS Terminal (`Terminal.app`) does not support the Kitty graphics protocol (nor inline terminal
-images) and runs the panel inside `tmux`, so it falls back to drawing each sprite with Unicode half-block characters
-(`▀` and `▄`, `term.ans`), which is only 10 columns wide by 6 half-rows tall. `lzr1-panel doctor` says which mode your
-current terminal gets.
+images) and runs the panel inside `tmux`, where 3 text rows only allow a 10×6 half-block approximation (`term.ans`). The
+panel now automatically falls back to clean **text tags** (`#025 pikachu` + `!` / `✓` / `zZz` mood) in terminals that
+cannot display real PNG images, and separates `\e[0m` from foreground colors in `term.ans` so `fzf --highlight-line`
+never leaves black cutouts on the selected row.
 
-**Fix:** open the panel in **Ghostty** (outside tmux) for full-resolution PNG sprites. If the pictures show as odd
-characters or leave gaps in another terminal, set `LZR1_POKEMON_IMAGES=0` in your shell to force half blocks, or choose
-`text` / `off` in the `[...]` menu at the bottom of the panel. Pictures that stay blocky in Ghostty after an update: the
-old art has no PNG yet; the panel cuts it again by itself, a few Pokémon per refresh.
+**Fix:** open the panel in **Ghostty** (outside tmux) for full-resolution PNG sprites; in **macOS Terminal**, clean text
+tags show automatically (or set `LZR1_POKEMON_IMAGES=halfblocks` in `~/.zshenv` if you specifically want half blocks).
 
 ### A Pokémon stays a Poké Ball
 

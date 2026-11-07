@@ -49,9 +49,9 @@ _pk_pick() {
 # _pk_ball: a Poké Ball three lines tall, ten columns wide, in `reply`: what stands in while the art is not there
 _pk_ball() {
   local e=$'\e'
-  reply=( "  ${e}[0;31m▄████▄${e}[0m  "
+  reply=( "  ${e}[0m${e}[31m▄████▄${e}[0m  "
           "  ${e}[31;47m▀▀${e}[30;47m▀▀${e}[31;47m▀▀${e}[0m  "
-          "  ${e}[0;97m▀████▀${e}[0m  " )
+          "  ${e}[0m${e}[97m▀████▀${e}[0m  " )
 }
 
 # The Kitty graphics protocol, where the terminal has it (Ghostty, kitty; not through tmux): the sprite is sent once as
@@ -190,8 +190,8 @@ _pk_ans() {
     for (( x = 0; x < 10; x++ )); do
       k="$x,$y"; t=( ${=P[$k]:-0 0 0 0} ); k="$x,$(( y + 1 ))"; b=( ${=P[$k]:-0 0 0 0} )
       if (( t[4] >= 128 && b[4] >= 128 )); then line+="${e}[38;2;$t[1];$t[2];$t[3];48;2;$b[1];$b[2];$b[3]m▀"
-      elif (( t[4] >= 128 )); then line+="${e}[0;38;2;$t[1];$t[2];$t[3]m▀"
-      elif (( b[4] >= 128 )); then line+="${e}[0;38;2;$b[1];$b[2];$b[3]m▄"
+      elif (( t[4] >= 128 )); then line+="${e}[0m${e}[38;2;$t[1];$t[2];$t[3]m▀"
+      elif (( b[4] >= 128 )); then line+="${e}[0m${e}[38;2;$b[1];$b[2];$b[3]m▄"
       else line+="${e}[0m "; fi
     done
     out+=( "$line${e}[0m" )
