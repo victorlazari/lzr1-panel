@@ -242,17 +242,18 @@ if [[ $SHELL_HOOK == 1 ]]; then
       echo "$HOOK_BEGIN"
       echo "# Managed by lzr1-panel/install.sh; ./install.sh --uninstall removes it."
       echo 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
-      echo "# cl-<profile>-opus / -sonnet / -opencode NAME: start a session on a profile without opening the panel"
+      echo "# cl-<profile>-opus / -sonnet / -agy / -opencode NAME: start a session on a profile without opening the panel"
       echo 'for _p in ${XDG_CONFIG_HOME:-$HOME/.config}/lzr1-panel/profiles/*.conf; do'
       echo '  [ -e "$_p" ] || continue; _p=${_p##*/}; _p=${_p%.conf}'
       echo '  eval "cl-$_p-opus() { lzr1-panel start $_p opus \"\$@\"; }; cl-$_p-sonnet() { lzr1-panel start $_p sonnet \"\$@\"; }"'
-      echo '  eval "cl-$_p-opencode() { lzr1-panel start $_p opencode \"\$@\"; }"'
+      echo '  eval "cl-$_p-agy() { lzr1-panel start $_p agy \"\$@\"; }; cl-$_p-opencode() { lzr1-panel start $_p opencode \"\$@\"; }"'
       echo 'done; unset _p'
-      echo "# cl-opus / cl-sonnet [claude args], cl-opencode [opencode args]: Claude, or opencode with auto-approve on, in a"
+      echo "# cl-opus / cl-sonnet [claude args], cl-agy [agy args], cl-opencode [opencode args]: Claude, agy or opencode in a"
       echo "# new tmux session in this folder; the panel lists it inside a profile's repositories folder. Your own,"
       echo "# defined earlier in this file, wins."
       echo 'type cl-opus >/dev/null 2>&1 || function cl-opus { lzr1-panel run --model opus "$@"; }'
       echo 'type cl-sonnet >/dev/null 2>&1 || function cl-sonnet { lzr1-panel run --model sonnet "$@"; }'
+      echo 'type cl-agy >/dev/null 2>&1 || function cl-agy { lzr1-panel run --agy "$@"; }'
       echo 'type cl-opencode >/dev/null 2>&1 || function cl-opencode { lzr1-panel run --opencode "$@"; }'
       if [[ $autoopen == 1 && $rc == "$HOME/.zshrc" ]]; then
         echo "# Opens the panel in the first Ghostty shell; LZR1_PANEL=0 (in ~/.zshenv) turns it off."
@@ -350,7 +351,7 @@ step "Checking everything"
 
 step "Done"
 info "1. open a new terminal (or: source ~/.zshrc), then run: lzr1-panel open"
-info "2. start a session: n (Opus), s (Sonnet) or c (opencode) in the panel; click a session to see it"
-info "3. the Pokémon theme is on: p picks a session's Pokémon, [...] in the footer turns the theme on or off"
+info "2. start a session: n (Opus), s (Sonnet), a (Agy) or c (opencode) in the panel, or click [≡ menu]; click a session to see it"
+info "3. the Pokémon theme is on: p picks a session's Pokémon, [≡ menu] in the footer turns the theme on or off"
 info "4. the panel in a browser or on your phone: lzr1-panel remote on (needs Tailscale; docs/remote.md)"
 info "keys: lzr1-panel keys · profiles: lzr1-panel profile help · anything wrong: lzr1-panel doctor"

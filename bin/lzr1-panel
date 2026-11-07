@@ -3,13 +3,14 @@
 # left, with a viewer on the right that shows the session you pick.
 #
 #   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
-#   lzr1-panel start PROFILE opus|sonnet|opencode NAME [args]
-#                                                    start a detached Claude (or opencode, auto-approve on) session
-#                                                    on PROFILE; a NAME that is a folder under the profile's repos
-#                                                    opens in it, else in its root
+#   lzr1-panel start PROFILE opus|sonnet|agy|opencode NAME [args]
+#                                                    start a detached Claude, Agy (--dangerously-skip-permissions) or
+#                                                    opencode (--auto) session on PROFILE; a NAME that is a folder under
+#                                                    the profile's repos opens in it, else in its root
 #   lzr1-panel run [--model M] [--effort E] [args]   Claude in a new tmux session in this folder, attached (print
 #                                                    mode, -p, runs plain claude); the panel lists it when this
 #                                                    folder is inside a profile's repositories folder
+#   lzr1-panel run --agy [args]                      the same with agy --dangerously-skip-permissions
 #   lzr1-panel run --opencode [args]                 the same with opencode --auto (its subcommands run plain)
 #   lzr1-panel attach PROFILE NAME                   this terminal into a session
 #   lzr1-panel list                                  print every profile's sessions, then your open PRs
@@ -58,23 +59,23 @@ source ${SELF:h:h}/lib/pokemon.zsh
 
 # A profile is KEY=value lines, read as data (never sourced):
 #   type=local|ssh  host=user@host  key=~/.ssh/id  port=22  root=~/work  repos=~/work/repos  claude=/path/to/claude
-#   opencode=/path/to/opencode  (optional: without it, opencode from the machine's PATH)
+#   opencode=/path/to/opencode  agy=/path/to/agy  (optional: without them, found from the machine's PATH)
 #   only=~/work  (list only the sessions whose folder is inside it, so profiles can share a machine).
 #   profile add writes root= and only= equal to repos=; older profiles may differ.
 load() {
   local f=$PROFILES/$1.conf k v
   [[ -n $1 && -r $f ]] || { print -ru2 -- "lzr1-panel: no profile '$1' (see: lzr1-panel profile list)"; return 1 }
-  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE= P_ONLY= P_OPENCODE=
+  P_NAME=$1 P_TYPE= P_HOST= P_KEY= P_PORT= P_ROOT= P_REPOS= P_CLAUDE= P_ONLY= P_OPENCODE= P_AGY=
   while IFS='=' read -r k v; do
     case $k in
       type) P_TYPE=$v ;; host) P_HOST=$v ;; key) P_KEY=${v/#\~/$HOME} ;; port) P_PORT=$v ;;
       root) P_ROOT=$v ;; repos) P_REPOS=$v ;; claude) P_CLAUDE=$v ;; only) P_ONLY=$v ;;
-      opencode) P_OPENCODE=$v ;;
+      opencode) P_OPENCODE=$v ;; agy) P_AGY=$v ;;
     esac
   done <$f
   [[ $P_TYPE == (local|ssh) ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs type=local or type=ssh"; return 1 }
   [[ $P_TYPE == local || -n $P_HOST ]] || { print -ru2 -- "lzr1-panel: profile '$1' needs host="; return 1 }
-  : ${P_CLAUDE:=claude} ${P_OPENCODE:=opencode}
+  : ${P_CLAUDE:=claude} ${P_OPENCODE:=opencode} ${P_AGY:=agy}
   return 0
 }
 
@@ -113,7 +114,10 @@ EXP='exp() { case $1 in "~"|"~/"*) printf "%s" "$HOME${1#"~"}" ;; *) printf "%s"
 # clipboard: through pbcopy on a Mac, and through the terminal (OSC 52) from any machine, SSH included.
 # Claude Code takes the mouse itself and copies its own selection with OSC 52, which some terminals (macOS
 # Terminal) ignore: on a Mac, tmux hands those copies to pbcopy too.
-CLIP='tmux set -s set-clipboard on 2>/dev/null
+# window-size smallest keeps a session's height inside the viewer pane even when another client is taller, so
+# Claude Code's input box scrolls instead of growing below the bottom of the viewer.
+CLIP='tmux set -g window-size smallest 2>/dev/null
+tmux set -s set-clipboard on 2>/dev/null
 tmux set -s "terminal-features[90]" "*:clipboard" 2>/dev/null
 c=; command -v pbcopy >/dev/null 2>&1 && c=pbcopy
 [ -n "$c" ] && tmux set-hook -g pane-set-clipboard "run-shell -b \"tmux save-buffer - | $c\"" 2>/dev/null
@@ -124,7 +128,7 @@ done
 '
 
 # One record per session back to the panel, fields split by \037 (empty fields survive it, unlike a tab):
-# name state attached idle-seconds rc-link model folder task branch changed-files waiting-for
+# name state attached idle-seconds rc-link model folder task branch changed-files waiting-for detail
 # $1, when set, is the profile's only= folder: sessions elsewhere are left out.
 LIST_SCRIPT='
   now=$(date +%s) us=$(printf "\037") host=$(hostname) only=$(exp "$1"); only=${only%/}
@@ -135,6 +139,7 @@ LIST_SCRIPT='
     if [ -n "$only" ]; then case $dir in "$only"|"$only"/*) ;; *) continue ;; esac; fi
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
+    [ -z "$agent" ] && printf "%s" "$full" | grep -q "Antigravity CLI" && agent=agy
     if [ "$agent" = opencode ]; then
       # opencode shows "esc interrupt" in its bottom bar while it works ("esc again to interrupt" after one Esc),
       # and its question dialog ends in "enter submit". It titles the terminal "OC | <session title>", or
@@ -143,6 +148,14 @@ LIST_SCRIPT='
       elif printf "%s" "$screen" | grep -qE "enter submit|Permission required|opencode exited"; then st=wait
       else st=idle; fi
       title=${title#"OC | "}; [ "$title" = OpenCode ] && title=
+    elif [ "$agent" = agy ]; then
+      if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
+      elif printf "%s" "$screen" | grep -qE "enter Confirm|Enter to select|Do you want to|Would you like to proceed|agy exited"; then st=wait
+      else st=idle; fi
+      [ -n "$model" ] || model=agy
+      title=$(printf "%s" "$title" | sed "s/^[^[:alnum:]]*//")
+      case $title in "$host"|"$host".*|"Antigravity CLI"|"") title= ;; esac
+      [ -n "$title" ] || title=$(printf "%s\n" "$full" | sed -n "s/^>[[:space:]]\{1,\}//p" | grep -v "^Yes, I trust this folder$" | tail -1)
     else
       if printf "%s" "$screen" | grep -q "esc to interrupt"; then st=work
       elif printf "%s" "$screen" | grep -qE "Enter to select|Do you want to|Would you like to proceed|Claude exited"; then st=wait
@@ -160,24 +173,35 @@ LIST_SCRIPT='
     if [ -n "$dir" ] && b=$(git -C "$dir" branch --show-current 2>/dev/null); then
       branch=${b:-detached}; changed=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l | tr -d " ")
     fi
-    waitfor=
+    waitfor= detail=
     if [ $st = wait ]; then
       # The exit of this session'"'"'s own agent only: Claude may well show "opencode exited" in its work.
-      ex=Claude; [ "$agent" = opencode ] && ex=opencode
+      ex=Claude; [ "$agent" = opencode ] && ex=opencode; [ "$agent" = agy ] && ex=agy
       ex=$(printf "%s" "$screen" | grep -o "$ex exited" | tail -1)
-      if [ -n "$ex" ]; then waitfor="$ex · Enter resumes"
+      if [ -n "$ex" ]; then
+        waitfor="$ex · Enter resumes"
+        detail="$ex exited · Enter resumes"
       elif [ "$agent" = opencode ]; then
         # The question is the dialog'"'"'s last non-empty line above its first option, inside a "┃" border.
         if printf "%s" "$screen" | grep -q "┃[[:space:]]*1\. "; then
           waitfor=$(printf "%s\n" "$screen" | sed -n "/┃[[:space:]]*1\. /q; p" | sed "s/┃//g; s/^[[:space:]]*//; s/[[:space:]]*$//" | grep . | tail -1)
         fi
         [ -n "$waitfor" ] || waitfor="waiting on you"
+        detail=$(printf "%s\n" "$screen" | grep "┃" | sed "s/┃//g; s/^[[:space:]]*//; s/[[:space:]]*$//" | grep -vE "^$|^Build |enter submit|esc dismiss" | tail -4 | tr "\n" "\r" | sed "s/\r$//; s/\r/ · /g")
+        [ -n "$detail" ] || detail=$waitfor
       else
-        waitfor=$(printf "%s\n" "$screen" | grep -E "Do you want|Would you like|\?[[:space:]│]*$" | tail -1 | sed "s/^[[:space:]│╭╰|]*//; s/[[:space:]│╮╯|]*$//")
+        waitfor=$(printf "%s\n" "$screen" | grep -E "Do you want|Would you like|trust the contents|\?[[:space:]│]*$" | tail -1 | sed "s/^[[:space:]│╭╰|]*//; s/[[:space:]│╮╯|]*$//")
         [ -n "$waitfor" ] || waitfor="waiting on you"
+        detail=$(printf "%s\n" "$screen" | grep -vE "[▀▄█▌▐░▒▓]" | sed "s/^[[:space:]│╭╰╭╮╯─━>❯]*//; s/[[:space:]│╮╯─━]*$//" | grep -vE "^$|^📁|^🧠|^⏵⏵|^(Sonnet|Opus|Haiku|Fable|Gemini) |^Antigravity CLI|Type your message|Shift\+Tab to change mode|auto-edit is on|plan mode is on|Navigate · enter Confirm|Enter to select|Esc to cancel|No, exit" | tail -4 | tr "\n" "\r" | sed "s/\r$//; s/\r/ · /g")
+        [ -n "$detail" ] || detail=$waitfor
       fi
+    elif [ $st = idle ]; then
+      last=$(printf "%s\n" "$screen" | grep -vE "[▀▄█▌▐░▒▓]" | sed "s/^[[:space:]│╭╰╭╮╯─━>❯⏺✻┃╹]*//; s/[[:space:]│╮╯─━]*$//" | grep -vE "^$|^📁|^🧠|^⏵⏵|^(Sonnet|Opus|Haiku|Fable|Gemini|DeepSeek|Build) |^(Cooked|Worked|Churned|Baked|Sautéed|Brewed|Crunched|Cogitated) for |^Antigravity CLI|Type your message|Shift\+Tab to change mode|auto-edit is on|plan mode is on" | tail -2 | tr "\n" "\r" | sed "s/\r$//; s/\r/ · /g")
+      if [ -n "$title" ] && [ -n "$last" ] && [ "$title" != "$last" ]; then detail="$title — $last"
+      elif [ -n "$last" ]; then detail=$last
+      else detail=$title; fi
     fi
-    printf "%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s\n" "$name" "$st" "$att" "$((now - act))" "$url" "$model" "$dir" "$title" "$branch" "$changed" "$waitfor"
+    printf "%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s$us%s\n" "$name" "$st" "$att" "$((now - act))" "$url" "$model" "$dir" "$title" "$branch" "$changed" "$waitfor" "$detail"
   done'
 
 # ---- profile management ---------------------------------------------------------------------------------------------
@@ -187,16 +211,16 @@ profile_help() {
 lzr1-panel profile list
 lzr1-panel profile show NAME
 lzr1-panel profile add                                   guided: asks for everything
-lzr1-panel profile add NAME --local --repos PATH [--claude PATH] [--opencode PATH]
-lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH] [--opencode PATH]
+lzr1-panel profile add NAME --local --repos PATH [--claude PATH] [--agy PATH] [--opencode PATH]
+lzr1-panel profile add NAME --ssh USER@HOST --repos PATH [--key FILE] [--port N] [--claude PATH] [--agy PATH] [--opencode PATH]
 lzr1-panel profile edit NAME                             the same questions, each showing its current value
-lzr1-panel profile test NAME                             reach it, find tmux, claude and opencode, check the folders
+lzr1-panel profile test NAME                             reach it, find tmux, claude, agy and opencode, check the folders
 lzr1-panel profile remove NAME
 
 NAME: lowercase letters, digits and dashes (oracle-server, macbook-pro-lazari); a _ becomes a dash.
 --repos: the folder holding your repositories. A profile opens and lists only the sessions inside --repos, so two
          profiles can share one machine, one folder each, without listing the same sessions twice.
---opencode: optional; without it, add looks for opencode there and the profile works without it.
+--agy, --opencode: optional; without them, add looks for agy and opencode there and the profile works without them.
 Paths may start with ~, read on the profile's machine.
 EOF
 }
@@ -210,11 +234,13 @@ profile_test() {
     printf "tmux=%s\n" "$(command -v tmux || echo missing)"
     c=$(exp "$1"); case $c in */*) [ -x "$c" ] || c=missing ;; *) c=$(command -v "$c" || echo missing) ;; esac
     printf "claude=%s\n" "$c"
+    c=$(exp "$5"); case $c in */*) [ -x "$c" ] || c= ;; *) c=$(command -v "$c" || { [ -x "$HOME/.local/bin/agy" ] && echo "$HOME/.local/bin/agy"; }) ;; esac
+    printf "agy=%s\n" "${c:-not installed (agy sessions unavailable)}"
     c=$(exp "$4"); case $c in */*) [ -x "$c" ] || c= ;; *) c=$(command -v "$c") ;; esac
     printf "opencode=%s\n" "${c:-not installed (opencode sessions unavailable)}"
     r=$(exp "$2"); [ -d "$r" ] && printf "repos=%s (%s folders)\n" "$r" "$(ls -1 "$r" | wc -l | tr -d " ")" || printf "repos=%s missing\n" "$r"
     o=$(exp "$3"); [ -d "$o" ] && printf "root=%s\n" "$o" || printf "root=%s missing\n" "$o"
-  ' "$P_CLAUDE" "${P_REPOS:-~}" "${P_ROOT:-${P_REPOS:-~}}" "$P_OPENCODE" 2>&1) || { print -r -- "  cannot reach it: $out"; return 1 }
+  ' "$P_CLAUDE" "${P_REPOS:-~}" "${P_ROOT:-${P_REPOS:-~}}" "$P_OPENCODE" "$P_AGY" 2>&1) || { print -r -- "  cannot reach it: $out"; return 1 }
   local bad=0 line
   for line in ${(f)out}; do
     print -r -- "  ${line/=/: }"
@@ -244,7 +270,7 @@ repos_guess() {
 }
 
 profile_add() {
-  local name type host key port repos claude opencode REPLY WHY dflt
+  local name type host key port repos claude agy opencode REPLY WHY dflt
   # One guided answer: the prompt shows even when the answers are piped in; the end of input stops the questions.
   ask() { print -rnu2 -- "$2"; IFS= read -r $1 || { print -u2; die "profile add: no answer" } }
   # The same with a suggestion: Enter takes it.
@@ -286,6 +312,7 @@ profile_add() {
         --port) port=$2; shift ;;
         --repos) repos=$2; shift ;;
         --claude) claude=$2; shift ;;
+        --agy) agy=$2; shift ;;
         --opencode) opencode=$2; shift ;;
         --root|--only) die "profile add: --root and --only are gone: a profile opens and lists sessions inside --repos" ;;
         *) die "profile add: unknown option $1" ;;
@@ -300,13 +327,14 @@ profile_add() {
   [[ -n $repos ]] || die "profile add: --repos PATH is required"
   [[ $key == \~* ]] && key=$HOME${key#\~}
   [[ -z $key || -r $key ]] || die "SSH key not readable: $key"
-  # Store paths to claude and opencode that work without a login shell: tmux starts them with a bare PATH.
+  # Store paths to claude, agy and opencode that work without a login shell: tmux starts them with a bare PATH.
   P_TYPE=$type P_HOST=$host P_KEY=$key P_PORT=$port
   if [[ -z $claude ]]; then
     claude=$(on 'command -v claude 2>/dev/null || { [ -x "$HOME/.local/bin/claude" ] && echo "$HOME/.local/bin/claude"; }' 2>/dev/null)
     [[ -n $claude ]] || die "Claude Code not found on that machine (install it there, or pass --claude PATH)"
   fi
-  # opencode is optional: a machine without it still gets a profile, with no opencode= line.
+  # agy and opencode are optional: a machine without them still gets a profile.
+  [[ -n $agy ]] || agy=$(on 'command -v agy 2>/dev/null || { [ -x "$HOME/.local/bin/agy" ] && echo "$HOME/.local/bin/agy"; }' 2>/dev/null)
   [[ -n $opencode ]] || opencode=$(on 'command -v opencode 2>/dev/null || { [ -x "$HOME/.opencode/bin/opencode" ] && echo "$HOME/.opencode/bin/opencode"; }' 2>/dev/null)
   {
     print -r -- "# lzr1-panel profile: $name (written $(date +%Y-%m-%d)). Keep it out of git."
@@ -318,6 +346,7 @@ profile_add() {
     print -r -- "root=$repos"
     print -r -- "only=$repos"
     print -r -- "claude=$claude"
+    [[ -n $agy ]] && print -r -- "agy=$agy"
     [[ -n $opencode ]] && print -r -- "opencode=$opencode"
   } >$PROFILES/$name.conf
   chmod 600 $PROFILES/$name.conf
@@ -328,10 +357,10 @@ profile_add() {
 # profile_edit NAME: asks name, (ssh) host, key and port, then the repositories folder, each prefilled (vared; Enter
 # keeps it). Piped answers: an empty line keeps the value, - empties it. root= and only= become the repositories
 # folder, as for a new profile (said when that narrows what it listed); claude= and any other line stay; a missing
-# opencode= is looked up as add does. A new name writes the new file, then removes the old and moves the panel's
+# agy= or opencode= is looked up as add does. A new name writes the new file, then removes the old and moves the panel's
 # state (targets, raw-, seen/, unread/) to it.
 profile_edit() {
-  local old=$1 name host key port repos line oc was t c REPLY WHY f=$PROFILES/$1.conf
+  local old=$1 name host key port repos line ag oc was t c REPLY WHY f=$PROFILES/$1.conf
   load $old || exit 1
   name=$old host=$P_HOST key=$P_KEY port=$P_PORT repos=$P_REPOS
   # zsh picks vi keys when $EDITOR says vi, and vi's insert mode cannot delete a prefilled value: bind these keys so it can.
@@ -356,8 +385,11 @@ profile_edit() {
     keep port "  SSH port (empty: 22): "
   fi
   while keep repos "  Folder with your repositories: "; [[ -z $repos ]]; do :; done
+  P_HOST=$host P_KEY=$key P_PORT=$port
+  if [[ -z ${(M)${(f)"$(<$f)"}:#agy=*} ]]; then
+    ag=$(on 'command -v agy 2>/dev/null || { [ -x "$HOME/.local/bin/agy" ] && echo "$HOME/.local/bin/agy"; }' 2>/dev/null)
+  fi
   if [[ -z ${(M)${(f)"$(<$f)"}:#opencode=*} ]]; then
-    P_HOST=$host P_KEY=$key P_PORT=$port
     oc=$(on 'command -v opencode 2>/dev/null || { [ -x "$HOME/.opencode/bin/opencode" ] && echo "$HOME/.opencode/bin/opencode"; }' 2>/dev/null)
   fi
   t=$PROFILES/$name.conf.new
@@ -370,6 +402,7 @@ profile_edit() {
     print -r -- "root=$repos"
     print -r -- "only=$repos"
     for line in ${(f)"$(<$f)"}; do [[ $line == (\#*|(type|host|key|port|repos|root|only)=*) ]] || print -r -- $line; done
+    [[ -z $ag ]] || print -r -- "agy=$ag"
     [[ -z $oc ]] || print -r -- "opencode=$oc"
   } >$t } 2>/dev/null || ! chmod 600 $t || ! mv $t $PROFILES/$name.conf; then
     rm -f $t 2>/dev/null; die "profile edit: cannot write $PROFILES/$name.conf"
@@ -519,27 +552,36 @@ clip() {
 # _cut TEXT WIDTH: TEXT cut to WIDTH characters with an ellipsis, into REPLY
 _cut() { if (( ${#1} > $2 )); then REPLY="${1[1,$2-1]}…"; else REPLY=$1; fi }
 
-# notify_alerts RECORD...: list_rows' alerts ("kind<US>profile<US>session<US>text") on the computer running the
-# panel: one tone however many there are (LZR1_SOUND: 0 off, or a sound file), a notification each, up to 3
-# (LZR1_NOTIFY=0 off). The text comes from a session's screen: it reaches the notifier as an argument only, never
-# inside a script or a command line.
+# notify_alerts RECORD...: list_rows' alerts ("kind<US>profile<US>session<US>model<US>repo<US>branch<US>text") on the
+# computer running the panel: one tone however many there are (LZR1_SOUND: 0 off, or a sound file), a notification
+# each, up to 3 (LZR1_NOTIFY=0 off). Each notification names the tmux session, agent/model, profile/folder and the
+# detailed agent request or output. The text comes from a session's screen: it reaches the notifier as an argument
+# only, never inside a script or a command line.
 notify_alerts() {
-  local r kind p s text verb
-  local -a recs more
+  local r kind p s mdl repo br text verb ttl sub
+  local -a recs more flds
   _tone
   if [[ $reply[1] == bell ]]; then { print -n '\a' >/dev/tty } 2>/dev/null
   elif (( $#reply )); then $reply >/dev/null 2>&1 &!; fi
   [[ ${LZR1_NOTIFY:-1} == 0 ]] && return 0
   recs=( "$@" ); (( $# > 3 )) && recs=( "${(@)recs[1,2]}" )
   for r in "$@"; do
-    IFS=$'\037' read -r kind p s text <<<"$r"
+    flds=( "${(@ps:\037:)r}" )
+    kind=${flds[1]} p=${flds[2]} s=${flds[3]}
+    if (( $#flds >= 7 )); then
+      mdl=${flds[4]} repo=${flds[5]} br=${flds[6]} text=${flds[7]}
+    else
+      mdl= repo= br= text=${flds[4]}
+    fi
     if (( ${recs[(Ie)$r]} )); then
-      verb=asks; [[ $kind == done ]] && verb=finished
-      text=${text//[[:cntrl:]]/}; _cut "${text:-your turn}" 120
-      _notify_one "$s $verb" $p $REPLY lzr1-$p-$s
-    else more+=( $p/$s ); fi
+      verb="needs input"; [[ $kind == done ]] && verb=finished
+      ttl="tmux: $s${mdl:+ ($mdl)} — $verb"
+      sub="profile: $p${repo:+ · $repo}${br:+ ($br)}"
+      text=${text//[[:cntrl:]]/}; _cut "${text:-waiting for your input in tmux session $s ($p)}" 240
+      _notify_one "$ttl" "$sub" "$REPLY" lzr1-$p-$s
+    else more+=( "$p/$s${mdl:+ ($mdl)}" ); fi
   done
-  if (( $#more )); then _cut "${(j:, :)more}" 120; _notify_one "$#more more sessions need you" lzr1-panel $REPLY lzr1-more; fi
+  if (( $#more )); then _cut "${(j:, :)more}" 240; _notify_one "$#more more tmux sessions need you" lzr1-panel "$REPLY" lzr1-more; fi
 }
 
 # _tone: what plays the alert tone here (LZR1_SOUND), as a command into reply: "bell" for the terminal bell, empty
@@ -571,7 +613,7 @@ _notify_one() {
     fi
   elif [[ -n $DISPLAY$WAYLAND_DISPLAY ]] && command -v notify-send >/dev/null; then
     local -a a=( "${@[1,3]}" ); a=( "${(@)${(@)${(@)a//&/&amp;}//\</&lt;}//\>/&gt;}" )  # most daemons read markup
-    notify-send -a lzr1-panel -- $a[1] $a[3] >/dev/null 2>&1
+    notify-send -a lzr1-panel -- $a[1] "${a[2]:+$a[2] — }$a[3]" >/dev/null 2>&1
   fi
   return 0
 }
@@ -628,7 +670,7 @@ list_rows() {
   wait
   local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
   local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur
-  local name st att age url model dir title branch changed waitfor
+  local name st att age url model dir title branch changed waitfor detail
   local D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' M=$'\e[37m' R=$'\e[0m'
   local US=$'\037' track= seeded= f fn pts pst pwf ak
   local -a alerts fresh live sf sv uf uv
@@ -667,7 +709,7 @@ list_rows() {
     fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
     items+=( "$p/"$'\t'" $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$R" )
     for line in $got; do
-      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
+      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor detail <<<"$line"
       (( n++ ))
       _fname $name; fn=$REPLY ak=
       if [[ -n $track ]]; then
@@ -684,7 +726,7 @@ list_rows() {
           fresh=( $f(Nms-60) )
           [[ -n $seeded ]] || (( ! $#fresh )) && sf+=( $f ) sv+=( "$snap$US$st$US$waitfor" )
           if [[ -n $ak && -n $seeded ]]; then
-            alerts+=( "$ak$US$p$US$name$US${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}" )
+            alerts+=( "$ak$US$p$US$name$US${model:-claude}$US${dir:t}$US${branch}$US${detail:-${${(M)ak:#question}:+$waitfor}${${(M)ak:#done}:+$title}}" )
             [[ $p/$name == "$cur" ]] || uf+=( $STATE/unread/$p/$fn ) uv+=( $ak )
           else ak=; fi
         fi
@@ -1305,18 +1347,22 @@ _remote_who() {
 
 case $1 in
 
-start)  # start PROFILE opus|sonnet|opencode NAME [claude or opencode args]
+start)  # start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode args]
   load $2 || exit 1
   local model=$3 name=$4 agent=claude REPLY
   shift 4 2>/dev/null
-  [[ $model == (opus|sonnet|opencode) && -n $name ]] ||
-    die 'usage: lzr1-panel start PROFILE opus|sonnet|opencode NAME [claude or opencode args]'
+  [[ $model == (opus|sonnet|agy|opencode) && -n $name ]] ||
+    die 'usage: lzr1-panel start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode args]'
   [[ $name == *[.:/\|]* ]] && die 'session names cannot contain ".", ":", "/" or "|"'
   # LZR1_PROMPT is the first message; a resumed conversation does not get it again, nor your args.
   if [[ $model == opencode ]]; then
     agent=opencode
     local oc="${(q)P_OPENCODE} --auto" args=${(j: :)${(q)@}}
     _keep opencode "$oc${args:+ $args}${LZR1_PROMPT:+ --prompt ${(q)LZR1_PROMPT}}" "$oc --continue"
+  elif [[ $model == agy ]]; then
+    agent=agy
+    local ag="${(q)P_AGY} --dangerously-skip-permissions" args=${(j: :)${(q)@}}
+    _keep agy "$ag${args:+ $args}${LZR1_PROMPT:+ --prompt-interactive ${(q)LZR1_PROMPT}}" "$ag --continue"
   else
     local claude="${(q)P_CLAUDE} --model $model --dangerously-skip-permissions --effort medium --remote-control ${(q)name} ${(j: :)${(q)@}}"
     _keep Claude "$claude ${LZR1_PROMPT:+${(q)LZR1_PROMPT}}" "$claude --continue"
@@ -1333,12 +1379,29 @@ start)  # start PROFILE opus|sonnet|opencode NAME [claude or opencode args]
     [ -d "$dir" ] || dir=$HOME
     echo "folder: $dir"
     tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
+    tmux set-option -t "=$name:" window-size smallest 2>/dev/null || :
     tmux set-option -t "=$name:" @lzr1_model "$5"
     # opencode asks no folder trust and has no Remote Control link: started once it outlives its first 2s.
     if [ "$6" = opencode ]; then
       tmux set-option -t "=$name:" @lzr1_agent opencode; sleep 2
       if ! tmux has-session -t "=$name" 2>/dev/null || tmux capture-pane -p -J -t "=$name:" | grep -q "opencode exited"
       then echo "opencode exited right after start"; exit 1; fi
+      echo started; exit 0
+    fi
+    if [ "$6" = agy ]; then
+      tmux set-option -t "=$name:" @lzr1_agent agy
+      trusted= i=0
+      while [ $i -lt 15 ]; do
+        i=$((i + 1)); sleep 1
+        if ! tmux has-session -t "=$name" 2>/dev/null || tmux capture-pane -p -J -t "=$name:" | grep -q "agy exited"
+        then echo "agy exited right after start"; exit 1; fi
+        screen=$(tmux capture-pane -p -J -t "=$name:")
+        # First run in a repository: agy asks whether to trust the folder, defaulting to "Yes, I trust this folder".
+        if [ -n "$inrepo" ] && [ -z "$trusted" ] && printf "%s" "$screen" | grep -q "Yes, I trust this folder"; then
+          tmux send-keys -t "=$name:" Enter; trusted=1; echo "trusted the repository folder (first run)"; continue
+        fi
+        if printf "%s" "$screen" | grep -q "Antigravity CLI"; then echo started; exit 0; fi
+      done
       echo started; exit 0
     fi
     trusted= i=0
@@ -1376,11 +1439,14 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   v=$(fzf --version 2>/dev/null); v=${v%% *}
   if [[ -n $v ]] && is-at-least 0.74 $v; then _ok "fzf $v"
   else _no "fzf ${v:-is missing} (0.74 or newer is needed)"; _hint "./install.sh installs it"; fi
-  # Optional, like run --opencode finds it: without it only opencode sessions are unavailable.
+  # Optional, like run --agy / --opencode finds them: without them only those sessions are unavailable.
+  v=${commands[agy]:-$HOME/.local/bin/agy}
+  if [[ -x $v ]]; then v=${"$($v --version 2>/dev/null)"##* }; _ok "agy${v:+ ${v#v}}"
+  else print "  · no agy: agy sessions unavailable"; fi
   v=${commands[opencode]:-$HOME/.opencode/bin/opencode}
-  if [[ -x $v ]]; then v=${${=$($v --version 2>/dev/null)}[-1]}; _ok "opencode${v:+ ${v#v}}"
+  if [[ -x $v ]]; then v=${"$($v --version 2>/dev/null)"##* }; _ok "opencode${v:+ ${v#v}}"
   else print "  · no opencode: opencode sessions unavailable"; _hint "brew install sst/tap/opencode, or see opencode.ai"; fi
-  if [[ $PK_MODE == off ]]; then print "  · Pokémon off (LZR1_POKEMON=off, or off in the panel's [...] menu)"
+  if [[ $PK_MODE == off ]]; then print "  · Pokémon off (LZR1_POKEMON=off, or off in the panel's [≡ menu])"
   elif (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then
     _ok "Pokémon ($PK_MODE): sprites can be cut (curl and ImageMagick)"
     if [[ ${LZR1_POKEMON_IMAGES:-auto} != 0 && -z $TMUX && ( $TERM_PROGRAM == ghostty || -n $GHOSTTY_RESOURCES_DIR || -n $KITTY_WINDOW_ID ) ]]
@@ -1506,15 +1572,16 @@ doctor)  # checks this computer, GitHub and every profile, with the fix for anyt
   exit $bad
   ;;
 
-run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or opencode args]: Claude (or opencode) in a new
+run)  # run [--model ID] [--effort E] [--agy] [--opencode] [--name NAME] [args]: Claude, agy or opencode in a new
      # tmux session in this folder, attached; the panel lists it only inside a profile's repositories folder
   shift
-  local model= effort= name= oc= fam sock REPLY
+  local model= effort= name= oc= ag= fam sock REPLY
   while (( $# )); do
     case $1 in
       --model) model=$2; shift 2 ;;
       --effort) effort=$2; shift 2 ;;
       --name) name=$2; shift 2 ;;
+      --agy) ag=1; shift ;;
       --opencode) oc=1; shift ;;
       --) shift; break ;;
       *) break ;;
@@ -1522,6 +1589,7 @@ run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or open
   done
   local cl=${commands[claude]:-$HOME/.local/bin/claude}
   if [[ -n $oc ]]; then
+    [[ -n $ag ]] && die 'run: choose either --agy or --opencode'
     [[ -n $model ]] && die 'run --opencode: --model is for Claude'
     [[ -n $effort ]] && die 'run --opencode: --effort is for Claude'
     cl=${commands[opencode]:-$HOME/.opencode/bin/opencode}
@@ -1531,10 +1599,20 @@ run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or open
        [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
       exec $cl "$@"
     fi
+  elif [[ -n $ag ]]; then
+    [[ -n $model ]] && die 'run --agy: --model is for Claude'
+    [[ -n $effort ]] && die 'run --agy: --effort is for Claude'
+    cl=${commands[agy]:-$HOME/.local/bin/agy}
+    # Not a conversation (print mode, help, version, subcommand, piped input or output), or no tmux: plain agy, here.
+    if (( ${@[(I)(-p|--print|--prompt|--prompt=*|-v|--version|-h|--help)]} )) ||
+       [[ $1 == (acp|agent|agents|changelog|help|install|mcp|mic-serve|models|plugin|plugins|remote-control|update) ]] ||
+       [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
+      exec $cl --dangerously-skip-permissions "$@"
+    fi
   fi
   effort=${effort:-medium}
   # Not a conversation (print mode, help, version, piped input or output), or no tmux: plain claude, here.
-  if (( ${@[(I)(-p|--print|--print=*|-v|--version|-h|--help)]} )) || [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )); then
+  if [[ -z $oc && -z $ag ]] && { (( ${@[(I)(-p|--print|--print=*|-v|--version|-h|--help)]} )) || [[ ! -t 0 || ! -t 1 ]] || ! (( $+commands[tmux] )) }; then
     exec $cl ${model:+--model} ${model:+$model} --dangerously-skip-permissions --effort $effort "$@"
   fi
   # Named after this folder: lerian-clients, then lerian-clients-2 when that one is taken.
@@ -1544,13 +1622,17 @@ run)  # run [--model ID] [--effort E] [--opencode] [--name NAME] [claude or open
   # As in start: the session outlives its agent and Enter resumes the conversation; your args go to the first run only.
   if [[ -n $oc ]]; then
     _keep opencode "${(q)cl} --auto ${(j: :)${(q)@}}" "${(q)cl} --auto --continue"
+  elif [[ -n $ag ]]; then
+    _keep agy "${(q)cl} --dangerously-skip-permissions ${(j: :)${(q)@}}" "${(q)cl} --dangerously-skip-permissions --continue"
   else
     local claude="${(q)cl}${model:+ --model ${(q)model}} --dangerously-skip-permissions --effort ${(q)effort} --remote-control ${(q)name}"
     _keep Claude "$claude ${(j: :)${(q)@}}" "$claude --continue"
   fi
   env -u TMUX tmux new-session -d -s "$name" -c "$PWD" -x ${COLUMNS:-200} -y ${LINES:-50} "$REPLY" || die "cannot start tmux"
+  env -u TMUX tmux set-option -t "=$name:" window-size smallest 2>/dev/null
   case $model in *opus*) fam=opus ;; *sonnet*) fam=sonnet ;; *haiku*) fam=haiku ;; *fable*) fam=fable ;; *) fam=$model ;; esac
   [[ -n $oc ]] && fam=opencode && env -u TMUX tmux set-option -t "=$name:" @lzr1_agent opencode
+  [[ -n $ag ]] && fam=agy && env -u TMUX tmux set-option -t "=$name:" @lzr1_agent agy
   [[ -n $fam ]] && env -u TMUX tmux set-option -t "=$name:" @lzr1_model $fam
   env -u TMUX sh -c "$CLIP"
   # Already inside this machine's own tmux: switch to the session; anywhere else, attach to it.
@@ -1619,6 +1701,10 @@ open)  # panel on the left, viewer on the right
   elif [[ -n $DISPLAY ]] && (( $+commands[xclip] )); then clip='xclip -selection clipboard'; fi
   # The lzr1 server exits with its last layout. A layout starting while it does (a browser reconnecting as its old
   # layout ends) is refused ("server exited unexpectedly"), or its session goes with the server: try again.
+  # Any unattached layout left behind by an older version is cleaned up first so its viewer stops holding sessions open.
+  local s; for s in $($T list-sessions -F '#{?session_attached,,#{session_name}}' 2>/dev/null); do
+    [[ $s == lzr1-<-> ]] && $T kill-session -t "=$s" 2>/dev/null
+  done
   local n r err
   for r in 1 2 3; do
     n=0
@@ -1630,6 +1716,7 @@ open)  # panel on the left, viewer on the right
     # after a delay, taking the keyboard back from the viewer that a double-click on a row just gave it: the same
     # bindings without select-pane (a single click still selects the pane).
     $T set -g prefix None \; set -g prefix2 None \; set -g mouse on \; set -g status off \; set -g escape-time 10 \
+       \; set -g window-size smallest \
        \; set -g default-terminal tmux-256color \; set -ga terminal-overrides ',*:RGB' \
        \; set -s set-clipboard on \; set -s 'terminal-features[90]' '*:clipboard' \
        \; bind -n DoubleClick1Pane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \
@@ -1657,10 +1744,10 @@ open)  # panel on the left, viewer on the right
      \; bind -n MouseDown1StatusLeft "run-shell '$envs $SELF _back #{session_name}'" \
      \; bind -n MouseDown1StatusRight "run-shell '$envs $SELF _back #{session_name}'" \
      \; bind -n MouseDown1StatusDefault "run-shell '$envs $SELF _back #{session_name}'" >/dev/null 2>&1
-  # A browser's panel (lzr1-panel remote): its layout ends when the browser goes, and remote off finds it by the mark.
+  # Closing the terminal window or browser tab ends this layout and detaches its viewer from any session.
   [[ -n $LZR1_REMOTE ]] &&
     TMUX= exec $T attach -t $sess \; set -t $sess destroy-unattached on \; set -t $sess @lzr1_remote $LZR1_REMOTE
-  TMUX= exec $T attach -t $sess
+  TMUX= exec $T attach -t $sess \; set -t $sess destroy-unattached on
   ;;
 
 _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothing is picked
@@ -1755,8 +1842,9 @@ _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrow
     # Same machine: switch the attached client in place; .on tells the viewer its client is on KEY now.
     load $KP && [[ $(on '
       c=$(cat "$HOME/.cache/lzr1-panel-viewer/$1" 2>/dev/null)
+      tmux set-option -t "=$2:" window-size smallest 2>/dev/null || :
       [ -n "$c" ] && tmux list-clients -F "#{client_tty}" | grep -qx "$c" && tmux switch-client -c "$c" -t "=$2" &&
-        echo switched
+        tmux refresh-client -c "$c" 2>/dev/null && echo switched
       true' $id $KS) == switched ]] && print -rn -- $key >$tfile.on
   else
     # Another machine: let go of the old one; the viewer then attaches the new target.
@@ -2005,18 +2093,46 @@ _go)  # _go ID KEY: enter and double-click; a session goes to the viewer with th
   else $SELF _select $2 $3 force; $SELF _focus $2; fi
   ;;
 
-_footer)  # _footer ID: fzf's action for a click on the footer word $FZF_CLICK_FOOTER_WORD. The row's key stays a {1}
+_footer)  # _footer ID: fzf's action for a click on the footer [≡ menu]. The row's key stays a {1}
          # that fzf fills in, quoted, when it runs the action: the transform's own text never holds a session's name.
-  local more="+reload-sync($SELF _list $2)"
-  case $FZF_CLICK_FOOTER_WORD in
-    *\.\.\.*)    print -r -- "execute($SELF _theme)$more" ;;
-    *opencode*) print -r -- "execute($SELF _new opencode $2 {1})$more" ;;
-    *opus*)     print -r -- "execute($SELF _new opus $2 {1})$more" ;;
-    *sonnet*)   print -r -- "execute($SELF _new sonnet $2 {1})$more" ;;
-    *full*)     print -r -- "execute-silent($SELF _full $2)" ;;
-    *web*)      print -r -- "execute($SELF _web $2)$more" ;;
-    *↻*)        print -r -- "reload-sync($SELF _list $2)" ;;
-    *\?*)       print -r -- "execute($SELF keys; read -k1 -s)" ;;
+  local me=$(<$STATE/$2.me 2>/dev/null)
+  if [[ $(mode $2) == tmux && -n $me ]]; then
+    print -r -- "execute($SELF _fmenu $2 {1})+execute-silent($SELF _unclick $2 $me)"
+  else
+    print -r -- "execute($SELF _fmenu $2 {1})+reload-sync($SELF _list $2)"
+  fi
+  ;;
+
+_fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual footer buttons so narrow panels never clip
+  local id=$2 key=$3 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' pick act
+  local -a acts=(
+    $'opus\t+ new Opus session          (n)'
+    $'sonnet\t+ new Sonnet session        (s)'
+    $'agy\t+ new Agy session           (a)'
+    $'opencode\t+ new opencode session      (c)'
+    $'refresh\t↻ refresh list now          (r)'
+    $'web\t⇄ remote panel in browser   (w)'
+  )
+  [[ $(mode $id) == tmux ]] && acts+=( $'full\t⤢ full viewer (hide panel)  (f)' )
+  acts+=(
+    "theme"$'\t'"◐ Pokémon theme ($PK_MODE)"
+    $'keys\t? keyboard shortcuts        (?)'
+    "quit"$'\t'"${E}✕ quit panel                (q)$R"
+    "cancel"$'\t'"${D}cancel$R"
+  )
+  pick=$(print -rl -- $acts | fzf --ansi --layout=reverse --no-input --no-sort --delimiter=$'\t' --with-nth=2 \
+    --info=hidden --gutter=' ' --pointer='▌' --highlight-line --color='header:bold,pointer:yellow,current-fg:bold' \
+    --header=' lzr1 menu' --header-border=bottom \
+    --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || exit 0
+  act=${pick%%$'\t'*}
+  case $act in
+    opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
+    refresh) ;;
+    web)     $SELF _web $id ;;
+    full)    $SELF _full $id ;;
+    theme)   $SELF _theme ;;
+    keys)    $SELF keys; read -k1 -s ;;
+    quit)    $SELF _quit $id ;;
   esac
   ;;
 
@@ -2054,7 +2170,7 @@ _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: swit
 _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or move to it and press enter
   local id=$2 key=$3 D=$'\e[90m' E=$'\e[31m' R=$'\e[0m' head line act new pick pr= cur next=
   local -a acts  # ACTION<tab>label
-  local name st att age url model dir title branch changed waitfor
+  local name st att age url model dir title branch changed waitfor detail
   local repo num ptitle purl draft pbranch review checks updated
   [[ -r $STATE/$id.remote ]] && CLIP_OSC=1  # a browser's panel: its copies go to the browser
   split_key $key
@@ -2079,12 +2195,12 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
   elif [[ -z $KS ]]; then
     [[ -e $PROFILES/$KP.conf ]] || exit 0
     head=$KP
-    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here'
+    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'agy\tnew Agy session here'
            $'opencode\tnew opencode session here' $'test\ttest this machine' $'edit\tedit this profile…' "remove"$'\t'"${E}remove this profile…$R" $'reload\trefresh' )
   else
     load $KP || exit 0
     for line in ${(f)"$(<$STATE/raw-$KP)"}; do
-      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor <<<"$line"
+      IFS=$'\037' read -r name st att age url model dir title branch changed waitfor detail <<<"$line"
       [[ $name == $KS ]] && break
     done
     [[ $name == $KS ]] || exit 0
@@ -2103,11 +2219,11 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
     [[ $PK_MODE != off ]] && acts+=( $'pokemon\tchoose its Pokémon' )
     acts+=( $'attach\tcopy the attach command' )
     [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
-    acts+=( $'new\tnew session on this machine' $'newoc\tnew opencode session on this machine' )
+    acts+=( $'new\tnew session on this machine' $'newagy\tnew Agy session on this machine' $'newoc\tnew opencode session on this machine' )
     if [[ $st == work ]]; then
-      [[ $model == opencode ]] && acts+=( $'esc\tinterrupt it (Esc)' ) || acts+=( $'esc\tinterrupt Claude (Esc)' )
+      [[ $model == (opencode|agy) ]] && acts+=( $'esc\tinterrupt it (Esc)' ) || acts+=( $'esc\tinterrupt Claude (Esc)' )
     fi
-    acts+=( $'rename\trename it' "end"$'\t'"${E}end it: stop Claude and close its tmux session…$R" )
+    acts+=( $'rename\trename it' "end"$'\t'"${E}end it: stop ${${model:#(opencode|agy)}:+Claude}${${(M)model:#(opencode|agy)}} and close its tmux session…$R" )
   fi
   acts+=( "cancel"$'\t'"${D}cancel$R" )
   _cut $head $(( ${COLUMNS:-56} - 3 ))
@@ -2141,7 +2257,7 @@ gh pr checks $num, fix it and push." ;;
            read -q && { print; gh_do "closing #$num" gh pr close $num --repo $repo } ;;
     all)   browse https://github.com/pulls ;;
     refresh) rm -f $STATE/prs ;;
-    opus|sonnet|opencode) $SELF _new $act $id $key ;;
+    opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
     test)  $SELF profile test $KP; print -n "press a key"; read -k1 -s ;;
     edit)  $SELF profile edit $KP; print -n "press a key"; read -k1 -s ;;
     remove)
@@ -2174,8 +2290,9 @@ gh pr checks $num, fix it and push." ;;
       if [[ $P_TYPE == local ]]; then clip "tmux attach -t =$KS"
       else clip "ssh ${P_KEY:+-i $P_KEY }${P_PORT:+-p $P_PORT }-t $P_HOST tmux attach -t =$KS"; fi ;;
     folder) browse $dir ;;
-    new)   $SELF _new opus $id $key ;;
-    newoc) $SELF _new opencode $id $key ;;
+    new)    $SELF _new opus $id $key ;;
+    newagy) $SELF _new agy $id $key ;;
+    newoc)  $SELF _new opencode $id $key ;;
     # opencode 2.0 stops only on a second Esc within a few seconds.
     esc)   on 'tmux send-keys -t "=$1:" Escape
              if [ "$2" = opencode ] || [ "$(tmux show-options -qv -t "=$1:" @lzr1_agent)" = opencode ]; then
@@ -2241,6 +2358,7 @@ _attach)  # _attach KEY
 
 _panel)  # _panel ID
   local id=$2 me
+  trap '$SELF _quit $id' HUP TERM INT
   printf '\e]2;lzr1 panel\a'
   if [[ $(mode $id) == tmux ]]; then
     me=$TMUX_PANE
@@ -2277,7 +2395,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer='[...] [+opus] [+sonnet] [+opencode] [full] [web] [↻] [?]' --footer-border=top \
+    --footer=' [≡ menu] ' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
@@ -2290,6 +2408,7 @@ _panel)  # _panel ID
     --bind "p:execute($S _pokemon $id {1})+reload-sync($S _list $id)" \
     --bind "n:execute($S _new opus $id {1})+reload-sync($S _list $id)" \
     --bind "s:execute($S _new sonnet $id {1})+reload-sync($S _list $id)" \
+    --bind "a:execute($S _new agy $id {1})+reload-sync($S _list $id)" \
     --bind "c:execute($S _new opencode $id {1})+reload-sync($S _list $id)" \
     --bind "x:execute($S _kill {1} $id)+reload-sync($S _list $id)" \
     --bind "w:execute($S _web $id)+reload-sync($S _list $id)" \
@@ -2331,24 +2450,25 @@ keys)
   click / ↑ ↓      show that session in the viewer
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
-  n  or [+opus]    new Opus session on the highlighted row's profile
-  s  or [+sonnet]  new Sonnet session (a repository name opens in its folder)
-  c  or [+opencode]  new opencode session (auto-approve on)
+  [≡ menu]         the footer menu: new sessions, refresh, web, full, theme, keys, quit
+  n                new Opus session on the highlighted row's profile
+  s                new Sonnet session (a repository name opens in its folder)
+  a                new Agy session (--dangerously-skip-permissions)
+  c                new opencode session (auto-approve on)
   t                open the session in a new Ghostty tab
   o                open its Remote Control link (a PR: the PR) in the browser
   p                choose its Pokémon (docs/pokemon.md)
-  [...]            the Pokémon theme: sprites, text tags or off (LZR1_POKEMON in your shell wins)
   x                end the session (asks first); the next one shows
-  f  or [full]     the viewer alone (select text without the panel; tap the yellow bar to return)
-  w  or [web]      in a browser too: on, copy, who, off
-  r  or [↻]        refresh now (it refreshes every 15s)
+  f                the viewer alone (select text without the panel; tap the yellow bar to return)
+  w                in a browser too: on, copy, who, off
+  r                refresh now (it refreshes every 15s)
   q                close the panel and the viewer (the window closes)
 
   In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.
   Narrow window: tap a row; the bottom bar: the panel.
   Copy: drag over the text, then Ctrl-C (Cmd-C does not reach Claude). Cmd-V pastes.
   Terminal's own selection: Cmd-R (macOS Terminal) or Shift-drag (Ghostty), then Cmd-C.
-  If Claude exits, its session stays: Enter resumes it.
+  If the agent exits, its session stays: Enter resumes it.
 
   glyphs: ▶ working  ⧗ waiting on you  · idle  ● a terminal is attached
           ✱ finished or asking since you last looked
@@ -2364,7 +2484,7 @@ _notify)  # _notify RECORD...: list_rows' alerts, from a process of its own
   ;;
 
 notify)  # a sample alert, in the foreground, to check the tone and the notifications on this computer
-  notify_alerts "question"$'\037'"lzr1-panel"$'\037'"test"$'\037'"this is how a session asks for you"
+  notify_alerts "question"$'\037'"macbook"$'\037'"lzr1-panel"$'\037'"opus"$'\037'"lzr1-panel"$'\037'"main"$'\037'"Do you want to proceed with applying the sidebar menu and notification changes?"
   ;;
 
 remote)  # remote on [--allow EMAIL[,EMAIL]] [--ttl 8h] | off | status | url | password | rotate | who | build
