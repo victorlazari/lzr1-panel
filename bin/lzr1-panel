@@ -34,6 +34,8 @@
 emulate -L zsh
 setopt pipe_fail extended_glob
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+[[ ${(L)$(locale charmap 2>/dev/null)} == utf*8 ]] ||
+  { [[ $OSTYPE == darwin* ]] && export LC_ALL=en_US.UTF-8 || export LC_ALL=C.UTF-8 }
 
 VERSION=0.1.0
 SELF=${0:A}
@@ -1655,7 +1657,7 @@ list)
   ;;
 
 _list)  # _list ID: rows for fzf, cached for _pos
-  list_rows $2 | tee $STATE/$2.cache
+  { list_rows $2 | tee $STATE/$2.cache } always { rm -f $STATE/$2.rfwait }
   ;;
 
 profile)
@@ -1880,6 +1882,7 @@ _ticker)  # _ticker ID PORT: show the first session in the viewer (a reconnectin
         $SELF _pos $id $port $key &
       fi
       (( ++n % 15 )) && continue
+      [[ -e $STATE/$id.rflock ]] && continue
       curl -sf -m 5 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "reload($SELF _list $id)" || exit 0
     done ) >/dev/null 2>&1 &!
   ;;
@@ -2098,14 +2101,46 @@ _go)  # _go ID KEY: enter and double-click; a session goes to the viewer with th
   else $SELF _select $2 $3 force; $SELF _focus $2; fi
   ;;
 
-_footer)  # _footer ID: fzf's action for a click on the footer [≡ menu]. The row's key stays a {1}
+_footer)  # _footer ID: fzf's action for a click on the footer (" [≡ menu]  [↻] "). The row's key stays a {1}
          # that fzf fills in, quoted, when it runs the action: the transform's own text never holds a session's name.
-  local me=$(<$STATE/$2.me 2>/dev/null)
-  if [[ $(mode $2) == tmux && -n $me ]]; then
-    print -r -- "execute($SELF _fmenu $2 {1})+execute-silent($SELF _unclick $2 $me)"
+  if [[ $FZF_CLICK_FOOTER_WORD == (*↻*|*refresh*|*✓*) ]] || (( ${FZF_CLICK_FOOTER_COLUMN:-0} >= 11 )); then
+    print -r -- "execute-silent($SELF _refresh $2 \$FZF_PORT)"
+  elif [[ $(mode $2) == tmux && -s $STATE/$2.me ]]; then
+    print -r -- "execute($SELF _fmenu $2 {1})+execute-silent($SELF _unclick $2 $(<$STATE/$2.me))"
   else
     print -r -- "execute($SELF _fmenu $2 {1})+reload-sync($SELF _list $2)"
   fi
+  ;;
+
+_refresh)  # _refresh ID PORT [DELAY]: refresh the panel with a live spinner in the footer while _list runs
+  local id=$2 port=$3 delay=$4 cols=${FZF_COLUMNS:-${COLUMNS:-$PANEL_W}}
+  [[ -n $id && -n $port ]] || exit 0
+  rmdir $STATE/$id.rflock(Nms+15) 2>/dev/null
+  mkdir $STATE/$id.rflock 2>/dev/null || exit 0
+  (
+    local out=$STATE/$id.rf.$$ i=0 pid
+    local -a api=(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port")
+    local -a sp=( ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏ )
+    trap 'rm -rf $out $STATE/$id.rflock' EXIT HUP TERM INT
+    [[ -n $delay ]] && sleep $delay
+    rm -f $STATE/prs
+    FZF_COLUMNS=$cols $SELF _list $id >$out 2>/dev/null &
+    pid=$!
+    while kill -0 $pid 2>/dev/null || (( i < 8 )); do
+      (( i++ ))
+      $api -XPOST -d "change-footer( [≡ menu]  [${sp[$(( (i - 1) % $#sp + 1 ))]} refreshing…] )" >/dev/null 2>&1 || exit 0
+      sleep 0.08
+    done
+    wait $pid 2>/dev/null
+    if [[ -s $out ]]; then
+      mv -f $out $STATE/$id.cache
+      $api -XPOST -d "reload(cat ${(q)STATE}/$id.cache)" >/dev/null 2>&1
+      sleep 0.08
+      $api -XPOST -d "change-footer( [≡ menu]  [✓ refreshed] )" >/dev/null 2>&1
+      sleep 0.6
+    fi
+    $api -XPOST -d "change-footer( [≡ menu]  [↻] )" >/dev/null 2>&1
+  ) >/dev/null 2>&1 &!
   ;;
 
 _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual footer buttons so narrow panels never clip
@@ -2132,7 +2167,7 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
   act=${pick%%$'\t'*}
   case $act in
     opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
-    refresh) ;;
+    refresh) $SELF _refresh $id $FZF_PORT 0.25 ;;
     web)     $SELF _web $id ;;
     full)    $SELF _full $id ;;
     theme)   $SELF _theme ;;
@@ -2400,7 +2435,7 @@ _panel)  # _panel ID
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
-    --footer=' [≡ menu] ' --footer-border=top \
+    --footer=' [≡ menu]  [↻] ' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
@@ -2419,7 +2454,7 @@ _panel)  # _panel ID
     --bind "w:execute($S _web $id)+reload-sync($S _list $id)" \
     --bind "f:execute-silent($S _full $id)" \
     --bind "alt-s:first" --bind "alt-p:transform($S _prpos $id)" \
-    --bind "r:reload-sync($S _list $id)" \
+    --bind "r:execute-silent($S _refresh $id \$FZF_PORT)" \
     --bind "?:execute($S keys; read -k1 -s)" \
     --bind "q:abort,esc:abort" \
     --bind "click-footer:transform:$S _footer $id"
@@ -2456,6 +2491,7 @@ keys)
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
   [≡ menu]         the footer menu: new sessions, refresh, web, full, theme, keys, quit
+  r  or [↻]        refresh now with live progress (it also refreshes every 15s)
   n                new Opus session on the highlighted row's profile
   s                new Sonnet session (a repository name opens in its folder)
   a                new Agy session (--dangerously-skip-permissions)
@@ -2466,7 +2502,6 @@ keys)
   x                end the session (asks first); the next one shows
   f                the viewer alone (select text without the panel; tap the yellow bar to return)
   w                in a browser too: on, copy, who, off
-  r                refresh now (it refreshes every 15s)
   q                close the panel and the viewer (the window closes)
 
   In the viewer: Ctrl-b d leaves a session; Ctrl-C goes to Claude.

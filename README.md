@@ -62,7 +62,7 @@
    ✓ #1398 chore: bump dependencies              3d
      atlas · ⎇ chore/deps · checks passed
  ────────────────────────────────────────────────────
-  [≡ menu]
+  [≡ menu]  [↻]
 ```
 
 <p align="center"><sub>The panel, on the left of your terminal. Pick a session and the viewer, on the right, shows it live.</sub></p>
@@ -150,6 +150,7 @@ flowchart LR
 | **enter** or double-click | you type in that session (on a PR: it opens in the browser) |
 | **right-click**, or `m` | the row's menu |
 | **`[≡ menu]`** (footer) | opens the footer menu list: new Opus / Sonnet / Agy / opencode sessions, refresh, web, full, Pokémon theme, keys, quit (never clips when the sidebar is narrow) |
+| **`[↻]`** (footer), or `r` | refreshes sessions and pull requests with a live spinner (`[⠋ refreshing…]` → `[✓ refreshed]`), plus automatic refresh every 15 seconds |
 | `n` / `s` | a new Opus / Sonnet session (type a name, or click a repository) |
 | `a` | a new Agy session, with `--dangerously-skip-permissions` |
 | `c` | a new opencode session, with auto-approve on (`--auto`) |
