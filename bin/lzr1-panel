@@ -82,7 +82,54 @@ load() {
   return 0
 }
 
-profiles() { local f; for f in $PROFILES/*.conf(N); do print -r -- ${f:t:r}; done }
+# Sidebar layout state ($CONFIG/layout.conf): custom profile order, per-profile vertical spacing (blank lines),
+# pull requests sash position (pr_gap) and visible height (pr_max), and sessions visible height cap (sess_max).
+LAYOUT=$CONFIG/layout.conf
+typeset -gA L_GAP
+typeset -ga L_ORDER
+typeset -gi L_PR_GAP=3 L_PR_MAX=4 L_SESS_MAX=0
+
+layout_load() {
+  L_GAP=() L_ORDER=() L_PR_GAP=3 L_PR_MAX=4 L_SESS_MAX=0
+  [[ -r $LAYOUT ]] || return 0
+  local k v kv
+  while IFS='=' read -r k v; do
+    case $k in
+      order) L_ORDER=( ${(s:,:)v} ) ;;
+      gaps)  for kv in ${(s:,:)v}; do [[ $kv == ?*:?* && ${kv#*:} == <-> ]] && L_GAP[${kv%%:*}]=${kv#*:}; done ;;
+      pr_gap)   [[ $v == <-> ]] && (( v <= 12 )) && L_PR_GAP=$v ;;
+      pr_max)   [[ $v == <-> ]] && (( v <= 20 )) && L_PR_MAX=$v ;;
+      sess_max) [[ $v == <-> ]] && (( v <= 30 )) && L_SESS_MAX=$v ;;
+    esac
+  done <$LAYOUT
+}
+
+layout_save() {
+  local k; local -a gs
+  for k in ${(ko)L_GAP}; do [[ ${L_GAP[$k]} == <-> ]] && gs+=( "$k:${L_GAP[$k]}" ); done
+  mkdir -p $CONFIG
+  print -rl -- "order=${(j:,:)L_ORDER}" "gaps=${(j:,:)gs}" "pr_gap=$L_PR_GAP" "pr_max=$L_PR_MAX" "sess_max=$L_SESS_MAX" >$LAYOUT.$$ &&
+    mv -f $LAYOUT.$$ $LAYOUT
+}
+
+profiles() {
+  local f p; local -a raw ordered
+  for f in $PROFILES/*.conf(N); do raw+=( ${f:t:r} ); done
+  (( $#raw )) || return 0
+  layout_load
+  for p in $L_ORDER; do (( ${raw[(Ie)$p]} )) && (( ! ${ordered[(Ie)$p]} )) && ordered+=( $p ); done
+  for p in $raw; do (( ${ordered[(Ie)$p]} )) || ordered+=( $p ); done
+  print -rl -- $ordered
+}
+
+# profile_gap PROFILE INDEX: blank lines above PROFILE (1st online profile defaults to 0, later ones to 1), into REPLY
+profile_gap() {
+  if [[ -n ${L_GAP[$1]} ]]; then REPLY=${L_GAP[$1]}
+  elif (( $2 <= 1 )); then REPLY=0
+  else REPLY=1; fi
+  (( REPLY < 0 )) && REPLY=0
+  (( REPLY > 8 )) && REPLY=8
+}
 
 # on [-t] SCRIPT ARGS...: runs a POSIX sh script on the loaded profile's machine; -t gives it a terminal.
 on() {
@@ -485,19 +532,45 @@ _ago() {
   else REPLY=$(( $1 / 86400 ))d; fi
 }
 
-# A PR row's key is +pr/URL; the section heading's is +pr/.
-pr_rows() {  # pr_rows WIDTH: the PR section's fzf items, after the sessions (layout 1, cards)
+# A PR row's key is +pr/URL; the section heading's is +pr/; scrollbar step rows are +pr:up/ and +pr:dn/.
+pr_rows() {  # pr_rows WIDTH [ID]: the PR section's fzf items, after the sessions (Option A split-pane sash + scrollbar)
   [[ ${LZR1_PRS:-1} == 0 || ! -s $STATE/prs ]] && return
-  local W=$1 D=$'\e[90m' B=$'\e[1m' Y=$'\e[33m' G=$'\e[32m' E=$'\e[31m' M=$'\e[37m' R=$'\e[0m'
+  local W=$1 id=$2 D=$'\e[90m' B=$'\e[1m' C=$'\e[36m' Y=$'\e[33m' G=$'\e[32m' E=$'\e[31m' M=$'\e[37m' R=$'\e[0m'
   local -a got=( ${(f)"$(<$STATE/prs)"} )
+  local total=$(( $#got - 1 )); (( total <= 0 )) && return
   local login src repo num title url draft branch review checks updated glyph words color hd fl t age pre l1 l2 line
   IFS=$'\037' read -r login src <<<"${got[1]}"
   zmodload zsh/datetime; local TZ=UTC  # GitHub's times are UTC
-  hd=" pull requests $login · $src · $(( $#got - 1 )) "
+  layout_load
+  local vis=$total pscroll=0 gap_nl=${(pl:L_PR_GAP::\n:)} cnt
+  if [[ -n $id ]]; then
+    (( L_PR_MAX == 0 )) && vis=0
+    (( L_PR_MAX > 0 && total > L_PR_MAX )) && vis=$L_PR_MAX
+    [[ -r $STATE/$id.pscroll ]] && pscroll=$(<$STATE/$id.pscroll)
+    [[ $pscroll == <-> ]] || pscroll=0
+    (( pscroll > total - vis )) && pscroll=$(( total - vis ))
+    (( pscroll < 0 )) && pscroll=0
+    print -rn -- $pscroll >$STATE/$id.pscroll
+  fi
+  if (( vis == 0 )); then cnt="$total · collapsed"
+  elif (( total > vis )); then cnt="$(( pscroll + 1 ))-$(( pscroll + vis ))/$total"
+  else cnt="$total"; fi
+  hd=" ↕ pull requests $login · $src · $cnt "
   fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
-  # The heading starts with five blank lines: a gap between the sessions and the PRs that the cursor never lands on.
-  print -rn -- "+pr/"$'\t\n\n\n\n\n'" ${B}pull requests$R $D$login · $src · $(( $#got - 1 )) ${(l:fl::─:)}$R"$'\0'
-  for line in "${(@)got[2,-1]}"; do
+  # The sash starts with L_PR_GAP blank lines: dragging the PR section down increases L_PR_GAP and shrinks L_PR_MAX.
+  print -rn -- "+pr/"$'\t'"$gap_nl $C↕$R ${B}pull requests$R $D$login · $src · $cnt ${(l:fl::─:)}$R"$'\0'
+  (( vis == 0 )) && return
+  if (( total > vis && pscroll > 0 )); then
+    print -rn -- "+pr:up/"$'\t'" $C▲$R $D$pscroll earlier pull request${${pscroll:#1}:+s} · click or [ to scroll up$R"$'\0'
+  fi
+  local PW=$W tlines=$(( vis * 2 )) max_off=$(( total - vis )) th=0 ttop=0 idx=0 l0 l1i b1 b2 pad
+  if (( total > vis )); then
+    PW=$(( W - 2 ))
+    th=$(( (vis * tlines + total / 2) / total )); (( th < 2 )) && th=2; (( th >= tlines )) && th=$(( tlines - 1 ))
+    ttop=$(( (pscroll * (tlines - th) + max_off / 2) / max_off ))
+  fi
+  for line in "${(@)got[$(( pscroll + 2 )),$(( pscroll + vis + 1 ))]}"; do
+    (( idx++ ))
     IFS=$'\037' read -r repo num title url draft branch review checks updated <<<"$line"
     # One glyph from the draft flag, the latest commit's checks and the review, worst first.
     if [[ $draft == true ]]; then glyph="$D◌$R" words=draft color=$D
@@ -509,12 +582,26 @@ pr_rows() {  # pr_rows WIDTH: the PR section's fzf items, after the sessions (la
     else glyph="$D·$R" words=${${review:l}//_/ } color=$D; fi
     t=$EPOCHSECONDS; [[ -n $updated ]] && strftime -r -s t '%Y-%m-%dT%H:%M:%SZ' $updated 2>/dev/null
     _ago $(( EPOCHSECONDS - t )); age=$REPLY
-    _cut "#$num $title" $(( W - 6 - ${#age} )); l1=" $glyph $M${(r:W - 6 - ${#age}:)REPLY}$R $D$age$R"
+    _cut "#$num $title" $(( PW - 6 - ${#age} )); l1=" $glyph $M${(r:PW - 6 - ${#age}:)REPLY}$R $D$age$R"
     pre="${repo:t}${branch:+ · ⎇ $branch}${words:+ · }"
-    _cut "$pre$words" $(( W - 4 ))
-    if (( ${#REPLY} > ${#pre} )); then l2="   $D$pre$R$color${REPLY:${#pre}}$R"; else l2="   $D$REPLY$R"; fi
+    _cut "$pre$words" $(( PW - 4 ))
+    if (( total > vis )); then
+      pad=$(( PW - 4 - ${#REPLY} )); (( pad < 0 )) && pad=0
+      if (( ${#REPLY} > ${#pre} )); then l2="   $D$pre$R$color${REPLY:${#pre}}${(l:pad:: :)}$R"
+      else l2="   $D${(r:PW - 4:)REPLY}$R"; fi
+      l0=$(( (idx - 1) * 2 )) l1i=$(( l0 + 1 ))
+      (( l0 >= ttop && l0 < ttop + th )) && b1="$C█$R" || b1="$D░$R"
+      (( l1i >= ttop && l1i < ttop + th )) && b2="$C█$R" || b2="$D░$R"
+      l1+=" $b1" l2+=" $b2"
+    else
+      if (( ${#REPLY} > ${#pre} )); then l2="   $D$pre$R$color${REPLY:${#pre}}$R"; else l2="   $D$REPLY$R"; fi
+    fi
     print -rn -- "+pr/$url"$'\t'"$l1"$'\n'"$l2"$'\0'
   done
+  if (( total > vis && pscroll + vis < total )); then
+    local rem=$(( total - pscroll - vis ))
+    print -rn -- "+pr:dn/"$'\t'" $C▼$R $D$rem more pull request${${rem:#1}:+s} · click or ] to scroll down$R"$'\0'
+  fi
 }
 
 # ---- panel internals ------------------------------------------------------------------------------------------------
@@ -653,6 +740,7 @@ _fname() { REPLY=${${1//\%/%25}//\//%2F} }
 # "kind<US>profile<US>session<US>text". NAME is _fname's (a / in it is %2F).
 # An unread session shows ✱ after its glyph, and the summary counts them; the one in the viewer is read already.
 list_rows() {
+  layout_load
   local -a names=( $(profiles) )
   if (( ! $#names )); then
     print -rn -- $'\t'"no profiles yet"$'\0'
@@ -662,15 +750,22 @@ list_rows() {
   zmodload zsh/datetime
   local tmp=$(mktemp -d) p snap=$EPOCHREALTIME  # what this refresh saw is as old as its start (_pos's are 0.8s apart)
   local -a down
-  for p in $names; do
-    # An offline machine is retried once a minute, so it never slows every refresh.
-    down=( $STATE/down-$p(Nms-60) )
-    if (( $#down )); then : >$tmp/$p.fail; continue; fi
-    ( if load $p && on "$EXP$LIST_SCRIPT" "$P_ONLY" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
-      else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
-  done
-  prs_refresh &
-  wait
+  if [[ -n $LZR1_CACHED ]]; then
+    for p in $names; do
+      if [[ -r $STATE/raw-$p && ! -e $STATE/down-$p ]]; then cp $STATE/raw-$p $tmp/$p.out
+      else : >$tmp/$p.fail; fi
+    done
+  else
+    for p in $names; do
+      # An offline machine is retried once a minute, so it never slows every refresh.
+      down=( $STATE/down-$p(Nms-60) )
+      if (( $#down )); then : >$tmp/$p.fail; continue; fi
+      ( if load $p && on "$EXP$LIST_SCRIPT" "$P_ONLY" >$tmp/$p.out 2>/dev/null; then rm -f $STATE/down-$p
+        else : >$tmp/$p.fail; : >$STATE/down-$p; fi ) &
+    done
+    prs_refresh &
+    wait
+  fi
   local W=$(( ${FZF_COLUMNS:-${COLUMNS:-56}} - 2 )); (( W < 40 )) && W=40
   local -a items got; local n=0 w=0 q=0 i=0 a=0 line kind glyph right l1 l2 l3 mk u pw cur hd fl
   local name st att age url model dir title branch changed waitfor detail
@@ -693,8 +788,8 @@ list_rows() {
   fi
   if [[ -n $1 ]]; then
     # One refresh at a time compares and writes; one that cannot get the lock in 2s skips tracking this time (the
-    # next refresh catches up).
-    if _seen_lock; then
+    # next refresh catches up). Fast cached layout redraws skip tracking.
+    if [[ -z $LZR1_CACHED ]] && _seen_lock; then
       track=1; setopt local_options local_traps
       trap '_seen_unlock; exit 143' TERM HUP INT; TRAPEXIT() { _seen_unlock }
     fi
@@ -703,15 +798,48 @@ list_rows() {
     [[ -e $STATE/$1.seeded ]] && seeded=1
     [[ -r $STATE/$1.target ]] && cur=$(<$STATE/$1.target)
   fi
+  # Count total sessions across online profiles to size the upper Sessions viewport & independent scrollbar.
+  local total_sess=0 online_profs=0 prof_lines=0 pgap pidx=0
+  for p in $names; do
+    [[ -e $tmp/$p.fail ]] && continue
+    (( online_profs++ ))
+    profile_gap $p $online_profs; pgap=$REPLY
+    (( prof_lines += 1 + pgap ))
+    got=( ${(f)"$(<$tmp/$p.out)"} )
+    (( total_sess += $#got ))
+  done
+  local smax=9999 sscroll=0 svis=$total_sess
+  if [[ -n $1 && $L_SESS_MAX -gt 0 ]]; then
+    smax=$L_SESS_MAX
+    (( total_sess > smax )) && svis=$smax
+    [[ -r $STATE/$1.sscroll ]] && sscroll=$(<$STATE/$1.sscroll)
+    [[ $sscroll == <-> ]] || sscroll=0
+    (( sscroll > total_sess - svis )) && sscroll=$(( total_sess - svis ))
+    (( sscroll < 0 )) && sscroll=0
+    print -rn -- $sscroll >$STATE/$1.sscroll
+  fi
+  local SW=$TW stlines=$(( svis * 3 )) smax_off=$(( total_sess - svis )) sth=0 sttop=0 vis_n=0 sl0 sb1 sb2 sb3
+  if (( total_sess > svis && svis > 0 )); then
+    SW=$(( TW - 2 ))
+    sth=$(( (svis * stlines + total_sess / 2) / total_sess )); (( sth < 2 )) && sth=2; (( sth >= stlines )) && sth=$(( stlines - 1 ))
+    sttop=$(( (sscroll * (stlines - sth) + smax_off / 2) / smax_off ))
+  fi
+  if (( total_sess > svis && sscroll > 0 )); then
+    items+=( "+sess:up/"$'\t'" $C▲$R $D$sscroll earlier session${${sscroll:#1}:+s} · click or [ to scroll up$R" )
+  fi
   for p in $names; do
     # A profile whose machine does not answer is left out until it does.
     [[ -e $tmp/$p.fail ]] && continue
+    (( pidx++ ))
     load $p 2>/dev/null; kind=$P_TYPE
     got=( ${(f)"$(<$tmp/$p.out)"} )
-    cp $tmp/$p.out $STATE/raw-$p  # the menu reads a session's details from here
-    hd=" $p $kind · online · $#got "
+    [[ -z $LZR1_CACHED ]] && cp $tmp/$p.out $STATE/raw-$p  # the menu reads a session's details from here
+    profile_gap $p $pidx; pgap=$REPLY
+    local pgnl=${(pl:pgap::\n:)} ginfo=
+    (( (pidx == 1 && pgap > 0) || (pidx > 1 && pgap != 1) )) && ginfo=" ↕${pgap}L"
+    hd=" ⠿ $p $kind · online · $#got$ginfo "
     fl=$(( W - ${#hd} - 1 )); (( fl < 0 )) && fl=0
-    items+=( "$p/"$'\t'" $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$R" )
+    items+=( "$p/"$'\t'"$pgnl $D⠿$R $B$p$R $D$kind · online · $#got ${(l:fl::─:)}$ginfo$R" )
     for line in $got; do
       IFS=$'\037' read -r name st att age url model dir title branch changed waitfor detail <<<"$line"
       (( n++ ))
@@ -752,22 +880,32 @@ list_rows() {
       fi
       if [[ -n $1 && $p/$name == "$cur" ]]; then rm -f $u
       elif [[ -n $1 && ( -e $u || -n $ak ) ]]; then mk="$B$Y✱$R "; (( a++ )); fi
+      if (( total_sess > svis && (n <= sscroll || n > sscroll + svis) )); then continue; fi
+      (( vis_n++ ))
       _ago $age; age=$REPLY
       right="${model:+$model · }$age"
-      pw=$(( TW - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
+      pw=$(( SW - 6 - ${#right} )); [[ -n $mk ]] && (( pw -= 2 ))
       _cut $name $pw; l1=" $glyph $mk${(r:pw:)REPLY} $C${model}$R${model:+$D · }$D$age$R $( (( att > 0 )) && print -n "$G●$R" || print -n ' ')"
-      if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( TW - 4 - mw )); l2="   $Y${(r:TW-4-mw:)REPLY}$R"
-      elif [[ -n $title ]]; then _cut $title $(( TW - 4 - mw )); l2="   $M${(r:TW-4-mw:)REPLY}$R"
-      else l2="   ${D}${(r:TW-4-mw:)${:-no task yet}}$R"; fi
+      if [[ -n $waitfor ]]; then _cut "⧗ $waitfor" $(( SW - 4 - mw )); l2="   $Y${(r:SW-4-mw:)REPLY}$R"
+      elif [[ -n $title ]]; then _cut $title $(( SW - 4 - mw )); l2="   $M${(r:SW-4-mw:)REPLY}$R"
+      else l2="   ${D}${(r:SW-4-mw:)${:-no task yet}}$R"; fi
       (( mw )) && l2+=" $PK_MC${(l:4:)PK_MOOD}$R"
       pkt=; pkw=0; [[ $pkm == text ]] && { pkt="#${(l:3::0:)pkn} $PK_DEX[$pkn]"; pkw=$(( ${#pkt} + 1 )) }
-      if [[ -n $branch ]]; then _cut "⎇ $branch${${changed:#0}:+ +$changed} · ${dir:t}" $(( TW - 4 - pkw ))
-      else _cut "${dir:t}" $(( TW - 4 - pkw )); fi
-      l3="   $D$REPLY$R"
-      [[ -n $pkt ]] && l3="   $D${(r:TW-4-pkw:)REPLY}$R $M$pkt$R"
+      if [[ -n $branch ]]; then _cut "⎇ $branch${${changed:#0}:+ +$changed} · ${dir:t}" $(( SW - 4 - pkw ))
+      else _cut "${dir:t}" $(( SW - 4 - pkw )); fi
+      if [[ -n $pkt ]]; then l3="   $D${(r:SW-4-pkw:)REPLY}$R $M$pkt$R"
+      elif (( total_sess > svis )); then l3="   $D${(r:SW-4:)REPLY}$R"
+      else l3="   $D$REPLY$R"; fi
       if [[ $pkm == sprite ]]; then
         _pk_art_lines $pkn $sleeping; ar=( "${reply[@]}" )
         l1="$ar[1] $l1" l2="$ar[2] $l2" l3="$ar[3] $l3"
+      fi
+      if (( total_sess > svis )); then
+        sl0=$(( (vis_n - 1) * 3 ))
+        (( sl0 >= sttop && sl0 < sttop + sth )) && sb1="$C█$R" || sb1="$D░$R"
+        (( sl0 + 1 >= sttop && sl0 + 1 < sttop + sth )) && sb2="$C█$R" || sb2="$D░$R"
+        (( sl0 + 2 >= sttop && sl0 + 2 < sttop + sth )) && sb3="$C█$R" || sb3="$D░$R"
+        l1+=" $sb1" l2+="  $sb2" l3+="  $sb3"
       fi
       items+=( "$p/$name"$'\t'"$l1"$'\n'"$l2"$'\n'"$l3" )
     done
@@ -777,6 +915,10 @@ list_rows() {
       for f in $STATE/(seen|unread|pokemon)/$p/*(N); do (( ${live[(Ie)${f:t}]} )) || rm -rf $f; done
     fi
   done
+  if (( total_sess > svis && sscroll + svis < total_sess )); then
+    local srem=$(( total_sess - sscroll - svis ))
+    items+=( "+sess:dn/"$'\t'" $C▼$R $D$srem more session${${srem:#1}:+s} · click or ] to scroll down$R" )
+  fi
   rm -rf $tmp
   if [[ -n $track ]]; then
     # Alerts go out before the new states are kept: a refresh killed in between repeats one, never loses it. The
@@ -795,8 +937,8 @@ list_rows() {
     _seen_unlock
   fi
   # The browser strip's snapshot, and the art it and the sprites need (cut in the background, off fzf's pipe).
-  [[ -n $web && -n $1 ]] && _pk_snapshot $pkrows
-  if (( $#needart )) && [[ $pkm == sprite || -n $web ]] && (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then
+  [[ -n $web && -n $1 && -z $LZR1_CACHED ]] && _pk_snapshot $pkrows
+  if [[ -z $LZR1_CACHED ]] && (( $#needart )) && [[ $pkm == sprite || -n $web ]] && (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )); then
     local -a pdet=(); local an
     if (( $+commands[setsid] )); then pdet=( setsid ); elif (( $+commands[perl] )); then pdet=( perl -e 'setpgrp; exec @ARGV' ); fi
     for an in ${(u)needart[1,3]}; do { $pdet $SELF _art $an </dev/null >/dev/null 2>&1 &! }; done
@@ -804,7 +946,7 @@ list_rows() {
   # ⇄ web was read above: one ps, no cleanup of a stale session file (_remote_live's job), RS local.
   print -rn -- $'\t'"$n sessions · $w▶ $q⧗ $i·${${a:#0}:+ · $a✱}$web"$'\0'
   (( $#items )) && print -rn -- ${(pj:\0:)items}$'\0'
-  pr_rows $W
+  pr_rows $W $1
 }
 
 # first_key ID SKIP...: the first session in the panel's last list, other than the SKIP keys, into REPLY
@@ -812,10 +954,32 @@ first_key() {
   local id=$1 it; shift; REPLY=
   for it in "${(@)${(@0)"$(<$STATE/$id.cache 2>/dev/null)"}[2,-1]}"; do
     it=${it%%$'\t'*}
-    [[ -z $it || $it == */ || $it == +pr/* || ${@[(Ie)$it]} -gt 0 ]] && continue
+    [[ -z $it || $it == */ || $it == +* || ${@[(Ie)$it]} -gt 0 ]] && continue
     REPLY=$it; return 0
   done
   return 1
+}
+
+# _fast_reload ID PORT [FOCUS_KEY]: redraw the panel from cached raw state in <15ms (used by live sash/profile/scroll actions)
+_fast_reload() {
+  local id=$1 port=$2 key=$3 out=$STATE/$1.rf.$$ i=0 line pos=
+  local cols=${FZF_COLUMNS:-${COLUMNS:-$PANEL_W}} lines=${FZF_LINES:-${LINES:-40}}
+  [[ -n $id && -n $port && $port != - ]] || return 0
+  LZR1_CACHED=1 FZF_COLUMNS=$cols FZF_LINES=$lines $SELF _list $id >$out 2>/dev/null
+  if [[ -s $out ]]; then
+    mv -f $out $STATE/$id.cache
+    if [[ -n $key ]]; then
+      local -a its=( "${(@0)$(<$STATE/$id.cache)}" )
+      for line in "${(@)its[2,-1]}"; do
+        [[ -n $line ]] || continue
+        (( i++ ))
+        [[ ${line%%$'\t'*} == $key ]] && { pos="+pos($i)"; break }
+      done
+    fi
+    curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "reload(cat ${(q)STATE}/$id.cache)$pos" >/dev/null 2>&1
+  else
+    rm -f $out
+  fi
 }
 
 # remote_last ID KEY: a browser's layout (open, LZR1_REMOTE) shows KEY: the remote's .last keeps it for a reconnect
@@ -1824,7 +1988,7 @@ _viewer)  # _viewer ID: attaches to whatever the panel picked, waits when nothin
 _select)  # _select ID KEY [force]: point the viewer at KEY (debounced, so arrowing through rows stays cheap)
   local id=$2 key=$3 tfile=$STATE/$2.target
   split_key $key
-  [[ -z $KP || -z $KS || $KP == +pr ]] && exit 0
+  [[ -z $KP || -z $KS || $KP == +* ]] && exit 0
   # A click on another row, enter or a new session brings back a viewer pane that was closed.
   if [[ $4 == force || $(<$tfile 2>/dev/null) != $key ]] && ! kill -0 $(<$STATE/$id.vpid 2>/dev/null) 2>/dev/null; then
     print -rn -- $key >$tfile; _fname $KS; rm -f $STATE/unread/$KP/$REPLY; remote_last $id $key
@@ -1866,7 +2030,7 @@ _ticker)  # _ticker ID PORT: show the first session in the viewer (a reconnectin
     [[ -r $STATE/$id.remote ]] && u=$(<$STATE/$id.remote) && [[ -r $RDIR/$u.last ]] && last=$(<$RDIR/$u.last)
     for i in {1..50}; do
       keys=( ${(f)"$(curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" "localhost:$port?limit=200" |
-        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | grep -v '^+pr/')"} )
+        grep -o '"text":"[^"]*' | sed 's/^"text":"//; s/\\t.*//' | grep -v '/$' | grep '/' | grep -v '^+')"} )
       if (( $#keys )); then
         if [[ -n $last && ${keys[(Ie)$last]} -gt 0 ]]; then $SELF _select $id $last; $SELF _pos $id $port $last &
         else $SELF _select $id $keys[1]; fi
@@ -1953,7 +2117,7 @@ _pkpreview)  # _pkpreview N: the picker's preview: Pokémon N's sprite, cut now 
 _pokemon)  # _pokemon ID KEY: choose the session's Pokémon from the 151: type a name or number, enter or click picks
   local id=$2 key=$3 pn i cur sel
   split_key $key
-  [[ -n $KP && -n $KS && $KP != +pr ]] || exit 0
+  [[ -n $KP && -n $KS && $KP != +* ]] || exit 0
   _fname $KS; pn=$STATE/pokemon/$KP/$REPLY
   [[ -r $pn ]] && cur=$(<$pn)
   [[ $cur == <1-151> ]] || cur=
@@ -2098,7 +2262,152 @@ _open_url)  # _open_url KEY: a session's Remote Control link, or a PR
 _go)  # _go ID KEY: enter and double-click; a session goes to the viewer with the keyboard, a PR opens in the browser
   split_key $3
   if [[ $KP == +pr ]]; then [[ -n $KS ]] && browse $KS
-  else $SELF _select $2 $3 force; $SELF _focus $2; fi
+  elif [[ $KP != +* && -n $KS ]]; then $SELF _select $2 $3 force; $SELF _focus $2; fi
+  ;;
+
+_enter)  # _enter ID KEY: enter and double-click transform; a profile/sash header opens its menu, a scroll row scrolls
+  case $3 in
+    +(pr|sess):(up|dn)/)
+      print -r -- "execute-silent($SELF _tap $2 {1} \$FZF_PORT)" ;;
+    */)
+      if [[ $(mode $2) == tmux && -s $STATE/$2.me ]]; then
+        print -r -- "execute($SELF _menu $2 {1})+execute-silent($SELF _unclick $2 $(<$STATE/$2.me))"
+      else
+        print -r -- "execute($SELF _menu $2 {1})+reload-sync($SELF _list $2)"
+      fi ;;
+    *)
+      print -r -- "execute-silent($SELF _go $2 {1})" ;;
+  esac
+  ;;
+
+_layout)  # _layout ID PORT ACTION [KEY]: Option A live section sash, scrollbar & profile order/gap adjustments
+  local id=$2 port=$3 act=$4 key=$5 cur i sw
+  local -a all
+  layout_load
+  split_key $key
+  case $act in
+    move-up)
+      if [[ $KP == +pr* ]]; then
+        (( L_PR_GAP > 0 )) && (( L_PR_GAP-- ))
+        (( L_PR_MAX < 15 )) && (( L_PR_MAX++ ))
+        layout_save; _fast_reload $id "$port" +pr/
+      elif [[ -n $KP && $KP != +* ]]; then
+        all=( $(profiles) ); L_ORDER=( $all )
+        i=${L_ORDER[(Ie)$KP]}
+        if (( i > 1 )); then
+          sw=$L_ORDER[i-1]; L_ORDER[i-1]=$KP; L_ORDER[i]=$sw
+          layout_save; _fast_reload $id "$port" "$key"
+        fi
+      fi ;;
+    move-down)
+      if [[ $KP == +pr* ]]; then
+        (( L_PR_GAP < 10 )) && (( L_PR_GAP++ ))
+        (( L_PR_MAX > 1 )) && (( L_PR_MAX-- ))
+        layout_save; _fast_reload $id "$port" +pr/
+      elif [[ -n $KP && $KP != +* ]]; then
+        all=( $(profiles) ); L_ORDER=( $all )
+        i=${L_ORDER[(Ie)$KP]}
+        if (( i > 0 && i < $#L_ORDER )); then
+          sw=$L_ORDER[i+1]; L_ORDER[i+1]=$KP; L_ORDER[i]=$sw
+          layout_save; _fast_reload $id "$port" "$key"
+        fi
+      fi ;;
+    gap-inc)
+      if [[ $KP == +pr* ]]; then
+        (( L_PR_MAX < 15 )) && (( L_PR_MAX++ ))
+        layout_save; _fast_reload $id "$port" "$key"
+      elif [[ -n $KP && $KP != +* ]]; then
+        all=( $(profiles) ); L_ORDER=( $all ); i=${L_ORDER[(Ie)$KP]}
+        profile_gap $KP $i; L_GAP[$KP]=$(( REPLY < 8 ? REPLY + 1 : 8 ))
+        layout_save; _fast_reload $id "$port" "$key"
+      fi ;;
+    gap-dec)
+      if [[ $KP == +pr* ]]; then
+        (( L_PR_MAX > 0 )) && (( L_PR_MAX-- ))
+        layout_save; _fast_reload $id "$port" "$key"
+      elif [[ -n $KP && $KP != +* ]]; then
+        all=( $(profiles) ); L_ORDER=( $all ); i=${L_ORDER[(Ie)$KP]}
+        profile_gap $KP $i; L_GAP[$KP]=$(( REPLY > 0 ? REPLY - 1 : 0 ))
+        layout_save; _fast_reload $id "$port" "$key"
+      fi ;;
+    pr-toggle)
+      if (( L_PR_MAX == 0 )); then L_PR_MAX=4; else L_PR_MAX=0; fi
+      layout_save; _fast_reload $id "$port" +pr/ ;;
+    scroll-up)
+      if [[ $KP == +pr* ]] || (( L_SESS_MAX == 0 )); then
+        cur=0; [[ -r $STATE/$id.pscroll ]] && cur=$(<$STATE/$id.pscroll)
+        [[ $cur == <-> ]] || cur=0
+        (( cur > 0 )) && print -rn -- $(( cur - 1 )) >$STATE/$id.pscroll
+      else
+        cur=0; [[ -r $STATE/$id.sscroll ]] && cur=$(<$STATE/$id.sscroll)
+        [[ $cur == <-> ]] || cur=0
+        (( cur > 0 )) && print -rn -- $(( cur - 1 )) >$STATE/$id.sscroll
+      fi
+      _fast_reload $id "$port" ;;
+    scroll-down)
+      if [[ $KP == +pr* ]] || (( L_SESS_MAX == 0 )); then
+        cur=0; [[ -r $STATE/$id.pscroll ]] && cur=$(<$STATE/$id.pscroll)
+        [[ $cur == <-> ]] || cur=0
+        print -rn -- $(( cur + 1 )) >$STATE/$id.pscroll
+      else
+        cur=0; [[ -r $STATE/$id.sscroll ]] && cur=$(<$STATE/$id.sscroll)
+        [[ $cur == <-> ]] || cur=0
+        print -rn -- $(( cur + 1 )) >$STATE/$id.sscroll
+      fi
+      _fast_reload $id "$port" ;;
+  esac
+  ;;
+
+_lmenu)  # _lmenu ID [KEY]: interactive Option A sidebar layout & spacing organizer
+  local id=$2 key=$3 D=$'\e[90m' C=$'\e[36m' G=$'\e[32m' R=$'\e[0m' pick act p i g sc
+  local -a acts all
+  while true; do
+    layout_load
+    all=( $(profiles) ); L_ORDER=( $all )
+    sc="auto-fit"; (( L_SESS_MAX > 0 )) && sc="${L_SESS_MAX} rows"
+    acts=(
+      "prdn"$'\t'"$C↓$R move pull requests down   ${D}(gap ${L_PR_GAP}L, max ${L_PR_MAX} PRs · Alt-↓)$R"
+      "prup"$'\t'"$C↑$R move pull requests up     ${D}(gap ${L_PR_GAP}L, max ${L_PR_MAX} PRs · Alt-↑)$R"
+      "prless"$'\t'"$C-$R fewer visible PR rows     ${D}(now ${L_PR_MAX} · adds scrollbar · -)$R"
+      "prmore"$'\t'"$C+$R more visible PR rows      ${D}(now ${L_PR_MAX} · +)$R"
+      "prtoggle"$'\t'"⊟ $( (( L_PR_MAX == 0 )) && print -n 'expand' || print -n 'collapse' ) pull requests"
+      "sesscap"$'\t'"↕ max visible sessions: $sc ${D}(cycle auto / 3 / 5 / 8)$R"
+    )
+    for (( i = 1; i <= $#all; i++ )); do
+      p=$all[i]; profile_gap $p $i; g=$REPLY
+      (( i > 1 )) && acts+=( "pup:$p"$'\t'"$G↑$R move profile $p up       ${D}(#${i} in sidebar)$R" )
+      (( i < $#all )) && acts+=( "pdn:$p"$'\t'"$G↓$R move profile $p down     ${D}(#${i} in sidebar)$R" )
+      acts+=(
+        "pginc:$p"$'\t'"+ more space above $p      ${D}(now ${g}L)$R"
+        "pgdec:$p"$'\t'"- less space above $p      ${D}(now ${g}L)$R"
+      )
+    done
+    acts+=(
+      "reset"$'\t'"↺ reset layout & spacing to defaults"
+      "done"$'\t'"${D}✓ done$R"
+    )
+    pick=$(print -rl -- $acts | fzf --ansi --layout=reverse --no-input --no-sort --delimiter=$'\t' --with-nth=2 \
+      --info=hidden --gutter=' ' --pointer='▌' --highlight-line --color='header:bold,pointer:yellow,current-fg:bold' \
+      --header=" sidebar layout · PR gap:${L_PR_GAP}L max:${L_PR_MAX} · sessions:$sc" --header-border=bottom \
+      --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || break
+    act=${pick%%$'\t'*}
+    case $act in
+      prdn)     $SELF _layout $id - move-down +pr/ ;;
+      prup)     $SELF _layout $id - move-up +pr/ ;;
+      prless)   $SELF _layout $id - gap-dec +pr/ ;;
+      prmore)   $SELF _layout $id - gap-inc +pr/ ;;
+      prtoggle) $SELF _layout $id - pr-toggle +pr/ ;;
+      sesscap)
+        case $L_SESS_MAX in 0) L_SESS_MAX=3 ;; 3) L_SESS_MAX=5 ;; 5) L_SESS_MAX=8 ;; *) L_SESS_MAX=0 ;; esac
+        : >$STATE/$id.sscroll; layout_save ;;
+      pup:*)    $SELF _layout $id - move-up "${act#pup:}/" ;;
+      pdn:*)    $SELF _layout $id - move-down "${act#pdn:}/" ;;
+      pginc:*)  $SELF _layout $id - gap-inc "${act#pginc:}/" ;;
+      pgdec:*)  $SELF _layout $id - gap-dec "${act#pgdec:}/" ;;
+      reset)    rm -f $LAYOUT $STATE/$id.pscroll $STATE/$id.sscroll ;;
+      done|*)   break ;;
+    esac
+  done
   ;;
 
 _footer)  # _footer ID: fzf's action for a click on the footer (" [≡ menu]  [↻] "). The row's key stays a {1}
@@ -2150,6 +2459,7 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     $'sonnet\t+ new Sonnet session        (s)'
     $'agy\t+ new Agy session           (a)'
     $'opencode\t+ new opencode session      (c)'
+    $'layout\t⇅ layout: sections & gaps   (l)'
     $'refresh\t↻ refresh list now          (r)'
     $'web\t⇄ remote panel in browser   (w)'
   )
@@ -2167,6 +2477,7 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
   act=${pick%%$'\t'*}
   case $act in
     opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
+    layout)  $SELF _lmenu $id $key ;;
     refresh) $SELF _refresh $id $FZF_PORT 0.25 ;;
     web)     $SELF _web $id ;;
     full)    $SELF _full $id ;;
@@ -2176,15 +2487,21 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
   esac
   ;;
 
-_tap)  # _tap ID KEY: a left click on a row; in the narrow layout a session's row shows it, as enter does
+_tap)  # _tap ID KEY [PORT]: a left click on a row; a scroll row scrolls its section, and in the narrow layout a session shows
+  case $3 in
+    +pr:up/)   $SELF _layout $2 $4 scroll-up +pr/; exit 0 ;;
+    +pr:dn/)   $SELF _layout $2 $4 scroll-down +pr/; exit 0 ;;
+    +sess:up/) $SELF _layout $2 $4 scroll-up sess; exit 0 ;;
+    +sess:dn/) $SELF _layout $2 $4 scroll-down sess; exit 0 ;;
+  esac
   [[ -e $STATE/$2.narrow ]] || exit 0
-  case $3 in +pr/*|*/) ;; */?*) $SELF _go $2 $3 ;; esac
+  case $3 in +*/*|*/) ;; */?*) $SELF _go $2 $3 ;; esac
   ;;
 
 _kill)  # _kill KEY [ID]: end the session (Claude and its tmux session); with ID, the panel and the viewer then move
        # to the first session left
   local id=$3 next= it
-  split_key $2; [[ -n $KS && $KP != +pr ]] || exit 0
+  split_key $2; [[ -n $KS && $KP != +* ]] || exit 0
   print -rn -- "End ${(qq)KS} on $KP? Claude stops and its tmux session closes. [y/N] "
   read -q || { print; exit 0 }
   print
@@ -2196,7 +2513,7 @@ _kill)  # _kill KEY [ID]: end the session (Claude and its tmux session); with ID
   ;;
 
 _tab)  # _tab ID KEY: the session in a new Ghostty tab (in the tmux layout: switch the viewer to it)
-  split_key $3; [[ -n $KS && $KP != +pr ]] || exit 0
+  split_key $3; [[ -n $KS && $KP != +* ]] || exit 0
   if [[ $(mode $2) == ghostty ]]; then
     ghostty "set cfg to new surface configuration
       set command of cfg to \"$SELF _attach ${(q)3}\"
@@ -2229,14 +2546,42 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
     [[ $checks == SUCCESS && $draft != true && $review != (CHANGES_REQUESTED|REVIEW_REQUIRED) ]] &&
       acts+=( "merge"$'\t'"${E}merge it (squash)…$R" )
     acts+=( "close"$'\t'"${E}close it…$R" )
-  elif [[ $KP == +pr ]]; then
-    head="pull requests"
-    acts=( $'all\topen all your pull requests on GitHub' $'refresh\trefresh the list now' )
+  elif [[ $KP == +pr* ]]; then
+    layout_load
+    head="pull requests · gap ${L_PR_GAP}L · max ${L_PR_MAX}"
+    acts=(
+      $'prdn\t↓ move pull requests section down   (Alt-↓)'
+      $'prup\t↑ move pull requests section up     (Alt-↑)'
+      $'prless\t- fewer visible PR rows (scrollbar) (-)'
+      $'prmore\t+ more visible PR rows              (+)'
+      $'scrolldn\t▼ scroll pull requests down         (])'
+      $'scrollup\t▲ scroll pull requests up           ([)'
+      $'prtoggle\t⊟ collapse / expand pull requests'
+      $'layout\t⇅ full sidebar layout & spacing     (l)'
+      $'all\topen all your pull requests on GitHub'
+      $'refresh\trefresh the list now'
+    )
   elif [[ -z $KS ]]; then
     [[ -e $PROFILES/$KP.conf ]] || exit 0
-    head=$KP
-    acts=( $'opus\tnew Opus session here' $'sonnet\tnew Sonnet session here' $'agy\tnew Agy session here'
-           $'opencode\tnew opencode session here' $'test\ttest this machine' $'edit\tedit this profile…' "remove"$'\t'"${E}remove this profile…$R" $'reload\trefresh' )
+    layout_load
+    local -a pall=( $(profiles) )
+    profile_gap $KP ${pall[(Ie)$KP]}
+    head="$KP · space above: ${REPLY}L"
+    acts=(
+      $'pup\t↑ move profile up in sidebar        (Alt-↑)'
+      $'pdn\t↓ move profile down in sidebar      (Alt-↓)'
+      $'pginc\t+ add space above this profile      (+)'
+      $'pgdec\t- reduce space above this profile   (-)'
+      $'layout\t⇅ full sidebar layout & spacing     (l)'
+      $'opus\t+ new Opus session here'
+      $'sonnet\t+ new Sonnet session here'
+      $'agy\t+ new Agy session here'
+      $'opencode\t+ new opencode session here'
+      $'test\ttest this machine'
+      $'edit\tedit this profile…'
+      "remove"$'\t'"${E}remove this profile…$R"
+      $'reload\trefresh'
+    )
   else
     load $KP || exit 0
     for line in ${(f)"$(<$STATE/raw-$KP)"}; do
@@ -2295,6 +2640,18 @@ gh pr checks $num, fix it and push." ;;
            read -q && { print; gh_do "merging #$num" gh pr merge $num --repo $repo --squash } ;;
     close) print -rn -- "Close #$num of $repo without merging? [y/N] "
            read -q && { print; gh_do "closing #$num" gh pr close $num --repo $repo } ;;
+    prdn)     $SELF _layout $id - move-down +pr/ ;;
+    prup)     $SELF _layout $id - move-up +pr/ ;;
+    prless)   $SELF _layout $id - gap-dec +pr/ ;;
+    prmore)   $SELF _layout $id - gap-inc +pr/ ;;
+    scrolldn) $SELF _layout $id - scroll-down +pr/ ;;
+    scrollup) $SELF _layout $id - scroll-up +pr/ ;;
+    prtoggle) $SELF _layout $id - pr-toggle +pr/ ;;
+    pup)      $SELF _layout $id - move-up $key ;;
+    pdn)      $SELF _layout $id - move-down $key ;;
+    pginc)    $SELF _layout $id - gap-inc $key ;;
+    pgdec)    $SELF _layout $id - gap-dec $key ;;
+    layout)   $SELF _lmenu $id $key ;;
     all)   browse https://github.com/pulls ;;
     refresh) rm -f $STATE/prs ;;
     opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
@@ -2426,8 +2783,10 @@ _panel)  # _panel ID
   # highlight (_tap decides). A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise
   # makes. A row's key ({1}) only ever reaches a command as one argument fzf quotes, never text a shell evaluates: a
   # session's name can hold "$(...)".
+  local lmenu="execute($S _lmenu $id {1})+reload-sync($S _list $id)"
+  [[ $(mode $id) == tmux ]] && lmenu="execute($S _lmenu $id {1})+execute-silent($S _unclick $id $me)"
   local -a narrow=()
-  [[ $button != left-click ]] && narrow=( --bind "left-click:execute-silent($S _tap $id {1})" )
+  [[ $button != left-click ]] && narrow=( --bind "left-click:execute-silent($S _tap $id {1} \$FZF_PORT)" )
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
@@ -2440,9 +2799,19 @@ _panel)  # _panel ID
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
     --bind "focus:execute-silent($S _select $id {1} &)" \
-    --bind "enter:execute-silent($S _go $id {1})" \
-    --bind "double-click:execute-silent($S _go $id {1})" \
+    --bind "enter:transform:$S _enter $id {1}" \
+    --bind "double-click:transform:$S _enter $id {1}" \
     --bind "$button:$menu" --bind "m:$menu" \
+    --bind "l:$lmenu" \
+    --bind "alt-up:execute-silent($S _layout $id \$FZF_PORT move-up {1})" \
+    --bind "shift-up:execute-silent($S _layout $id \$FZF_PORT move-up {1})" \
+    --bind "alt-down:execute-silent($S _layout $id \$FZF_PORT move-down {1})" \
+    --bind "shift-down:execute-silent($S _layout $id \$FZF_PORT move-down {1})" \
+    --bind "+:execute-silent($S _layout $id \$FZF_PORT gap-inc {1})" \
+    --bind "=:execute-silent($S _layout $id \$FZF_PORT gap-inc {1})" \
+    --bind "-:execute-silent($S _layout $id \$FZF_PORT gap-dec {1})" \
+    --bind "[:execute-silent($S _layout $id \$FZF_PORT scroll-up {1})" \
+    --bind "]:execute-silent($S _layout $id \$FZF_PORT scroll-down {1})" \
     --bind "t:execute-silent($S _tab $id {1})" \
     --bind "o:execute-silent($S _open_url {1})" \
     --bind "p:execute($S _pokemon $id {1})+reload-sync($S _list $id)" \
@@ -2490,7 +2859,11 @@ keys)
   click / ↑ ↓      show that session in the viewer
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
-  [≡ menu]         the footer menu: new sessions, refresh, web, full, theme, keys, quit
+  [≡ menu]         the footer menu: new sessions, layout, refresh, web, theme, quit
+  l                sidebar layout: move pull requests section, reorder profiles & gaps
+  Alt-↑ / Alt-↓    move highlighted profile or pull requests section up / down
+  + / -            add / reduce space above profile, or grow / shrink pull requests height
+  [ / ]            scroll overflowing sessions or pull requests scrollbar (█/░) up / down
   r  or [↻]        refresh now with live progress (it also refreshes every 15s)
   n                new Opus session on the highlighted row's profile
   s                new Sonnet session (a repository name opens in its folder)

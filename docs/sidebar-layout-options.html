@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lzr1-panel — Interactive Sidebar Layout & Drag Templates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root, [data-theme="light"] {
+    --alf-yellow: #F5C518; --alf-ink: #1C1B18; --alf-body: #3A3832;
+    --alf-muted: #7A756B; --alf-faint: #B0AA9E;
+    --alf-bg: #FAF8F3; --alf-surface: #FFFFFF; --alf-warm: #F4EFE4;
+    --alf-border: #E6E1D6; --alf-border-strong: #CFC8B8;
+    --alf-green: #1F7A4C; --alf-green-bg: #E8F4ED;
+    --alf-amber: #B86B11; --alf-amber-bg: #FBF0DF;
+    --alf-red: #B4342A; --alf-red-bg: #FCEAE8;
+    --alf-blue: #1E5A8A; --alf-blue-bg: #E7F0F7;
+  }
+  [data-theme="dark"] {
+    --alf-ink: #F2EFE8; --alf-body: #D0CBC0;
+    --alf-muted: #928C80; --alf-faint: #5E5A52;
+    --alf-bg: #12110F; --alf-surface: #1B1A17; --alf-warm: #24221D;
+    --alf-border: #2C2A24; --alf-border-strong: #423E36;
+    --alf-green: #4CC38A; --alf-green-bg: #14291F;
+    --alf-amber: #F5A524; --alf-amber-bg: #2B2011;
+    --alf-red: #F2645A; --alf-red-bg: #2C1614;
+    --alf-blue: #5EA8E6; --alf-blue-bg: #142230;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--alf-bg); color: var(--alf-body);
+    font: 15px/1.6 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 28px 32px 64px; }
+  header.brand {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 18px; border-bottom: 1px solid var(--alf-border); margin-bottom: 24px;
+  }
+  .brand-left { display: flex; align-items: center; gap: 12px; }
+  .brand-title { font: 600 18px/1.2 'IBM Plex Serif', Georgia, serif; color: var(--alf-ink); }
+  .brand-sub { font: 12px/1 'IBM Plex Mono', monospace; color: var(--alf-muted); }
+  .theme-btn {
+    background: var(--alf-surface); color: var(--alf-ink);
+    border: 1px solid var(--alf-border-strong); border-radius: 6px;
+    padding: 6px 12px; font: 500 12px 'IBM Plex Mono', monospace; cursor: pointer;
+  }
+  h1 { font: 600 26px/1.25 'IBM Plex Serif', Georgia, serif; color: var(--alf-ink); margin: 0 0 8px; }
+  h2 { font: 600 18px/1.3 'IBM Plex Serif', Georgia, serif; color: var(--alf-ink); margin: 0; }
+  .lead { color: var(--alf-muted); margin: 0 0 22px; max-width: 92ch; }
+
+  /* Global sandbox toolbar */
+  .toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+    background: var(--alf-surface); border: 1px solid var(--alf-border);
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 28px;
+  }
+  .toolbar-group {
+    display: flex; align-items: center; gap: 8px;
+    font: 500 12px 'IBM Plex Mono', monospace; color: var(--alf-muted);
+  }
+  .toolbar-group strong { color: var(--alf-ink); }
+  .pill-btn {
+    background: var(--alf-warm); color: var(--alf-ink);
+    border: 1px solid var(--alf-border-strong); border-radius: 6px;
+    padding: 5px 10px; font: 500 11.5px 'IBM Plex Mono', monospace;
+    cursor: pointer; transition: all 0.12s ease;
+  }
+  .pill-btn:hover { border-color: var(--alf-yellow); color: var(--alf-yellow); }
+  .pill-btn.active { background: var(--alf-yellow); color: #12110F; border-color: var(--alf-yellow); font-weight: 600; }
+
+  /* Grid of templates */
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(560px, 1fr));
+    gap: 28px; align-items: start;
+  }
+  .card {
+    background: var(--alf-surface); border: 1px solid var(--alf-border);
+    border-radius: 10px; padding: 18px 20px 22px;
+  }
+  .card-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 6px;
+  }
+  .badge {
+    font: 600 11px/1 'IBM Plex Mono', monospace; letter-spacing: .04em;
+    padding: 4px 8px; border-radius: 4px; text-transform: uppercase;
+    background: var(--alf-warm); color: var(--alf-ink); border: 1px solid var(--alf-border-strong);
+  }
+  .badge.pick { background: var(--alf-yellow); color: #1C1B18; border-color: var(--alf-yellow); }
+  .desc { color: var(--alf-muted); font-size: 13.5px; margin: 0 0 12px; }
+  .hint-bar {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+    font: 11.5px/1.3 'IBM Plex Mono', monospace;
+  }
+  .hint-chip {
+    background: var(--alf-warm); color: var(--alf-body);
+    border: 1px solid var(--alf-border); border-radius: 4px;
+    padding: 3px 8px;
+  }
+  .hint-chip b { color: var(--alf-yellow); font-weight: 600; }
+
+  /* Terminal frame */
+  .frame {
+    background: #14161b; color: #d8dee9;
+    border-radius: 8px; border: 1px solid #2b303c;
+    font: 12px/1.38 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    overflow: hidden; box-shadow: 0 10px 28px rgba(0,0,0,.34);
+    display: grid; grid-template-columns: 355px 1fr;
+    height: 490px; user-select: none;
+  }
+  .side {
+    background: #171a21; border-right: 1px solid #2e3440;
+    display: flex; flex-direction: column; height: 100%; overflow: hidden;
+    position: relative;
+  }
+  .view {
+    background: #111318; padding: 14px 16px; color: #9aa5b4;
+    display: flex; flex-direction: column; justify-content: space-between;
+    overflow: hidden;
+  }
+
+  /* Terminal colors */
+  .c-dim    { color: #636d83; }
+  .c-faint  { color: #434c5e; }
+  .c-ink    { color: #eceff4; font-weight: 600; }
+  .c-cyan   { color: #88c0d0; }
+  .c-blue   { color: #81a1c1; }
+  .c-green  { color: #a3be8c; }
+  .c-amber  { color: #ebcb8b; }
+  .c-red    { color: #bf616a; }
+  .c-purple { color: #b48ead; }
+
+  .t-top {
+    padding: 7px 10px 6px; border-bottom: 1px solid #262b36;
+    font-size: 11px; color: #7c869c; display: flex; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .t-foot {
+    padding: 6px 10px; border-top: 1px solid #262b36;
+    background: #13161c; color: #7c869c; font-size: 11px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+  }
+  .t-foot .f-btns span {
+    background: #222733; color: #d8dee9; padding: 1px 6px; border-radius: 3px;
+    margin-right: 6px; cursor: pointer; border: 1px solid #323949;
+  }
+  .t-foot .f-btns span:hover { border-color: #88c0d0; color: #88c0d0; }
+
+  /* Scrollable panes with terminal-style & modern scrollbar */
+  .scroll-zone {
+    overflow-y: auto; overflow-x: hidden;
+    position: relative; padding-right: 12px;
+    scrollbar-width: thin; scrollbar-color: #88c0d0 #1d212a;
+  }
+  .scroll-zone::-webkit-scrollbar { width: 8px; }
+  .scroll-zone::-webkit-scrollbar-track {
+    background: #1a1e26; border-left: 1px solid #262b36;
+  }
+  .scroll-zone::-webkit-scrollbar-thumb {
+    background: #4c566a; border-radius: 2px;
+  }
+  .scroll-zone::-webkit-scrollbar-thumb:hover {
+    background: #88c0d0;
+  }
+
+  /* Terminal ASCII scrollbar overlay on the right edge of a zone */
+  .term-sbar {
+    position: absolute; top: 0; right: 1px; bottom: 0; width: 9px;
+    pointer-events: none; display: flex; flex-direction: column;
+    font-size: 10px; line-height: 1; color: #3b4252;
+    align-items: center; justify-content: flex-start;
+  }
+
+  /* Profile group container (draggable) */
+  .prof-group {
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    border-radius: 4px; position: relative;
+  }
+  .prof-group.dragging {
+    opacity: 0.55; background: #232834; outline: 1px dashed #88c0d0;
+  }
+  .prof-group.drag-over-top {
+    box-shadow: inset 0 2px 0 0 #F5C518;
+  }
+  .prof-group.drag-over-bottom {
+    box-shadow: inset 0 -2px 0 0 #F5C518;
+  }
+
+  /* Gap / spacer bar above profile or section */
+  .gap-handle {
+    height: var(--gap-px, 10px);
+    min-height: 4px; max-height: 90px;
+    position: relative; cursor: ns-resize;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.12s ease;
+  }
+  .gap-handle:hover, .gap-handle.resizing {
+    background: rgba(136, 192, 208, 0.10);
+  }
+  .gap-pill {
+    opacity: 0; font-size: 9.5px; color: #88c0d0;
+    background: #1d222d; border: 1px solid #3b4252;
+    border-radius: 3px; padding: 0 5px; line-height: 14px;
+    pointer-events: none; transition: opacity 0.12s ease;
+  }
+  .gap-handle:hover .gap-pill, .gap-handle.resizing .gap-pill {
+    opacity: 1;
+  }
+
+  /* Profile header row */
+  .prof-hdr {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 6px 2px 6px; font-size: 11px;
+    cursor: grab; border-radius: 3px;
+  }
+  .prof-hdr:active { cursor: grabbing; }
+  .prof-hdr:hover { background: #202531; }
+  .drag-grip {
+    color: #596377; font-size: 12px; cursor: grab;
+    padding: 0 2px; transition: color 0.12s;
+  }
+  .prof-hdr:hover .drag-grip { color: #F5C518; }
+  .prof-rule {
+    flex: 1; height: 1px; background: #2b313f; margin-left: 4px;
+  }
+  .gap-btn {
+    font-size: 10px; color: #6e788f; background: #1e232e;
+    border: 1px solid #2e3444; border-radius: 3px;
+    padding: 0 4px; cursor: pointer; line-height: 14px;
+  }
+  .gap-btn:hover { color: #ebcb8b; border-color: #ebcb8b; }
+
+  /* Session row */
+  .sess-row {
+    padding: 3px 6px 4px 10px; border-left: 2px solid transparent;
+    cursor: pointer; transition: background 0.08s;
+  }
+  .sess-row:hover { background: #1e232d; }
+  .sess-row.sel {
+    background: #232936; border-left-color: #88c0d0;
+  }
+  .sess-line1 {
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .sess-line2 {
+    padding-left: 14px; font-size: 11px; color: #7c869c;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sess-line3 {
+    padding-left: 14px; font-size: 10.5px; color: #566074;
+  }
+
+  /* Draggable Section Sash / Splitter (Pull Requests height) */
+  .section-sash {
+    background: #1d212b; border-top: 1px solid #2e3545; border-bottom: 1px solid #2e3545;
+    padding: 4px 8px; cursor: ns-resize;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; flex-shrink: 0; position: relative;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .section-sash:hover, .section-sash.dragging {
+    background: #252b38; border-color: #88c0d0;
+  }
+  .sash-grip {
+    color: #88c0d0; font-size: 11px; letter-spacing: 1px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .sash-meta {
+    font-size: 10px; color: #7c869c; display: flex; align-items: center; gap: 6px;
+  }
+  .sash-tag {
+    background: #14171f; border: 1px solid #323a4c; color: #ebcb8b;
+    padding: 0 5px; border-radius: 3px; font-size: 10px;
+  }
+
+  /* PR item */
+  .pr-item {
+    padding: 4px 8px 5px 10px; border-bottom: 1px solid #1e222b;
+    cursor: pointer;
+  }
+  .pr-item:hover { background: #1e232d; }
+  .pr-line1 {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11.5px;
+  }
+  .pr-line2 {
+    padding-left: 16px; font-size: 10.5px; color: #6e788f;
+    display: flex; justify-content: space-between;
+  }
+
+  /* Right viewer telemetry box */
+  .telemetry {
+    background: #171a22; border: 1px solid #282e3b; border-radius: 6px;
+    padding: 10px 12px; font-size: 11px; color: #abb2bf;
+  }
+  .telemetry-title {
+    color: #F5C518; font-weight: 600; margin-bottom: 6px;
+    display: flex; justify-content: space-between;
+  }
+  .telemetry pre {
+    margin: 0; font: 11px/1.4 'IBM Plex Mono', monospace; color: #88c0d0;
+    white-space: pre-wrap;
+  }
+
+  /* Template B specific: Unified Free-Order Card Stack */
+  .stack-block {
+    border: 1px solid #282e3d; border-radius: 5px;
+    margin: 0 6px; background: #191d26; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .stack-block.dragging {
+    opacity: 0.5; border-color: #F5C518;
+  }
+  .stack-hdr {
+    background: #202531; padding: 4px 7px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; cursor: grab; border-bottom: 1px solid #282e3d;
+  }
+  .stack-body {
+    overflow-y: auto; scrollbar-width: thin; scrollbar-color: #88c0d0 #161920;
+  }
+  .stack-resizer {
+    height: 7px; background: #151820; border-top: 1px solid #262c3a;
+    cursor: ns-resize; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #5c667a;
+  }
+  .stack-resizer:hover { background: #232a38; color: #88c0d0; }
+
+  /* Template D specific: Pure Terminal ASCII Scrollbar & Gap Ruler */
+  .ascii-row {
+    display: flex; align-items: stretch; justify-content: space-between;
+  }
+  .ascii-cell-main { flex: 1; overflow: hidden; }
+  .ascii-cell-bar {
+    width: 12px; text-align: center; color: #4c566a;
+    font-size: 11px; user-select: none; cursor: pointer;
+  }
+  .ascii-cell-bar.thumb { color: #88c0d0; font-weight: 600; }
+
+  /* Comparison table */
+  table.cmp {
+    width: 100%; border-collapse: collapse; margin-top: 32px;
+    background: var(--alf-surface); border: 1px solid var(--alf-border);
+    border-radius: 8px; overflow: hidden; font-size: 13.5px;
+  }
+  table.cmp th, table.cmp td {
+    text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--alf-border);
+  }
+  table.cmp th {
+    background: var(--alf-warm); color: var(--alf-ink);
+    font: 600 12px 'IBM Plex Mono', monospace; text-transform: uppercase;
+  }
+  footer.gen {
+    margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--alf-border);
+    display: flex; justify-content: space-between; color: var(--alf-muted);
+    font: 12px 'IBM Plex Mono', monospace;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand">
+    <div class="brand-left">
+      <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="6" fill="#F5C518"/>
+        <path d="M9 8h4v12h10v4H9V8z" fill="#1C1B18"/>
+      </svg>
+      <div>
+        <div class="brand-title">lzr1-panel — Interactive Sidebar Layout &amp; Drag Templates</div>
+        <div class="brand-sub">Draggable section heights · Per-section scrollbars · Reorderable profiles &amp; spacing</div>
+      </div>
+    </div>
+    <button class="theme-btn" onclick="toggleTheme()">Toggle theme</button>
+  </header>
+
+  <h1>Try Dragging Sections, Profiles &amp; Spacing Directly Below</h1>
+  <p class="lead">
+    All four templates below are <strong>live, interactive sandboxes</strong>. Drag the <strong>Pull Requests divider (`═══ ↕ ═══`)</strong> up or down to resize sections and watch the <strong>scrollbar</strong> appear automatically when rows overflow; drag any <strong>profile header (`⠿`)</strong> to reorder profiles; and drag the <strong>gap bars (`↕ gap`)</strong> between profiles to give them more or less breathing room.
+  </p>
+
+  <!-- Global controls to test overflow & spacing -->
+  <div class="toolbar">
+    <div class="toolbar-group">
+      <strong>Test Data Density:</strong>
+      <button class="pill-btn" onclick="setDensity('compact', this)">Compact (4 sessions · 3 PRs)</button>
+      <button class="pill-btn active" onclick="setDensity('normal', this)">Normal (7 sessions · 5 PRs)</button>
+      <button class="pill-btn" onclick="setDensity('heavy', this)">Overflow Stress Test (12 sessions · 9 PRs)</button>
+    </div>
+    <div class="toolbar-group" style="margin-left:auto;">
+      <strong>Quick Reset:</strong>
+      <button class="pill-btn" onclick="resetAll()">Reset Positions &amp; Gaps</button>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- ================================================================================= -->
+    <!-- TEMPLATE A: Split-Pane Sash + Independent Scrollbars + Reorderable Profiles       -->
+    <!-- ================================================================================= -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Option A — Split-Pane Sash + Independent Scrollbars</h2>
+        <span class="badge pick">Recommended</span>
+      </div>
+      <p class="desc">
+        <strong>1.</strong> Drag the <code>═══ ↕ pull requests ═══</code> sash up or down to position the PR section at any height (or push it way down). Both the upper Sessions zone and lower Pull Requests zone get their own independent <strong>vertical scrollbar</strong> whenever their rows don't all fit.<br>
+        <strong>2.</strong> Drag any profile by its <code>⠿</code> grip to reorder profiles, and drag the spacer bar between profiles (or click <code>+gap</code>/<code>-gap</code>) to add breathing room.
+      </p>
+      <div class="hint-bar">
+        <span class="hint-chip"><b>Drag ↕</b> PR divider bar</span>
+        <span class="hint-chip"><b>Drag ⠿</b> Profile headers to reorder</span>
+        <span class="hint-chip"><b>Drag ↕</b> Spacer between profiles</span>
+        <span class="hint-chip"><b>Wheel</b> Scroll either list</span>
+      </div>
+
+      <div class="frame" id="frame-a">
+        <div class="side">
+          <div class="t-top">
+            <span id="a-top-stat">7 sessions · 2▶ 1⏳ 4·</span>
+            <span class="c-cyan">lzr1</span>
+          </div>
+
+          <!-- Upper scrollable zone: Profiles & Sessions -->
+          <div class="scroll-zone" id="a-sess-zone" style="flex: 1 1 auto; min-height: 90px;">
+            <div id="a-prof-list"></div>
+          </div>
+
+          <!-- Draggable Sash for Pull Requests -->
+          <div class="section-sash" id="a-sash" title="Drag up or down to move Pull Requests section">
+            <span class="sash-grip">⠿ ↕ <strong class="c-ink">pull requests</strong> <span class="c-dim">gh</span></span>
+            <span class="sash-meta">
+              <span class="sash-tag" id="a-pr-vis-tag">h: 145px</span>
+              <span class="c-cyan" id="a-pr-count">5</span>
+            </span>
+          </div>
+
+          <!-- Lower scrollable zone: Pull Requests -->
+          <div class="scroll-zone" id="a-pr-zone" style="height: 145px; flex-shrink: 0;">
+            <div id="a-pr-list"></div>
+          </div>
+
+          <div class="t-foot">
+            <div class="f-btns"><span>≡ menu</span><span>↻</span></div>
+            <span class="c-dim" id="a-foot-hint">drag ↕ sash or ⠿ profile</span>
+          </div>
+        </div>
+
+        <div class="view">
+          <div>
+            <div class="c-dim" style="font-size:11px;margin-bottom:8px;">viewer · active session</div>
+            <div class="c-ink" style="margin-bottom:6px;">● midaz-ledger (opus · working)</div>
+            <div style="color:#88c0d0;font-size:11.5px;margin-bottom:14px;">
+              &gt; Refactoring balance snapshot query and verifying tenant isolation...
+            </div>
+          </div>
+          <div class="telemetry">
+            <div class="telemetry-title">
+              <span>Live Layout State (Option A)</span>
+              <span class="c-dim">~/.config/lzr1-panel/layout.conf</span>
+            </div>
+            <pre id="a-telemetry"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================================= -->
+    <!-- TEMPLATE B: Modular Resizable Cards (Every Profile & PR Section is a Card)        -->
+    <!-- ================================================================================= -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Option B — Modular Cards (Individual Height + Gap per Block)</h2>
+        <span class="badge">Per-Profile Scrollbar</span>
+      </div>
+      <p class="desc">
+        Treats each profile (<code>lerian</code>, <code>lzr1-macbook-air</code>, <code>oracle-sessions</code>) and <code>pull requests</code> as an independent <strong>card</strong> you can drag into any order (even putting PRs between two profiles!), drag each card's bottom edge (`═══`) to cap its height with its own mini scrollbar, and drag the gap between cards.
+      </p>
+      <div class="hint-bar">
+        <span class="hint-chip"><b>Drag ⠿</b> Reorder any profile or PR card</span>
+        <span class="hint-chip"><b>Drag ═══</b> Resize any card's max height</span>
+        <span class="hint-chip"><b>Click [↕ gap]</b> Cycle card spacing</span>
+      </div>
+
+      <div class="frame" id="frame-b">
+        <div class="side">
+          <div class="t-top">
+            <span>modular cards · drag any block</span>
+            <span class="c-cyan">lzr1</span>
+          </div>
+
+          <div class="scroll-zone" id="b-main-zone" style="flex:1; padding: 6px 8px 6px 2px;">
+            <div id="b-card-list"></div>
+          </div>
+
+          <div class="t-foot">
+            <div class="f-btns"><span>≡ menu</span><span>↻</span></div>
+            <span class="c-dim">drag ⠿ header or ═══ bottom</span>
+          </div>
+        </div>
+
+        <div class="view">
+          <div>
+            <div class="c-dim" style="font-size:11px;margin-bottom:8px;">viewer · modular card mode</div>
+            <div class="c-ink" style="margin-bottom:6px;">Why pick Option B?</div>
+            <div style="font-size:11.5px;color:#9aa5b4;line-height:1.5;">
+              • If one profile has 15 sessions, you can cap just that profile to 4 visible rows with its own scrollbar.<br>
+              • Pull Requests can be moved anywhere in the stack or collapsed to 1 line.<br>
+              • Each card has an explicit bottom resize handle and adjustable margin.
+            </div>
+          </div>
+          <div class="telemetry">
+            <div class="telemetry-title">
+              <span>Live Layout State (Option B)</span>
+              <span class="c-dim">card order · heights · gaps</span>
+            </div>
+            <pre id="b-telemetry"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================================= -->
+    <!-- TEMPLATE C: Floating / Magnetic Pull Requests Drawer + Profile Spacing Slider     -->
+    <!-- ================================================================================= -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Option C — Magnetic Bottom Drawer + Profile Gap Ruler</h2>
+        <span class="badge">Snap Stops</span>
+      </div>
+      <p class="desc">
+        Keeps profiles in a clean unified stream with a quick <strong>Profile Spacing control (`Gap: 0..4 lines`)</strong> and drag-to-reorder headers, while <strong>Pull Requests</strong> lives in a magnetic bottom drawer that snaps to presets (<em>Collapsed · 2 PRs · 4 PRs · Half Height</em>) or drags freely with a dedicated scrollbar.
+      </p>
+      <div class="hint-bar">
+        <span class="hint-chip"><b>Snap buttons</b> 0 / 2 / 4 / Max PR rows</span>
+        <span class="hint-chip"><b>Drag ↕</b> Drawer top border</span>
+        <span class="hint-chip"><b>Gap [1..4]</b> Adjust space between profiles</span>
+      </div>
+
+      <div class="frame" id="frame-c">
+        <div class="side">
+          <div class="t-top" style="align-items:center;">
+            <span>profile gap:
+              <button class="gap-btn" onclick="setCGap(1)">1L</button>
+              <button class="gap-btn" onclick="setCGap(2)">2L</button>
+              <button class="gap-btn" onclick="setCGap(3)">3L</button>
+              <button class="gap-btn" onclick="setCGap(5)">5L</button>
+            </span>
+            <span class="c-cyan">lzr1</span>
+          </div>
+
+          <div class="scroll-zone" id="c-sess-zone" style="flex:1; min-height:80px;">
+            <div id="c-prof-list"></div>
+          </div>
+
+          <!-- Magnetic PR Drawer Header -->
+          <div class="section-sash" id="c-sash">
+            <span class="sash-grip">↕ <strong class="c-ink">pull requests</strong></span>
+            <span class="sash-meta">
+              <button class="gap-btn" onclick="snapCDrawer(0)" title="Collapse PR list">hide</button>
+              <button class="gap-btn" onclick="snapCDrawer(95)" title="Show ~2 PRs">2</button>
+              <button class="gap-btn" onclick="snapCDrawer(165)" title="Show ~4 PRs">4</button>
+              <button class="gap-btn" onclick="snapCDrawer(240)" title="Expand drawer">max</button>
+            </span>
+          </div>
+
+          <div class="scroll-zone" id="c-pr-zone" style="height: 130px; flex-shrink: 0; transition: height 0.14s ease;">
+            <div id="c-pr-list"></div>
+          </div>
+
+          <div class="t-foot">
+            <div class="f-btns"><span>≡ menu</span><span>↻</span></div>
+            <span class="c-dim">magnetic drawer + gap presets</span>
+          </div>
+        </div>
+
+        <div class="view">
+          <div>
+            <div class="c-dim" style="font-size:11px;margin-bottom:8px;">viewer · magnetic drawer</div>
+            <div class="c-ink" style="margin-bottom:6px;">Fast Presets + Free Drag</div>
+            <div style="font-size:11.5px;color:#9aa5b4;line-height:1.5;">
+              • One click on <code>[hide] [2] [4] [max]</code> or drag the drawer border to push Pull Requests down.<br>
+              • Clicking <code>1L / 2L / 3L / 5L</code> in the top bar (or dragging) spaces out all profiles evenly.
+            </div>
+          </div>
+          <div class="telemetry">
+            <div class="telemetry-title">
+              <span>Live Layout State (Option C)</span>
+              <span class="c-dim">drawer + profile spacing</span>
+            </div>
+            <pre id="c-telemetry"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================================= -->
+    <!-- TEMPLATE D: Terminal-Native TUI Renderer (Exact fzf / ANSI cell mockup)           -->
+    <!-- ================================================================================= -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Option D — Exact Terminal Cell Renderer (`█`/`░` Scrollbar)</h2>
+        <span class="badge">100% Native TUI</span>
+      </div>
+      <p class="desc">
+        Shows how Options A–C render inside the actual terminal (`Ghostty` &amp; `Terminal.app`) using Unicode box-drawing: a right-edge cell scrollbar (<code>█</code> thumb over <code>░</code> track) per section, clickable/draggable <code>─── ↕ pull requests ───</code> divider row, and <code>[≡ menu] → Layout &amp; Spacing</code> or mouse wheel/drag controls.
+      </p>
+      <div class="hint-bar">
+        <span class="hint-chip"><b>Click ▲/▼ or drag</b> ASCII scrollbar <code>█/░</code></span>
+        <span class="hint-chip"><b>Click [↕ PR pos]</b> Move PR section down/up</span>
+        <span class="hint-chip"><b>Click [⇅ order]</b> Cycle profile order</span>
+      </div>
+
+      <div class="frame" id="frame-d">
+        <div class="side">
+          <div class="t-top">
+            <span>native ANSI cell preview</span>
+            <span class="c-cyan">lzr1</span>
+          </div>
+
+          <!-- Interactive terminal toolbar simulating row clicks / keys -->
+          <div style="padding:4px 8px; background:#1c2029; border-bottom:1px solid #282e3b; display:flex; gap:5px; flex-wrap:wrap;">
+            <button class="gap-btn" onclick="dMovePR(1)">PR ↓ down</button>
+            <button class="gap-btn" onclick="dMovePR(-1)">PR ↑ up</button>
+            <button class="gap-btn" onclick="dScrollPR(1)">Scroll PR ▼</button>
+            <button class="gap-btn" onclick="dScrollPR(-1)">Scroll PR ▲</button>
+            <button class="gap-btn" onclick="dCycleProf()">Swap Profiles ⇅</button>
+            <button class="gap-btn" onclick="dChangeGap()">Prof Gap +1</button>
+          </div>
+
+          <div id="d-terminal-canvas" style="flex:1; overflow:hidden; padding: 4px 0 4px 6px; font-size:11.5px; line-height:1.36; display:flex; flex-direction:column; justify-content:space-between;">
+          </div>
+
+          <div class="t-foot">
+            <div class="f-btns"><span>≡ menu</span><span>↻</span></div>
+            <span class="c-dim">█/░ cell scrollbar</span>
+          </div>
+        </div>
+
+        <div class="view">
+          <div>
+            <div class="c-dim" style="font-size:11px;margin-bottom:8px;">how it works in bin/lzr1-panel</div>
+            <div class="c-ink" style="margin-bottom:6px;">Zero-Dependency Zsh + fzf Implementation</div>
+            <div style="font-size:11.5px;color:#9aa5b4;line-height:1.55;">
+              1. <strong>Profile Order &amp; Gap</strong>: Saved in <code>~/.config/lzr1-panel/layout.conf</code> (<code>order=lerian,lzr1-macbook-air</code>, <code>profile_gap=2</code>). Clicking a profile header or using <code>[≡ menu] → Organize Profiles</code> moves it up/down or adjusts spacing.<br>
+              2. <strong>PR Section Position &amp; Height</strong>: Controlled by <code>pr_gap</code> (blank rows pushing PRs down) and <code>pr_height</code> (max visible PRs before scrolling).<br>
+              3. <strong>Per-Section Scrollbar</strong>: When PRs or sessions exceed their viewport window, right-column cells render <code>█</code> (thumb) and <code>░</code> (track) with <code>▲ scroll up</code> / <code>▼ scroll down</code> rows.
+            </div>
+          </div>
+          <div class="telemetry">
+            <div class="telemetry-title">
+              <span>Live Terminal Viewport Math (Option D)</span>
+              <span class="c-dim">cell-by-cell</span>
+            </div>
+            <pre id="d-telemetry"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Summary Comparison Table -->
+  <table class="cmp">
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Move PR Section Height</th>
+        <th>Scrollbar When List Overflows</th>
+        <th>Reorder Profiles &amp; Spacing</th>
+        <th>Best For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Option A (Recommended)</strong><br><span class="c-dim">Split-Pane Sash</span></td>
+        <td>Drag <code>═══ ↕ pull requests ═══</code> divider to any height</td>
+        <td>Independent scrollbar on both Sessions pane and PR pane</td>
+        <td>Drag <code>⠿</code> profile header to reorder; drag spacer bar between profiles</td>
+        <td>Cleanest daily workflow; keeps PRs pinned at the bottom at the exact height you want</td>
+      </tr>
+      <tr>
+        <td><strong>Option B</strong><br><span class="c-dim">Modular Cards</span></td>
+        <td>Every profile &amp; PR block has its own bottom resize bar</td>
+        <td>Per-card mini scrollbar when a single profile has many sessions</td>
+        <td>Free drag-and-drop of any card + per-card gap toggle</td>
+        <td>Users with 3+ profiles who want to cap a noisy profile to N rows</td>
+      </tr>
+      <tr>
+        <td><strong>Option C</strong><br><span class="c-dim">Magnetic Drawer</span></td>
+        <td>1-click snap buttons (<code>hide / 2 / 4 / max</code>) + free drag</td>
+        <td>Scrollbar appears inside drawer whenever PRs exceed drawer height</td>
+        <td>Global <code>1L / 2L / 3L / 5L</code> spacing buttons + drag headers</td>
+        <td>Fastest 1-click adjustment without needing fine mouse dragging</td>
+      </tr>
+      <tr>
+        <td><strong>Option D</strong><br><span class="c-dim">Native TUI Cells</span></td>
+        <td><code>pr_gap</code> + <code>pr_height</code> rows with clickable <code>▲/▼</code> &amp; drag</td>
+        <td>Unicode <code>█</code> thumb over <code>░</code> track rendered in right-most column</td>
+        <td>Persisted in <code>~/.config/lzr1-panel/layout.conf</code></td>
+        <td>Exact preview of how `bin/lzr1-panel` renders inside `fzf` in Ghostty &amp; Terminal.app</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <footer class="gen">
+    <span>lzr1-panel · Left Sidebar Layout &amp; Drag Templates</span>
+    <span>Generated with Ring · Lerian Studio</span>
+  </footer>
+</div>
+
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  }
+
+  // Sample data sets for Compact / Normal / Heavy overflow testing
+  const DATA_SETS = {
+    compact: {
+      profiles: [
+        {
+          id: 'lerian', type: 'local', status: 'online', gap: 6, maxH: 180,
+          sessions: [
+            { name: 'midaz-ledger', agent: 'opus', age: '2m', state: '▶', color: 'c-green', task: 'Balance snapshot isolation check', branch: 'main · midaz' }
+          ]
+        },
+        {
+          id: 'lzr1-macbook-air', type: 'local', status: 'online', gap: 18, maxH: 180,
+          sessions: [
+            { name: 'lzr1-herdr', agent: 'agy', age: '15s', state: '·', color: 'c-dim', task: 'no task yet', branch: 'master · lzr1-herdr' },
+            { name: 'lzr1-panel', agent: 'agy', age: '11s', state: '●', color: 'c-green', task: 'Sidebar draggable layout templates', branch: 'main · lzr1-panel', sel: true },
+            { name: 'milhouse', agent: 'sonnet', age: '6s', state: '●', color: 'c-green', task: 'Hermes stack audit on connect-oracle', branch: 'main · milhouse' }
+          ]
+        }
+      ],
+      prs: [
+        { num: '#17', repo: 'lzr1-panel', title: 'feat(panel): animated refresh button next to menu', age: '4m', ci: '✓', ciCol: 'c-green' },
+        { num: '#16', repo: 'lzr1-panel', title: 'fix(pokemon): Terminal.app fallback & ANSI background', age: '28m', ci: '✓', ciCol: 'c-green' },
+        { num: '#142', repo: 'midaz', title: 'feat(ledger): idempotent batch balance query', age: '2h', ci: '⏳', ciCol: 'c-amber' }
+      ]
+    },
+    normal: {
+      profiles: [
+        {
+          id: 'lerian', type: 'local', status: 'online', gap: 6, maxH: 170,
+          sessions: [
+            { name: 'midaz-ledger', agent: 'opus', age: '2m', state: '▶', color: 'c-green', task: 'Balance snapshot isolation check', branch: 'main · midaz' },
+            { name: 'plugin-smart-templates', agent: 'sonnet', age: '14m', state: '⏳', color: 'c-amber', task: 'Approve schema migration in Mongo?', branch: 'feat/tpl · smart-templates' }
+          ]
+        },
+        {
+          id: 'lzr1-macbook-air', type: 'local', status: 'online', gap: 18, maxH: 190,
+          sessions: [
+            { name: 'lzr1-herdr', agent: 'agy', age: '15s', state: '·', color: 'c-dim', task: 'no task yet', branch: 'master · lzr1-herdr' },
+            { name: 'lzr1-panel', agent: 'agy', age: '11s', state: '●', color: 'c-green', task: 'Sidebar draggable layout templates', branch: 'main · lzr1-panel', sel: true },
+            { name: 'milhouse', agent: 'sonnet', age: '6s', state: '●', color: 'c-green', task: 'Hermes stack audit on connect-oracle', branch: 'main · milhouse' }
+          ]
+        },
+        {
+          id: 'oracle-sessions', type: 'ssh', status: 'online', gap: 18, maxH: 160,
+          sessions: [
+            { name: 'flowker-worker', agent: 'opus', age: '9m', state: '▶', color: 'c-green', task: 'Tracing workflow retry backoff', branch: 'fix/retry · flowker' },
+            { name: 'tracer-ingest', agent: 'opencode', age: '41m', state: '·', color: 'c-dim', task: 'Idle at prompt', branch: 'main · tracer' }
+          ]
+        }
+      ],
+      prs: [
+        { num: '#17', repo: 'lzr1-panel', title: 'feat(panel): animated refresh button next to menu', age: '4m', ci: '✓', ciCol: 'c-green' },
+        { num: '#16', repo: 'lzr1-panel', title: 'fix(pokemon): Terminal.app fallback & ANSI background', age: '28m', ci: '✓', ciCol: 'c-green' },
+        { num: '#15', repo: 'lzr1-panel', title: 'feat(panel): Ghostty splash fix, menu & agy support', age: '1h', ci: '✓', ciCol: 'c-green' },
+        { num: '#418', repo: 'midaz', title: 'feat(transaction): multi-asset posting validation', age: '3h', ci: '⏳', ciCol: 'c-amber' },
+        { num: '#89', repo: 'flowker', title: 'fix(temporal): worker graceful drain on SIGTERM', age: '6h', ci: '✓', ciCol: 'c-green' }
+      ]
+    },
+    heavy: {
+      profiles: [
+        {
+          id: 'lerian', type: 'local', status: 'online', gap: 6, maxH: 160,
+          sessions: [
+            { name: 'midaz-ledger', agent: 'opus', age: '1m', state: '▶', color: 'c-green', task: 'Balance snapshot isolation check', branch: 'main · midaz' },
+            { name: 'midaz-onboarding', agent: 'sonnet', age: '4m', state: '▶', color: 'c-green', task: 'Organization tenant provisioning', branch: 'feat/org · midaz' },
+            { name: 'smart-templates', agent: 'sonnet', age: '14m', state: '⏳', color: 'c-amber', task: 'Approve schema migration in Mongo?', branch: 'feat/tpl · smart-templates' },
+            { name: 'access-manager', agent: 'opus', age: '22m', state: '·', color: 'c-dim', task: 'PAM ABAC scope coverage tests', branch: 'main · access-manager' }
+          ]
+        },
+        {
+          id: 'lzr1-macbook-air', type: 'local', status: 'online', gap: 18, maxH: 180,
+          sessions: [
+            { name: 'lzr1-herdr', agent: 'agy', age: '15s', state: '·', color: 'c-dim', task: 'no task yet', branch: 'master · lzr1-herdr' },
+            { name: 'lzr1-panel', agent: 'agy', age: '11s', state: '●', color: 'c-green', task: 'Sidebar draggable layout templates', branch: 'main · lzr1-panel', sel: true },
+            { name: 'milhouse', agent: 'sonnet', age: '6s', state: '●', color: 'c-green', task: 'Hermes stack audit on connect-oracle', branch: 'main · milhouse' },
+            { name: 'dotfiles-zsh', agent: 'agy', age: '35m', state: '·', color: 'c-dim', task: 'Ghostty keybind sync', branch: 'main · dotfiles' }
+          ]
+        },
+        {
+          id: 'oracle-sessions', type: 'ssh', status: 'online', gap: 18, maxH: 160,
+          sessions: [
+            { name: 'flowker-worker', agent: 'opus', age: '9m', state: '▶', color: 'c-green', task: 'Tracing workflow retry backoff', branch: 'fix/retry · flowker' },
+            { name: 'tracer-ingest', agent: 'opencode', age: '41m', state: '·', color: 'c-dim', task: 'Idle at prompt', branch: 'main · tracer' },
+            { name: 'matcher-reconcile', agent: 'opus', age: '1h', state: '▶', color: 'c-green', task: 'Streaming CSV chunk matcher', branch: 'perf/csv · matcher' },
+            { name: 'reporter-pdf', agent: 'sonnet', age: '2h', state: '·', color: 'c-dim', task: 'Finished regulatory template', branch: 'main · reporter' }
+          ]
+        }
+      ],
+      prs: [
+        { num: '#17', repo: 'lzr1-panel', title: 'feat(panel): animated refresh button next to menu', age: '4m', ci: '✓', ciCol: 'c-green' },
+        { num: '#16', repo: 'lzr1-panel', title: 'fix(pokemon): Terminal.app fallback & ANSI background', age: '28m', ci: '✓', ciCol: 'c-green' },
+        { num: '#15', repo: 'lzr1-panel', title: 'feat(panel): Ghostty splash fix, menu & agy support', age: '1h', ci: '✓', ciCol: 'c-green' },
+        { num: '#418', repo: 'midaz', title: 'feat(transaction): multi-asset posting validation', age: '3h', ci: '⏳', ciCol: 'c-amber' },
+        { num: '#89', repo: 'flowker', title: 'fix(temporal): worker graceful drain on SIGTERM', age: '6h', ci: '✓', ciCol: 'c-green' },
+        { num: '#204', repo: 'tracer', title: 'feat(otel): batch span exporter backpressure', age: '9h', ci: '✓', ciCol: 'c-green' },
+        { num: '#77', repo: 'matcher', title: 'perf(engine): zero-alloc decimal comparison', age: '1d', ci: '✓', ciCol: 'c-green' },
+        { num: '#52', repo: 'reporter', title: 'fix(typst): table pagebreak inside group', age: '2d', ci: '✗', ciCol: 'c-red' },
+        { num: '#31', repo: 'lib-commons', title: 'feat(huma): problem+json error extension fields', age: '3d', ci: '✓', ciCol: 'c-green' }
+      ]
+    }
+  };
+
+  let currentDensity = 'normal';
+  let stateA = { profiles: [], prs: [], prHeight: 145 };
+  let stateB = { blocks: [] };
+  let stateC = { profiles: [], prs: [], gapLines: 2, drawerHeight: 130 };
+  let stateD = { profiles: [], prs: [], prGapLines: 2, prVisibleRows: 3, prScroll: 0, sessScroll: 0 };
+
+  function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+  function initStates(density) {
+    currentDensity = density;
+    const src = clone(DATA_SETS[density]);
+
+    stateA.profiles = clone(src.profiles);
+    stateA.prs = clone(src.prs);
+
+    // Build modular blocks for B (profiles + PRs as draggable cards)
+    stateB.blocks = src.profiles.map(p => ({
+      kind: 'profile', id: p.id, type: p.type, status: p.status,
+      gap: p.gap, maxH: p.maxH, sessions: clone(p.sessions)
+    }));
+    stateB.blocks.push({
+      kind: 'prs', id: 'pull requests', gap: 18, maxH: 135, prs: clone(src.prs)
+    });
+
+    stateC.profiles = clone(src.profiles);
+    stateC.prs = clone(src.prs);
+
+    stateD.profiles = clone(src.profiles);
+    stateD.prs = clone(src.prs);
+    stateD.prScroll = 0;
+    stateD.sessScroll = 0;
+
+    renderAll();
+  }
+
+  function setDensity(d, btn) {
+    document.querySelectorAll('.toolbar .pill-btn').forEach(b => {
+      if (b.textContent.includes('Compact') || b.textContent.includes('Normal') || b.textContent.includes('Overflow')) {
+        b.classList.remove('active');
+      }
+    });
+    if (btn) btn.classList.add('active');
+    initStates(d);
+  }
+
+  function resetAll() {
+    stateA.prHeight = 145;
+    stateC.gapLines = 2;
+    stateC.drawerHeight = 130;
+    stateD.prGapLines = 2;
+    stateD.prVisibleRows = 3;
+    initStates(currentDensity);
+  }
+
+  // Helper to render session rows HTML
+  function renderSessionRows(sessions) {
+    return sessions.map(s => `
+      <div class="sess-row ${s.sel ? 'sel' : ''}">
+        <div class="sess-line1">
+          <span><span class="${s.color}">${s.state}</span> <span class="c-ink">${s.name}</span></span>
+          <span><span class="c-cyan">${s.agent}</span> <span class="c-dim">· ${s.age}</span></span>
+        </div>
+        <div class="sess-line2">${s.task}</div>
+        <div class="sess-line3">⎇ ${s.branch}</div>
+      </div>
+    `).join('');
+  }
+
+  function renderPRRows(prs) {
+    return prs.map(pr => `
+      <div class="pr-item">
+        <div class="pr-line1">
+          <span><span class="${pr.ciCol}">${pr.ci}</span> <span class="c-amber">${pr.num}</span> <span class="c-ink">${pr.title.slice(0, 28)}${pr.title.length > 28 ? '…' : ''}</span></span>
+        </div>
+        <div class="pr-line2">
+          <span>${pr.repo}</span>
+          <span>${pr.age}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // =========================================================================
+  // RENDER OPTION A
+  // =========================================================================
+  function renderA() {
+    const profContainer = document.getElementById('a-prof-list');
+    profContainer.innerHTML = stateA.profiles.map((p, idx) => `
+      <div class="prof-group" data-idx="${idx}" draggable="true"
+           ondragstart="aDragStart(event, ${idx})"
+           ondragover="aDragOver(event, ${idx})"
+           ondragleave="aDragLeave(event)"
+           ondrop="aDrop(event, ${idx})"
+           ondragend="aDragEnd(event)">
+        <div class="gap-handle" style="--gap-px:${p.gap}px" onmousedown="aStartGapResize(event, ${idx})" title="Drag vertically to adjust space above ${p.id}">
+          <span class="gap-pill">↕ gap: ${Math.round(p.gap / 6)}L (${p.gap}px)</span>
+        </div>
+        <div class="prof-hdr">
+          <span class="drag-grip" title="Drag to reorder profile">⠿</span>
+          <span class="c-ink">${p.id}</span>
+          <span class="c-dim">${p.type} · ${p.status} · ${p.sessions.length}</span>
+          <span class="prof-rule"></span>
+          <button class="gap-btn" onclick="aBumpGap(event, ${idx}, 6)" title="Add spacing above profile">+↕</button>
+          <button class="gap-btn" onclick="aBumpGap(event, ${idx}, -6)" title="Reduce spacing above profile">-↕</button>
+        </div>
+        ${renderSessionRows(p.sessions)}
+      </div>
+    `).join('');
+
+    const prZone = document.getElementById('a-pr-zone');
+    prZone.style.height = stateA.prHeight + 'px';
+    document.getElementById('a-pr-list').innerHTML = renderPRRows(stateA.prs);
+    document.getElementById('a-pr-count').textContent = stateA.prs.length;
+    document.getElementById('a-pr-vis-tag').textContent = `h: ${stateA.prHeight}px`;
+
+    const totalSess = stateA.profiles.reduce((acc, p) => acc + p.sessions.length, 0);
+    document.getElementById('a-top-stat').textContent = `${totalSess} sessions · ${stateA.prs.length} PRs`;
+
+    updateATelemetry();
+  }
+
+  function updateATelemetry() {
+    const sessZone = document.getElementById('a-sess-zone');
+    const prZone = document.getElementById('a-pr-zone');
+    const sessOverflow = sessZone.scrollHeight > sessZone.clientHeight;
+    const prOverflow = prZone.scrollHeight > prZone.clientHeight;
+
+    document.getElementById('a-telemetry').textContent =
+`profile_order = ${stateA.profiles.map(p => p.id).join(', ')}
+profile_gaps  = ${stateA.profiles.map(p => `${p.id}:${Math.round(p.gap/6)}L`).join(', ')}
+pr_section_h  = ${stateA.prHeight}px (~${Math.max(0, Math.round(stateA.prHeight / 36))} visible PRs)
+scrollbars    = sessions:${sessOverflow ? 'ACTIVE (█/░)' : 'hidden'} | prs:${prOverflow ? 'ACTIVE (█/░)' : 'hidden'}`;
+  }
+
+  // Option A drag-and-drop profile reordering
+  let aDragIdx = null;
+  function aDragStart(e, idx) {
+    aDragIdx = idx;
+    e.currentTarget.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+  function aDragOver(e, idx) {
+    e.preventDefault();
+    if (aDragIdx === null || aDragIdx === idx) return;
+    const el = e.currentTarget;
+    el.classList.remove('drag-over-top', 'drag-over-bottom');
+    el.classList.add(idx < aDragIdx ? 'drag-over-top' : 'drag-over-bottom');
+  }
+  function aDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over-top', 'drag-over-bottom');
+  }
+  function aDrop(e, targetIdx) {
+    e.preventDefault();
+    if (aDragIdx === null || aDragIdx === targetIdx) return;
+    const [moved] = stateA.profiles.splice(aDragIdx, 1);
+    stateA.profiles.splice(targetIdx, 0, moved);
+    aDragIdx = null;
+    renderA();
+  }
+  function aDragEnd(e) {
+    aDragIdx = null;
+    document.querySelectorAll('#a-prof-list .prof-group').forEach(el => {
+      el.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom');
+    });
+  }
+
+  // Option A gap resize by dragging or clicking +↕ / -↕
+  function aBumpGap(e, idx, delta) {
+    e.stopPropagation();
+    stateA.profiles[idx].gap = Math.max(0, Math.min(84, stateA.profiles[idx].gap + delta));
+    renderA();
+  }
+
+  function aStartGapResize(e, idx) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startGap = stateA.profiles[idx].gap;
+    const handle = e.currentTarget;
+    handle.classList.add('resizing');
+
+    function onMove(ev) {
+      const dy = ev.clientY - startY;
+      stateA.profiles[idx].gap = Math.max(2, Math.min(84, startGap + dy));
+      renderA();
+    }
+    function onUp() {
+      handle.classList.remove('resizing');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // Option A PR Sash vertical resize
+  (function setupASash() {
+    const sash = document.getElementById('a-sash');
+    sash.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      sash.classList.add('dragging');
+      const startY = e.clientY;
+      const startH = stateA.prHeight;
+
+      function onMove(ev) {
+        const dy = startY - ev.clientY; // dragging up increases PR height; dragging down shrinks it
+        stateA.prHeight = Math.max(24, Math.min(310, startH + dy));
+        renderA();
+      }
+      function onUp() {
+        sash.classList.remove('dragging');
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  })();
+
+  // =========================================================================
+  // RENDER OPTION B (Modular Cards)
+  // =========================================================================
+  function renderB() {
+    const container = document.getElementById('b-card-list');
+    container.innerHTML = stateB.blocks.map((b, idx) => {
+      const bodyHtml = b.kind === 'profile'
+        ? renderSessionRows(b.sessions)
+        : renderPRRows(b.prs);
+      const count = b.kind === 'profile' ? b.sessions.length : b.prs.length;
+      const sub = b.kind === 'profile' ? `${b.type} · ${count}` : `gh · ${count}`;
+      return `
+        <div style="margin-top:${b.gap}px"
+             class="stack-block"
+             draggable="true"
+             ondragstart="bDragStart(event, ${idx})"
+             ondragover="bDragOver(event, ${idx})"
+             ondrop="bDrop(event, ${idx})"
+             ondragend="bDragEnd(event)">
+          <div class="stack-hdr">
+            <span><span class="drag-grip">⠿</span> <strong class="c-ink">${b.id}</strong> <span class="c-dim">${sub}</span></span>
+            <span>
+              <button class="gap-btn" onclick="bCycleGap(event, ${idx})" title="Cycle spacing above card">↕ gap:${Math.round(b.gap/6)}L</button>
+            </span>
+          </div>
+          <div class="stack-body" style="max-height:${b.maxH}px;">
+            ${bodyHtml}
+          </div>
+          <div class="stack-resizer" onmousedown="bResizeCard(event, ${idx})" title="Drag up/down to cap this card's height (adds scrollbar)">
+            ═══ ↕ max-h: ${b.maxH}px ═══
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    document.getElementById('b-telemetry').textContent =
+      stateB.blocks.map((b, i) => `${i+1}. [${b.id}] max-h=${b.maxH}px gap=${Math.round(b.gap/6)}L`).join('\n');
+  }
+
+  let bDragIdx = null;
+  function bDragStart(e, idx) {
+    bDragIdx = idx;
+    e.currentTarget.classList.add('dragging');
+  }
+  function bDragOver(e, idx) { e.preventDefault(); }
+  function bDrop(e, targetIdx) {
+    e.preventDefault();
+    if (bDragIdx === null || bDragIdx === targetIdx) return;
+    const [m] = stateB.blocks.splice(bDragIdx, 1);
+    stateB.blocks.splice(targetIdx, 0, m);
+    bDragIdx = null;
+    renderB();
+  }
+  function bDragEnd() {
+    bDragIdx = null;
+    renderB();
+  }
+  function bCycleGap(e, idx) {
+    e.stopPropagation();
+    const cur = stateB.blocks[idx].gap;
+    stateB.blocks[idx].gap = cur >= 36 ? 6 : cur + 12;
+    renderB();
+  }
+  function bResizeCard(e, idx) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = stateB.blocks[idx].maxH;
+    function onMove(ev) {
+      stateB.blocks[idx].maxH = Math.max(38, Math.min(260, startH + (ev.clientY - startY)));
+      renderB();
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // =========================================================================
+  // RENDER OPTION C (Magnetic Drawer + Preset Gap Buttons)
+  // =========================================================================
+  function renderC() {
+    const gapPx = stateC.gapLines * 7;
+    document.getElementById('c-prof-list').innerHTML = stateC.profiles.map((p, idx) => `
+      <div class="prof-group" style="margin-top:${idx === 0 ? 4 : gapPx}px"
+           draggable="true"
+           ondragstart="cDragStart(event, ${idx})"
+           ondragover="event.preventDefault()"
+           ondrop="cDrop(event, ${idx})">
+        <div class="prof-hdr">
+          <span class="drag-grip">⠿</span>
+          <span class="c-ink">${p.id}</span>
+          <span class="c-dim">${p.type} · ${p.status} · ${p.sessions.length}</span>
+          <span class="prof-rule"></span>
+        </div>
+        ${renderSessionRows(p.sessions)}
+      </div>
+    `).join('');
+
+    const prZone = document.getElementById('c-pr-zone');
+    prZone.style.height = stateC.drawerHeight + 'px';
+    document.getElementById('c-pr-list').innerHTML = renderPRRows(stateC.prs);
+
+    document.getElementById('c-telemetry').textContent =
+`profile_order = ${stateC.profiles.map(p => p.id).join(' → ')}
+profile_gap   = ${stateC.gapLines} blank line(s) between profiles
+pr_drawer_h   = ${stateC.drawerHeight}px (${stateC.drawerHeight === 0 ? 'collapsed' : 'scrollable'})`;
+  }
+
+  let cDragIdx = null;
+  function cDragStart(e, idx) { cDragIdx = idx; }
+  function cDrop(e, targetIdx) {
+    e.preventDefault();
+    if (cDragIdx === null || cDragIdx === targetIdx) return;
+    const [m] = stateC.profiles.splice(cDragIdx, 1);
+    stateC.profiles.splice(targetIdx, 0, m);
+    cDragIdx = null;
+    renderC();
+  }
+  function setCGap(lines) {
+    stateC.gapLines = lines;
+    renderC();
+  }
+  function snapCDrawer(px) {
+    stateC.drawerHeight = px;
+    renderC();
+  }
+  (function setupCSash() {
+    const sash = document.getElementById('c-sash');
+    sash.addEventListener('mousedown', function(e) {
+      if (e.target.tagName === 'BUTTON') return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = stateC.drawerHeight;
+      function onMove(ev) {
+        stateC.drawerHeight = Math.max(0, Math.min(280, startH + (startY - ev.clientY)));
+        renderC();
+      }
+      function onUp() {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  })();
+
+  // =========================================================================
+  // RENDER OPTION D (Exact Terminal Cell Renderer with █ / ░ Scrollbar)
+  // =========================================================================
+  function renderD() {
+    const canvas = document.getElementById('d-terminal-canvas');
+    const lines = [];
+
+    // 1. Build upper session rows
+    stateD.profiles.forEach((p, pIdx) => {
+      if (pIdx > 0) {
+        for (let g = 0; g < stateD.prGapLines; g++) {
+          lines.push({ html: `&nbsp;`, sect: 'sess' });
+        }
+      }
+      lines.push({
+        html: `<span class="c-amber">⠿</span> <span class="c-ink">${p.id}</span> <span class="c-dim">${p.type} · ${p.sessions.length} ──────────</span>`,
+        sect: 'sess'
+      });
+      p.sessions.forEach(s => {
+        lines.push({
+          html: `  <span class="${s.color}">${s.state}</span> <span class="c-ink">${s.name.padEnd(16, ' ')}</span> <span class="c-cyan">${s.agent}</span> <span class="c-dim">${s.age}</span>`,
+          sect: 'sess'
+        });
+        lines.push({
+          html: `    <span class="c-dim">${s.task.slice(0, 32)}</span>`,
+          sect: 'sess'
+        });
+      });
+    });
+
+    // Cap upper session viewport to 11 rows and add ASCII scrollbar if needed
+    const sessMaxRows = 11;
+    const totalSessRows = lines.length;
+    const sessWindow = lines.slice(0, sessMaxRows);
+
+    // 2. Gap pushing PRs down
+    const gapRows = [];
+    for (let i = 0; i < stateD.prGapLines; i++) {
+      gapRows.push(`<div class="ascii-row"><div class="ascii-cell-main c-faint">·</div><div class="ascii-cell-bar">&nbsp;</div></div>`);
+    }
+
+    // 3. PR Header + visible window of PRs with █/░ scrollbar
+    const totalPRs = stateD.prs.length;
+    const visPRs = Math.max(1, Math.min(totalPRs, stateD.prVisibleRows));
+    if (stateD.prScroll > totalPRs - visPRs) stateD.prScroll = Math.max(0, totalPRs - visPRs);
+
+    const prSlice = stateD.prs.slice(stateD.prScroll, stateD.prScroll + visPRs);
+    const prTotalScrollSteps = Math.max(1, totalPRs - visPRs + 1);
+    const thumbRow = Math.min(visPRs - 1, Math.floor((stateD.prScroll / Math.max(1, totalPRs - visPRs)) * (visPRs - 1)));
+
+    const sessHtml = sessWindow.map((l, idx) => {
+      const hasBar = totalSessRows > sessMaxRows;
+      const barChar = !hasBar ? ' ' : (idx < 4 ? '█' : '░');
+      const barCls = !hasBar ? '' : (idx < 4 ? 'thumb' : '');
+      return `<div class="ascii-row"><div class="ascii-cell-main">${l.html}</div><div class="ascii-cell-bar ${barCls}">${barChar}</div></div>`;
+    }).join('');
+
+    const prHeaderHtml = `
+      <div class="ascii-row" style="background:#202531;border-top:1px solid #2e3444;border-bottom:1px solid #2e3444;padding:1px 0;">
+        <div class="ascii-cell-main"><span class="c-cyan">↕</span> <span class="c-ink">pull requests</span> <span class="c-dim">gh · ${stateD.prScroll + 1}-${stateD.prScroll + prSlice.length} of ${totalPRs}</span></div>
+        <div class="ascii-cell-bar c-cyan" onclick="dScrollPR(-1)" title="Scroll PRs up">▲</div>
+      </div>
+    `;
+
+    const prRowsHtml = prSlice.map((pr, idx) => {
+      const needsBar = totalPRs > visPRs;
+      const isThumb = needsBar && idx === thumbRow;
+      const barChar = !needsBar ? ' ' : (isThumb ? '█' : '░');
+      return `
+        <div class="ascii-row">
+          <div class="ascii-cell-main">  <span class="${pr.ciCol}">${pr.ci}</span> <span class="c-amber">${pr.num}</span> <span class="c-ink">${pr.title.slice(0, 25)}…</span></div>
+          <div class="ascii-cell-bar ${isThumb ? 'thumb' : ''}" onclick="dScrollPR(${idx >= thumbRow ? 1 : -1})">${barChar}</div>
+        </div>
+        <div class="ascii-row">
+          <div class="ascii-cell-main">    <span class="c-dim">${pr.repo} · ${pr.age}</span></div>
+          <div class="ascii-cell-bar ${isThumb ? 'thumb' : ''}" onclick="dScrollPR(1)">${idx === prSlice.length - 1 && needsBar ? '▼' : barChar}</div>
+        </div>
+      `;
+    }).join('');
+
+    canvas.innerHTML = `
+      <div>${sessHtml}${gapRows.join('')}</div>
+      <div>${prHeaderHtml}${prRowsHtml}</div>
+    `;
+
+    document.getElementById('d-telemetry').textContent =
+`profiles_order = ${stateD.profiles.map(p => p.id).join(' → ')}
+pr_gap_lines   = ${stateD.prGapLines} row(s) above pull requests
+pr_viewport    = showing ${visPRs} of ${totalPRs} PRs (scroll offset: ${stateD.prScroll})
+pr_scrollbar   = ${totalPRs > visPRs ? `VISIBLE (thumb █ at slot ${thumbRow + 1}/${visPRs})` : 'hidden (all PRs fit)'}`;
+  }
+
+  function dMovePR(dir) {
+    // Moving PR section down increases gap above PRs and decreases visible PR rows (triggering scrollbar)
+    if (dir > 0) {
+      stateD.prGapLines = Math.min(5, stateD.prGapLines + 1);
+      stateD.prVisibleRows = Math.max(1, stateD.prVisibleRows - 1);
+    } else {
+      stateD.prGapLines = Math.max(0, stateD.prGapLines - 1);
+      stateD.prVisibleRows = Math.min(stateD.prs.length, stateD.prVisibleRows + 1);
+    }
+    renderD();
+  }
+
+  function dScrollPR(delta) {
+    stateD.prScroll = Math.max(0, Math.min(stateD.prs.length - 1, stateD.prScroll + delta));
+    renderD();
+  }
+
+  function dCycleProf() {
+    const first = stateD.profiles.shift();
+    stateD.profiles.push(first);
+    renderD();
+  }
+
+  function dChangeGap() {
+    stateD.prGapLines = (stateD.prGapLines + 1) % 5;
+    renderD();
+  }
+
+  function renderAll() {
+    renderA();
+    renderB();
+    renderC();
+    renderD();
+  }
+
+  // Update telemetry when scrolling Option A zones
+  document.getElementById('a-sess-zone').addEventListener('scroll', updateATelemetry);
+  document.getElementById('a-pr-zone').addEventListener('scroll', updateATelemetry);
+
+  initStates('normal');
+</script>
+</body>
+</html>
