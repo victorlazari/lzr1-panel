@@ -87,10 +87,10 @@ load() {
 LAYOUT=$CONFIG/layout.conf
 typeset -gA L_GAP
 typeset -ga L_ORDER
-typeset -gi L_PR_GAP=3 L_PR_MAX=4 L_SESS_MAX=0
+typeset -gi L_PR_GAP=3 L_PR_MAX=10 L_SESS_MAX=0
 
 layout_load() {
-  L_GAP=() L_ORDER=() L_PR_GAP=3 L_PR_MAX=4 L_SESS_MAX=0
+  L_GAP=() L_ORDER=() L_PR_GAP=3 L_PR_MAX=10 L_SESS_MAX=0
   [[ -r $LAYOUT ]] || return 0
   local k v kv
   while IFS='=' read -r k v; do
@@ -2289,7 +2289,7 @@ _layout)  # _layout ID PORT ACTION [KEY]: Option A live section sash, scrollbar 
     move-up)
       if [[ $KP == +pr* ]]; then
         (( L_PR_GAP > 0 )) && (( L_PR_GAP-- ))
-        (( L_PR_MAX < 15 )) && (( L_PR_MAX++ ))
+        (( L_PR_MAX < 20 )) && (( L_PR_MAX++ ))
         layout_save; _fast_reload $id "$port" +pr/
       elif [[ -n $KP && $KP != +* ]]; then
         all=( $(profiles) ); L_ORDER=( $all )
@@ -2314,7 +2314,7 @@ _layout)  # _layout ID PORT ACTION [KEY]: Option A live section sash, scrollbar 
       fi ;;
     gap-inc)
       if [[ $KP == +pr* ]]; then
-        (( L_PR_MAX < 15 )) && (( L_PR_MAX++ ))
+        (( L_PR_MAX < 20 )) && (( L_PR_MAX++ ))
         layout_save; _fast_reload $id "$port" "$key"
       elif [[ -n $KP && $KP != +* ]]; then
         all=( $(profiles) ); L_ORDER=( $all ); i=${L_ORDER[(Ie)$KP]}
@@ -2331,7 +2331,7 @@ _layout)  # _layout ID PORT ACTION [KEY]: Option A live section sash, scrollbar 
         layout_save; _fast_reload $id "$port" "$key"
       fi ;;
     pr-toggle)
-      if (( L_PR_MAX == 0 )); then L_PR_MAX=4; else L_PR_MAX=0; fi
+      if (( L_PR_MAX == 0 )); then L_PR_MAX=10; else L_PR_MAX=0; fi
       layout_save; _fast_reload $id "$port" +pr/ ;;
     scroll-up)
       if [[ $KP == +pr* ]] || (( L_SESS_MAX == 0 )); then
