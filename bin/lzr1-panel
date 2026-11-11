@@ -3,10 +3,11 @@
 # left, with a viewer on the right that shows the session you pick.
 #
 #   lzr1-panel open                                  panel + viewer (Ghostty split on macOS, else a tmux layout)
-#   lzr1-panel start PROFILE opus|sonnet|agy|opencode NAME [args]
+#   lzr1-panel start PROFILE opus|sonnet|agy|opencode|term NAME [args]
 #                                                    start a detached Claude, Agy (--dangerously-skip-permissions) or
 #                                                    opencode (--auto) session on PROFILE; a NAME that is a folder under
-#                                                    the profile's repos opens in it, else in its root
+#                                                    the profile's repos opens in it, else in its root; term is a
+#                                                    plain shell with no agent. LZR1_DIR=/folder starts it there
 #   lzr1-panel run [--model M] [--effort E] [args]   Claude in a new tmux session in this folder, attached (print
 #                                                    mode, -p, runs plain claude); the panel lists it when this
 #                                                    folder is inside a profile's repositories folder
@@ -190,7 +191,10 @@ LIST_SCRIPT='
     full=$(tmux capture-pane -p -J -t "=$name:" 2>/dev/null)
     screen=$(printf "%s\n" "$full" | tail -25)
     [ -z "$agent" ] && printf "%s" "$full" | grep -q "Antigravity CLI" && agent=agy
-    if [ "$agent" = opencode ]; then
+    if [ "$agent" = term ]; then
+      # A plain terminal (no agent): nothing to read, it is always idle.
+      st=idle model=shell title=
+    elif [ "$agent" = opencode ]; then
       # opencode shows "esc interrupt" in its bottom bar while it works ("esc again to interrupt" after one Esc),
       # and its question dialog ends in "enter submit". It titles the terminal "OC | <session title>", or
       # "OpenCode" before it has one.
@@ -245,7 +249,7 @@ LIST_SCRIPT='
         detail=$(printf "%s\n" "$screen" | grep -vE "[▀▄█▌▐░▒▓]" | sed "s/^[[:space:]│╭╰╭╮╯─━>❯]*//; s/[[:space:]│╮╯─━]*$//" | grep -vE "^$|^📁|^🧠|^⏵⏵|^(Sonnet|Opus|Haiku|Fable|Gemini) |^Antigravity CLI|Type your message|Shift\+Tab to change mode|auto-edit is on|plan mode is on|Navigate · enter Confirm|Enter to select|Esc to cancel|No, exit" | tail -4 | tr "\n" "\r" | sed "s/\r$//; s/\r/ · /g")
         [ -n "$detail" ] || detail=$waitfor
       fi
-    elif [ $st = idle ]; then
+    elif [ $st = idle ] && [ "$agent" != term ]; then
       last=$(printf "%s\n" "$screen" | grep -vE "[▀▄█▌▐░▒▓]" | sed "s/^[[:space:]│╭╰╭╮╯─━>❯⏺✻┃╹]*//; s/[[:space:]│╮╯─━]*$//" | grep -vE "^$|^📁|^🧠|^⏵⏵|^(Sonnet|Opus|Haiku|Fable|Gemini|DeepSeek|Build) |^(Cooked|Worked|Churned|Baked|Sautéed|Brewed|Crunched|Cogitated) for |^Antigravity CLI|Type your message|Shift\+Tab to change mode|auto-edit is on|plan mode is on" | tail -2 | tr "\n" "\r" | sed "s/\r$//; s/\r/ · /g")
       if [ -n "$title" ] && [ -n "$last" ] && [ "$title" != "$last" ]; then detail="$title — $last"
       elif [ -n "$last" ]; then detail=$last
@@ -1519,11 +1523,13 @@ start)  # start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode a
   load $2 || exit 1
   local model=$3 name=$4 agent=claude REPLY
   shift 4 2>/dev/null
-  [[ $model == (opus|sonnet|agy|opencode) && -n $name ]] ||
-    die 'usage: lzr1-panel start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode args]'
+  [[ $model == (opus|sonnet|agy|opencode|term) && -n $name ]] ||
+    die 'usage: lzr1-panel start PROFILE opus|sonnet|agy|opencode|term NAME [claude, agy or opencode args]'
   [[ $name == *[.:/\|]* ]] && die 'session names cannot contain ".", ":", "/" or "|"'
   # LZR1_PROMPT is the first message; a resumed conversation does not get it again, nor your args.
-  if [[ $model == opencode ]]; then
+  if [[ $model == term ]]; then
+    agent=term REPLY=  # no command: tmux starts the machine's own shell
+  elif [[ $model == opencode ]]; then
     agent=opencode
     local oc="${(q)P_OPENCODE} --auto" args=${(j: :)${(q)@}}
     _keep opencode "$oc${args:+ $args}${LZR1_PROMPT:+ --prompt ${(q)LZR1_PROMPT}}" "$oc --continue"
@@ -1541,14 +1547,21 @@ start)  # start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode a
     name=$1 cmd=$2 root=$(exp "$3") repos=$(exp "$4")
     if tmux has-session -t "=$name" 2>/dev/null; then echo "already running"; exit 0; fi
     dir=$root inrepo=
-    if [ -n "$repos" ] && [ -d "$repos/$name" ]; then dir=$repos/$name inrepo=1
-    # A session about a pull request, REPO-prN, opens in REPO.
-    elif [ -n "$repos" ] && [ -d "$repos/${name%-pr*}" ]; then dir=$repos/${name%-pr*} inrepo=1; fi
+    if [ -n "$7" ] && [ -d "$(exp "$7")" ]; then dir=$(exp "$7") inrepo=1  # a folder asked for: the one of a running session
+    else
+      # A session about a pull request, REPO-prN, opens in REPO; a second one in the same folder, NAME-2, in NAME'"'"'s.
+      base=${name%-[0-9]*}
+      for c in "$name" "${name%-pr*}" "$base" "${base%-pr*}"; do
+        if [ -n "$c" ] && [ -n "$repos" ] && [ -d "$repos/$c" ]; then dir=$repos/$c inrepo=1; break; fi
+      done
+    fi
     [ -d "$dir" ] || dir=$HOME
     echo "folder: $dir"
-    tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
+    if [ -n "$cmd" ]; then tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$cmd" || exit 1
+    else tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 || exit 1; fi
     tmux set-option -t "=$name:" window-size smallest 2>/dev/null || :
     tmux set-option -t "=$name:" @lzr1_model "$5"
+    if [ "$6" = term ]; then tmux set-option -t "=$name:" @lzr1_agent term; echo started; exit 0; fi
     # opencode asks no folder trust and has no Remote Control link: started once it outlives its first 2s.
     if [ "$6" = opencode ]; then
       tmux set-option -t "=$name:" @lzr1_agent opencode; sleep 2
@@ -1584,7 +1597,7 @@ start)  # start PROFILE opus|sonnet|agy|opencode NAME [claude, agy or opencode a
       url=$(printf "%s" "$screen" | grep -o "https://claude.ai/code/session_[A-Za-z0-9]*" | tail -1)
       if [ -n "$url" ]; then tmux set-option -t "=$name:" @rc_url "$url"; echo "remote control: $url"; exit 0; fi
     done
-    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model" $agent
+    echo "started (Remote Control link not shown yet)"' "$name" "$cmd" "${P_ROOT:-${P_REPOS:-~}}" "$P_REPOS" "$model" $agent "$LZR1_DIR"
   ;;
 
 prs)  # your open pull requests, fresh
@@ -2138,8 +2151,10 @@ _new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's 
   # Only the machines that answered on the last refresh.
   local -a all=( ${${(M)${(@0)"$(<$STATE/$id.cache)"}:#[^+/]##/$'\t'*}%%/*} )
   (( $#all )) || all=( $(profiles) )
+  # LZR1_PICKED: a row's own menu started this, so its profile is the machine; no second question.
+  local given=; [[ -n $LZR1_PICKED && -n $p && -e $PROFILES/$p.conf ]] && given=1
   [[ -n $p && -e $PROFILES/$p.conf ]] || p=${all[1]}
-  if (( $#all > 1 )); then
+  if (( $#all > 1 )) && [[ -z $given ]]; then
     # Several machines: confirm which one, starting from the highlighted row's.
     p=$(print -rl -- $p ${all:#$p} | fzf --layout=reverse --prompt="new $model on › " --info=hidden \
           --gutter=' ' --pointer='▌' --highlight-line --color='pointer:yellow,current-fg:bold' \
@@ -2162,6 +2177,8 @@ _new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's 
   if [[ $name == *[.:/\|]* ]]; then
     print -r -- 'session names cannot contain ".", ":", "/" or "|" — press a key'; read -k1 -s; exit 0
   fi
+  # A name already running (a second agent in the same folder) becomes NAME-2, NAME-3...; start opens them in NAME's folder.
+  name=${$(on 'n=$1 i=1; while tmux has-session -t "=$n" 2>/dev/null; do i=$((i + 1)); n=$1-$i; done; printf %s "$n"' $name):-$name}
   LZR1_PROMPT=$prompt $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
   # Back to the list as soon as tmux has the session; the viewer shows Claude starting in it.
   if ! on 'i=0; while [ $i -lt 100 ]; do tmux has-session -t "=$1" 2>/dev/null && exit 0; i=$((i + 1)); sleep 0.1; done; exit 1' $name; then
@@ -2170,6 +2187,22 @@ _new)  # _new opus|sonnet|opencode ID KEY [NAME [PROMPT]]: type a name on KEY's 
   print -rn -- "$p/$name" >$STATE/$id.hold
   $SELF _select $id "$p/$name" force
   # The panel reloads after this returns; then its highlight moves to the new row.
+  $SELF _pos $id $FZF_PORT "$p/$name" >/dev/null 2>&1 &!
+  ;;
+
+_newhere)  # _newhere opus|sonnet|agy|opencode|term ID PROFILE DIR: a new session in DIR, the folder of a session already
+           # running there (named after the folder, then NAME-2...); term is a plain shell, no agent
+  local model=$2 id=$3 p=$4 dir=$5 name
+  [[ -n $p && -n $dir && -e $PROFILES/$p.conf ]] || exit 0
+  load $p || { read -k1 -s; exit 0 }
+  name=${${dir:t}//[.:\/|]/-}; [[ -n $name ]] || name=session
+  name=${$(on 'n=$1 i=1; while tmux has-session -t "=$n" 2>/dev/null; do i=$((i + 1)); n=$1-$i; done; printf %s "$n"' $name):-$name}
+  LZR1_DIR=$dir $SELF start $p $model $name >$STATE/$id.startlog 2>&1 &!
+  if ! on 'i=0; while [ $i -lt 100 ]; do tmux has-session -t "=$1" 2>/dev/null && exit 0; i=$((i + 1)); sleep 0.1; done; exit 1' $name; then
+    print -r -- "could not start $name:"; cat $STATE/$id.startlog; print "press a key"; read -k1 -s; exit 0
+  fi
+  print -rn -- "$p/$name" >$STATE/$id.hold
+  $SELF _select $id "$p/$name" force
   $SELF _pos $id $FZF_PORT "$p/$name" >/dev/null 2>&1 &!
   ;;
 
@@ -2459,10 +2492,13 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     $'sonnet\t+ new Sonnet session        (s)'
     $'agy\t+ new Agy session           (a)'
     $'opencode\t+ new opencode session      (c)'
+    $'term\t+ new terminal (no agent)'
     $'layout\t⇅ layout: sections & gaps   (l)'
     $'refresh\t↻ refresh list now          (r)'
     $'web\t⇄ remote panel in browser   (w)'
   )
+  if [[ -e $STATE/$id.keylock ]]; then acts+=( $'keylock\t🔓 unlock keyboard shortcuts & typing' )
+  else acts+=( $'keylock\t🔒 lock keyboard shortcuts & typing' ); fi
   [[ $(mode $id) == tmux ]] && acts+=( $'full\t⤢ full viewer (hide panel)  (f)' )
   acts+=(
     "theme"$'\t'"◐ Pokémon theme ($PK_MODE)"
@@ -2476,15 +2512,34 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     --bind 'left-click:accept,double-click:accept,right-click:abort,q:abort,esc:abort') || exit 0
   act=${pick%%$'\t'*}
   case $act in
-    opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
+    opus|sonnet|agy|opencode|term) $SELF _new $act $id $key ;;
     layout)  $SELF _lmenu $id $key ;;
     refresh) $SELF _refresh $id $FZF_PORT 0.25 ;;
     web)     $SELF _web $id ;;
+    keylock) $SELF _keylock $id $FZF_PORT ;;
     full)    $SELF _full $id ;;
     theme)   $SELF _theme ;;
     keys)    $SELF keys; read -k1 -s ;;
     quit)    $SELF _quit $id ;;
   esac
+  ;;
+
+_keylock)  # _keylock ID PORT: toggle the panel's keyboard: locked, only the mouse works (the footer [≡ menu] unlocks)
+  local id=$2 port=$3 K='n,s,a,c,x,w,f,t,o,p,r,m,l,q,+,=,-,[,],?,esc,enter,up,down,alt-s,alt-p,alt-up,alt-down,shift-up,shift-down' act
+  [[ -n $id && -n $port ]] || exit 0
+  if [[ -e $STATE/$id.keylock ]]; then
+    rm -f $STATE/$id.keylock
+    act="rebind($K)+change-header-label( lzr1 )"
+  else
+    : >$STATE/$id.keylock
+    act="unbind($K)+change-header-label( lzr1 · 🔒 keys locked )"
+  fi
+  # fzf answers its port only once the menu that runs this (an execute) has returned: send it in the background,
+  # retrying until it does.
+  ( local i; for i in {1..50}; do
+      curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "$act" >/dev/null 2>&1 && break
+      sleep 0.2
+    done ) >/dev/null 2>&1 &!
   ;;
 
 _tap)  # _tap ID KEY [PORT]: a left click on a row; a scroll row scrolls its section, and in the narrow layout a session shows
@@ -2577,6 +2632,7 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
       $'sonnet\t+ new Sonnet session here'
       $'agy\t+ new Agy session here'
       $'opencode\t+ new opencode session here'
+      $'term\t+ new terminal session here (no agent)'
       $'test\ttest this machine'
       $'edit\tedit this profile…'
       "remove"$'\t'"${E}remove this profile…$R"
@@ -2604,11 +2660,17 @@ _menu)  # _menu ID KEY: the row's menu (right-click, or m): click an action, or 
     [[ $PK_MODE != off ]] && acts+=( $'pokemon\tchoose its Pokémon' )
     acts+=( $'attach\tcopy the attach command' )
     [[ $P_TYPE == local && -n $dir ]] && acts+=( $'folder\topen its folder' )
+    if [[ -n $dir ]]; then
+      acts+=( $'termhere\t+ new terminal in this folder (no agent)' $'opushere\t+ another Opus session in this folder'
+              $'sonnethere\t+ another Sonnet session in this folder' $'agyhere\t+ another Agy session in this folder'
+              $'ochere\t+ another opencode session in this folder' )
+    fi
+    acts+=( $'newterm\tnew terminal on this machine' )
     acts+=( $'new\tnew session on this machine' $'newagy\tnew Agy session on this machine' $'newoc\tnew opencode session on this machine' )
     if [[ $st == work ]]; then
       [[ $model == (opencode|agy) ]] && acts+=( $'esc\tinterrupt it (Esc)' ) || acts+=( $'esc\tinterrupt Claude (Esc)' )
     fi
-    acts+=( $'rename\trename it' "end"$'\t'"${E}end it: stop ${${model:#(opencode|agy)}:+Claude}${${(M)model:#(opencode|agy)}} and close its tmux session…$R" )
+    acts+=( $'rename\trename it' "end"$'\t'"${E}end it: ${${${model:#shell}:#(opencode|agy)}:+stop Claude and }${${(M)model:#(opencode|agy)}:+stop $model and }close its tmux session…$R" )
   fi
   acts+=( "cancel"$'\t'"${D}cancel$R" )
   _cut $head $(( ${COLUMNS:-56} - 3 ))
@@ -2654,7 +2716,7 @@ gh pr checks $num, fix it and push." ;;
     layout)   $SELF _lmenu $id $key ;;
     all)   browse https://github.com/pulls ;;
     refresh) rm -f $STATE/prs ;;
-    opus|sonnet|agy|opencode) $SELF _new $act $id $key ;;
+    opus|sonnet|agy|opencode|term) LZR1_PICKED=1 $SELF _new $act $id $key ;;
     test)  $SELF profile test $KP; print -n "press a key"; read -k1 -s ;;
     edit)  $SELF profile edit $KP; print -n "press a key"; read -k1 -s ;;
     remove)
@@ -2687,9 +2749,15 @@ gh pr checks $num, fix it and push." ;;
       if [[ $P_TYPE == local ]]; then clip "tmux attach -t =$KS"
       else clip "ssh ${P_KEY:+-i $P_KEY }${P_PORT:+-p $P_PORT }-t $P_HOST tmux attach -t =$KS"; fi ;;
     folder) browse $dir ;;
-    new)    $SELF _new opus $id $key ;;
-    newagy) $SELF _new agy $id $key ;;
-    newoc)  $SELF _new opencode $id $key ;;
+    new)    LZR1_PICKED=1 $SELF _new opus $id $key ;;
+    newagy) LZR1_PICKED=1 $SELF _new agy $id $key ;;
+    newoc)  LZR1_PICKED=1 $SELF _new opencode $id $key ;;
+    newterm) LZR1_PICKED=1 $SELF _new term $id $key ;;
+    termhere)   $SELF _newhere term $id $KP $dir ;;
+    opushere)   $SELF _newhere opus $id $KP $dir ;;
+    sonnethere) $SELF _newhere sonnet $id $KP $dir ;;
+    agyhere)    $SELF _newhere agy $id $KP $dir ;;
+    ochere)     $SELF _newhere opencode $id $KP $dir ;;
     # opencode 2.0 stops only on a second Esc within a few seconds.
     esc)   on 'tmux send-keys -t "=$1:" Escape
              if [ "$2" = opencode ] || [ "$(tmux show-options -qv -t "=$1:" @lzr1_agent)" = opencode ]; then
@@ -2790,6 +2858,7 @@ _panel)  # _panel ID
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
+  rm -f $STATE/$id.keylock  # a new panel starts with its keyboard unlocked
   fzf --ansi --read0 --no-input --layout=reverse --no-sort --track --id-nth=1 \
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
@@ -2859,7 +2928,8 @@ keys)
   click / ↑ ↓      show that session in the viewer
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
-  [≡ menu]         the footer menu: new sessions, layout, refresh, web, theme, quit
+                   incl. a plain terminal (no agent) or another agent in the same folder
+  [≡ menu]         the footer menu: lock the keyboard (mouse only), new sessions (agents or a plain terminal), layout, refresh, web, theme, quit
   l                sidebar layout: move pull requests section, reorder profiles & gaps
   Alt-↑ / Alt-↓    move highlighted profile or pull requests section up / down
   + / -            add / reduce space above profile, or grow / shrink pull requests height
