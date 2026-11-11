@@ -722,3 +722,15 @@ Right-click a session and pick **another Opus / Sonnet / Agy / opencode session 
 this folder (no agent)**. A name already in use becomes `NAME-2`, `NAME-3`..., and `NAME-N` opens in NAME's folder,
 so each one is its own tmux session. A terminal row shows `shell` and is always idle (`·`): the panel cannot read
 what runs in it. `lzr1-panel start PROFILE term NAME` does the same from a shell (`LZR1_DIR=/folder` picks the folder).
+
+### The Spotify block (now playing) is missing
+
+It sits above `[≡ menu]` and shows only when the **Spotify desktop app** (macOS) is running, signed in and has a track
+loaded or playing: a signed-out or idle app has none, so nothing is shown. Nothing to turn on; `LZR1_SPOTIFY=off` in your
+shell hides it.
+
+- **Never shows.** Start Spotify and play something. The panel never starts Spotify itself. The first time, macOS may
+  ask to let your terminal control Spotify (System Settings → Privacy & Security → Automation): allow it.
+- **No cover.** It needs `curl` and ImageMagick (`brew install imagemagick`), and a panel wide enough (about 40
+  columns); otherwise the block is the 3-line version (title, bar, buttons).
+- **Clicks.** ⏮ ⏸/▶ ⏭ act on Spotify; a click on the bar seeks. It follows Spotify within 2 seconds.

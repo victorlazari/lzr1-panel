@@ -1517,6 +1517,104 @@ _remote_who() {
   return 0
 }
 
+# ---- Spotify: the now-playing block above the footer (macOS, the desktop app, signed in) ---------------------------------
+# It shows only while Spotify runs and has a track (a signed-out or idle app has none), so there is nothing to turn on.
+# LZR1_SPOTIFY=off hides it. A poller (_spotpoll) renders it into $SPOT/foot every 2s; the footer reads that file.
+
+SPOT=$STATE/spotify
+
+# spot_query: REPLY = state, title, artist, album, position (s), duration (ms), cover URL and volume, split by \037.
+# False when Spotify is not running (asking AppleScript would start it) or has no track.
+spot_query() {
+  REPLY=
+  [[ $OSTYPE == darwin* && $LZR1_SPOTIFY != off ]] || return 1
+  pgrep -x Spotify >/dev/null 2>&1 || return 1
+  REPLY=$(osascript 2>/dev/null <<'AS'
+tell application "Spotify"
+  set pst to (player state as text)
+  if pst is "stopped" then return pst
+  set tr to current track
+  set sep to (ASCII character 31)
+  return pst & sep & (name of tr) & sep & (artist of tr) & sep & (album of tr) & sep & (player position as text) & sep & ((duration of tr) as text) & sep & (artwork url of tr) & sep & (sound volume as text)
+end tell
+AS
+)
+  [[ $REPLY == (playing|paused)$'\037'* ]]
+}
+
+# spot_cover URL: 8x4 cells of half blocks for a cover, cached in $SPOT/c-KEY.ans; its path in REPLY, false without one
+spot_cover() {
+  local url=$1 key f tmp x y e=$'\e' line k
+  local -a IM t b out
+  local -A P
+  [[ -n $url ]] || return 1
+  key=$(print -rn -- $url | shasum | cut -c1-16); f=$SPOT/c-$key.ans
+  [[ -s $f ]] && { REPLY=$f; return 0 }
+  (( $+commands[curl] )) || return 1
+  if (( $+commands[magick] )); then IM=( magick ); elif (( $+commands[convert] )); then IM=( convert ); else return 1; fi
+  tmp=$SPOT/.dl-$$; mkdir -p $SPOT
+  curl -sf -m 6 -o $tmp $url || { rm -f $tmp; return 1 }
+  $IM $tmp -alpha off -resize 8x8\! -depth 8 txt:- 2>/dev/null |
+    while IFS= read -r line; do
+      [[ $line == (#b)([0-9]##),([0-9]##):\ \(([0-9.]##),([0-9.]##),([0-9.]##)* ]] || continue
+      P[$match[1],$match[2]]="${match[3]%.*} ${match[4]%.*} ${match[5]%.*}"
+    done
+  rm -f $tmp
+  (( $#P )) || return 1
+  for (( y = 0; y < 8; y += 2 )); do
+    line=
+    for (( x = 0; x < 8; x++ )); do
+      t=( ${=P[$x,$y]:-0 0 0} ); b=( ${=P[$x,$(( y + 1 ))]:-0 0 0} )
+      line+="${e}[38;2;$t[1];$t[2];$t[3];48;2;$b[1];$b[2];$b[3]m▀"
+    done
+    out+=( "$line${e}[0m" )
+  done
+  print -rl -- $out >$f; REPLY=$f
+}
+
+# spot_render: write $SPOT/foot (the block's lines) and $SPOT/meta (rows, bar row, bar column, bar width, duration ms);
+# both removed, and false, when there is nothing playing. Cover on the left (8x4) when the panel is wide enough.
+spot_render() {
+  local -a cov
+  local pst name artist album pos dur art vol W=$(( ${PANEL_W:-56} - 4 )) e=$'\e' G D B R pp t1 t2 bw bs fill psec dsec n
+  local l1 l2 l3 l4 bar
+  if ! spot_query; then rm -f $SPOT/foot $SPOT/meta; return 1; fi
+  IFS=$'\037' read -r pst name artist album pos dur art vol <<<$REPLY
+  pos=${pos/,/.} dur=${dur%%[.,]*} vol=${vol%%[.,]*}
+  [[ $dur == <-> && $dur -gt 0 ]] || dur=1000
+  mkdir -p $SPOT
+  G="${e}[38;2;30;215;96m" D="${e}[90m" B="${e}[1m" R="${e}[0m"
+  psec=${pos%%[.,]*}; [[ $psec == <-> ]] || psec=0; dsec=$(( dur / 1000 ))
+  (( psec > dsec )) && psec=$dsec
+  t1=$(printf '%d:%02d' $(( psec / 60 )) $(( psec % 60 ))) t2=$(printf '%d:%02d' $(( dsec / 60 )) $(( dsec % 60 )))
+  [[ $pst == playing ]] && pp="⏸" || pp="▶"
+  bw=$(( W - 4 - ${#t1} - ${#t2} )); (( bw < 6 )) && bw=6
+  bs=$(( ${#t1} + 3 ))
+  fill=$(( bw * psec / (dsec > 0 ? dsec : 1) )); (( fill > bw )) && fill=$bw
+  bar="${G}${(l:fill::━:)}${e}[38;5;238m${(l:bw-fill::─:)}${R}"
+  [[ $vol == <-> ]] && vol=" ${D}vol ${vol}%${R}" || vol=
+  if (( W >= 36 )) && spot_cover $art; then
+    cov=( ${(f)"$(<$REPLY)"} )
+    n=$(( W - 12 ))
+    _cut $name $(( n - 2 )); l1=" $cov[1] ${G}${B}♪${R} ${B}$REPLY${R}"
+    _cut $artist $n;         l2=" $cov[2] ${D}$REPLY${R}"
+    _cut $album $n;          l3=" $cov[3] ${D}$REPLY${R}"
+    l4=" $cov[4]  ⏮  ${G}${pp}${R}  ⏭  $vol"
+    print -r -- "$l1"$'\n'"$l2"$'\n'"$l3"$'\n'"$l4"$'\n'" ${D}$t1${R} $bar ${D}$t2${R}" >$SPOT/foot.new
+    print -r -- "5 5 $bs $bw $dur" >$SPOT/meta.new
+  else
+    _cut "$name · $artist" $(( W - 5 )); l1=" ${G}${B}♪${R} ${B}$REPLY${R}"
+    l3="  ⏮  ${G}${pp}${R}  ⏭  $vol"
+    print -r -- "$l1"$'\n'" ${D}$t1${R} $bar ${D}$t2${R}"$'\n'"$l3" >$SPOT/foot.new
+    print -r -- "3 2 $bs $bw $dur" >$SPOT/meta.new
+  fi
+  mv -f $SPOT/foot.new $SPOT/foot; mv -f $SPOT/meta.new $SPOT/meta
+}
+
+# foot_cmd STATUS: fzf's transform-footer command: the Spotify block (if any), then the menu line with STATUS in [ ].
+# A plain shell line, so a refresh's spinner redraws it without starting this script.
+foot_cmd() { print -rn -- "cat ${(q)SPOT}/foot 2>/dev/null; printf ' [≡ menu]  [%s] ' ${(q)1:-↻}"; }
+
 # ---- commands -------------------------------------------------------------------------------------------------------
 
 case $1 in
@@ -2447,6 +2545,23 @@ _lmenu)  # _lmenu ID [KEY]: interactive Option A sidebar layout & spacing organi
 
 _footer)  # _footer ID: fzf's action for a click on the footer (" [≡ menu]  [↻] "). The row's key stays a {1}
          # that fzf fills in, quoted, when it runs the action: the transform's own text never holds a session's name.
+  # The Spotify block's lines come first (meta: rows, bar row, bar column, bar width, duration ms): a button or the bar.
+  if [[ -s $SPOT/meta && ${FZF_CLICK_FOOTER_LINE:-0} -ge 1 ]]; then
+    local -a sm=( ${=$(<$SPOT/meta)} )
+    if (( FZF_CLICK_FOOTER_LINE <= sm[1] )); then
+      if (( FZF_CLICK_FOOTER_LINE == sm[2] )); then
+        (( FZF_CLICK_FOOTER_COLUMN >= sm[3] && FZF_CLICK_FOOTER_COLUMN < sm[3] + sm[4] )) &&
+          print -r -- "execute-silent($SELF _spotctl seek $(( (FZF_CLICK_FOOTER_COLUMN - sm[3]) * (sm[5] / 1000) / sm[4] )))"
+      else
+        case $FZF_CLICK_FOOTER_WORD in
+          ⏮)    print -r -- "execute-silent($SELF _spotctl prev)" ;;
+          ⏸|▶)  print -r -- "execute-silent($SELF _spotctl playpause)" ;;
+          ⏭)    print -r -- "execute-silent($SELF _spotctl next)" ;;
+        esac
+      fi
+      exit 0
+    fi
+  fi
   if [[ $FZF_CLICK_FOOTER_WORD == (*↻*|*refresh*|*✓*) ]] || (( ${FZF_CLICK_FOOTER_COLUMN:-0} >= 11 )); then
     print -r -- "execute-silent($SELF _refresh $2 \$FZF_PORT)"
   elif [[ $(mode $2) == tmux && -s $STATE/$2.me ]]; then
@@ -2472,7 +2587,7 @@ _refresh)  # _refresh ID PORT [DELAY]: refresh the panel with a live spinner in 
     pid=$!
     while kill -0 $pid 2>/dev/null || (( i < 8 )); do
       (( i++ ))
-      $api -XPOST -d "change-footer( [≡ menu]  [${sp[$(( (i - 1) % $#sp + 1 ))]} refreshing…] )" >/dev/null 2>&1 || exit 0
+      $api -XPOST -d "transform-footer($(foot_cmd "${sp[$(( (i - 1) % $#sp + 1 ))]} refreshing…"))" >/dev/null 2>&1 || exit 0
       sleep 0.08
     done
     wait $pid 2>/dev/null
@@ -2480,10 +2595,10 @@ _refresh)  # _refresh ID PORT [DELAY]: refresh the panel with a live spinner in 
       mv -f $out $STATE/$id.cache
       $api -XPOST -d "reload(cat ${(q)STATE}/$id.cache)" >/dev/null 2>&1
       sleep 0.08
-      $api -XPOST -d "change-footer( [≡ menu]  [✓ refreshed] )" >/dev/null 2>&1
+      $api -XPOST -d "transform-footer($(foot_cmd '✓ refreshed'))" >/dev/null 2>&1
       sleep 0.6
     fi
-    $api -XPOST -d "change-footer( [≡ menu]  [↻] )" >/dev/null 2>&1
+    $api -XPOST -d "transform-footer($(foot_cmd))" >/dev/null 2>&1
   ) >/dev/null 2>&1 &!
   ;;
 
@@ -2524,6 +2639,33 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     keys)    $SELF keys; read -k1 -s ;;
     quit)    $SELF _quit $id ;;
   esac
+  ;;
+
+_spotpoll)  # _spotpoll ID PORT PANELPID: keep the Spotify block in the footer current while the panel (PANELPID) lives
+  [[ $OSTYPE == darwin* && $LZR1_SPOTIFY != off ]] || exit 0
+  ( local prev cur
+    while kill -0 $4 2>/dev/null; do
+      spot_render
+      cur=$(cat $SPOT/foot $SPOT/meta 2>/dev/null | cksum)
+      # Not during a refresh's spinner: its last frame redraws the footer with the block.
+      if [[ $cur != $prev && ! -e $STATE/$2.rflock ]]; then
+        curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$3" -d "transform-footer($(foot_cmd))" >/dev/null 2>&1 && prev=$cur
+      fi
+      sleep 2
+    done ) >/dev/null 2>&1 &!
+  ;;
+
+_spotctl)  # _spotctl prev|playpause|next|seek SECONDS: from a click on the block; then the block redraws at once
+  [[ $OSTYPE == darwin* ]] && pgrep -x Spotify >/dev/null 2>&1 || exit 0
+  case $2 in
+    prev)      osascript -e 'tell application "Spotify" to previous track' ;;
+    next)      osascript -e 'tell application "Spotify" to next track' ;;
+    playpause) osascript -e 'tell application "Spotify" to playpause' ;;
+    seek)      [[ $3 == <-> ]] && osascript -e "tell application \"Spotify\" to set player position to $3" ;;
+    *) exit 0 ;;
+  esac >/dev/null 2>&1
+  sleep 0.3; spot_render
+  [[ -n $FZF_PORT ]] && curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$FZF_PORT" -d "transform-footer($(foot_cmd))" >/dev/null 2>&1
   ;;
 
 _keylock)  # _keylock: toggle the keyboard lock (locked: only the mouse works; the footer [≡ menu] unlocks). It only flips
@@ -2860,7 +3002,7 @@ _panel)  # _panel ID
     --border=none --header-border=bottom --header-label=' lzr1 ' \
     --footer=' [≡ menu]  [↻] ' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
-    --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)$lockstart" \
+    --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)+execute-silent($S _spotpoll $id \$FZF_PORT $$)$lockstart" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
     --bind "focus:execute-silent($S _select $id {1} &)" \
     --bind "enter:transform:$S _enter $id {1}" \
@@ -2924,6 +3066,8 @@ keys)
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
                    incl. a plain terminal (no agent) or another agent in the same folder
+  now playing      with Spotify's desktop app open and signed in: a block above the footer; click ⏮ ⏸/▶ ⏭, or the bar to seek
+                   (LZR1_SPOTIFY=off hides it)
   [≡ menu]         the footer menu: lock the keyboard (mouse only), new sessions (agents or a plain terminal), layout, refresh, web, theme, quit
   l                sidebar layout: move pull requests section, reorder profiles & gaps
   Alt-↑ / Alt-↓    move highlighted profile or pull requests section up / down
