@@ -715,3 +715,10 @@ working in a very wide window with `LZR1_NARROW=0`: that setting turns the title
 ```
 
 Your profiles stay in `~/.config/lzr1-panel/profiles/`. Remove one with `lzr1-panel profile remove NAME`.
+
+### Two sessions in the same folder
+
+Right-click a session and pick **another Opus / Sonnet / Agy / opencode session in this folder**, or **new terminal in
+this folder (no agent)**. A name already in use becomes `NAME-2`, `NAME-3`..., and `NAME-N` opens in NAME's folder,
+so each one is its own tmux session. A terminal row shows `shell` and is always idle (`·`): the panel cannot read
+what runs in it. `lzr1-panel start PROFILE term NAME` does the same from a shell (`LZR1_DIR=/folder` picks the folder).
