@@ -50,6 +50,8 @@ PANEL_W=${LZR1_PANEL_WIDTH:-56}  # the panel's columns
   (( $+commands[curl] && ( $+commands[magick] || $+commands[convert] ) )) && PANEL_W=66; unset _pk0 } 2>/dev/null
 NARROW=${LZR1_NARROW:-$(( PANEL_W + 30 ))}  # a tmux layout under this many columns shows one pane at a time; 0: never
 [[ $NARROW == <-> ]] || NARROW=$(( PANEL_W + 30 ))
+# The keys the keyboard lock unbinds ($STATE/keylock exists while locked: it outlasts a panel that restarts).
+KEYLOCK_KEYS='n,s,a,c,x,w,f,t,o,p,r,m,l,q,+,=,-,[,],?,esc,enter,up,down,alt-s,alt-p,alt-up,alt-down,shift-up,shift-down'
 MENU_BUTTON=${LZR1_MENU_BUTTON:-right}  # the mouse button that opens a row's menu: right or left
 mkdir -p $PROFILES $STATE
 chmod 700 $CONFIG $PROFILES 2>/dev/null  # profiles hold hosts and key paths
@@ -2448,9 +2450,9 @@ _footer)  # _footer ID: fzf's action for a click on the footer (" [≡ menu]  [�
   if [[ $FZF_CLICK_FOOTER_WORD == (*↻*|*refresh*|*✓*) ]] || (( ${FZF_CLICK_FOOTER_COLUMN:-0} >= 11 )); then
     print -r -- "execute-silent($SELF _refresh $2 \$FZF_PORT)"
   elif [[ $(mode $2) == tmux && -s $STATE/$2.me ]]; then
-    print -r -- "execute($SELF _fmenu $2 {1})+execute-silent($SELF _unclick $2 $(<$STATE/$2.me))"
+    print -r -- "execute($SELF _fmenu $2 {1})+transform($SELF _keysync)+execute-silent($SELF _unclick $2 $(<$STATE/$2.me))"
   else
-    print -r -- "execute($SELF _fmenu $2 {1})+reload-sync($SELF _list $2)"
+    print -r -- "execute($SELF _fmenu $2 {1})+transform($SELF _keysync)+reload-sync($SELF _list $2)"
   fi
   ;;
 
@@ -2497,7 +2499,7 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     $'refresh\t↻ refresh list now          (r)'
     $'web\t⇄ remote panel in browser   (w)'
   )
-  if [[ -e $STATE/$id.keylock ]]; then acts+=( $'keylock\t🔓 unlock keyboard shortcuts & typing' )
+  if [[ -e $STATE/keylock ]]; then acts+=( $'keylock\t🔓 unlock keyboard shortcuts & typing' )
   else acts+=( $'keylock\t🔒 lock keyboard shortcuts & typing' ); fi
   [[ $(mode $id) == tmux ]] && acts+=( $'full\t⤢ full viewer (hide panel)  (f)' )
   acts+=(
@@ -2516,7 +2518,7 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
     layout)  $SELF _lmenu $id $key ;;
     refresh) $SELF _refresh $id $FZF_PORT 0.25 ;;
     web)     $SELF _web $id ;;
-    keylock) $SELF _keylock $id $FZF_PORT ;;
+    keylock) $SELF _keylock ;;
     full)    $SELF _full $id ;;
     theme)   $SELF _theme ;;
     keys)    $SELF keys; read -k1 -s ;;
@@ -2524,22 +2526,14 @@ _fmenu)  # _fmenu ID KEY: the footer [≡ menu] list, replacing individual foote
   esac
   ;;
 
-_keylock)  # _keylock ID PORT: toggle the panel's keyboard: locked, only the mouse works (the footer [≡ menu] unlocks)
-  local id=$2 port=$3 K='n,s,a,c,x,w,f,t,o,p,r,m,l,q,+,=,-,[,],?,esc,enter,up,down,alt-s,alt-p,alt-up,alt-down,shift-up,shift-down' act
-  [[ -n $id && -n $port ]] || exit 0
-  if [[ -e $STATE/$id.keylock ]]; then
-    rm -f $STATE/$id.keylock
-    act="rebind($K)+change-header-label( lzr1 )"
-  else
-    : >$STATE/$id.keylock
-    act="unbind($K)+change-header-label( lzr1 · 🔒 keys locked )"
-  fi
-  # fzf answers its port only once the menu that runs this (an execute) has returned: send it in the background,
-  # retrying until it does.
-  ( local i; for i in {1..50}; do
-      curl -sf -m 2 -H "x-api-key: $FZF_API_KEY" -XPOST "localhost:$port" -d "$act" >/dev/null 2>&1 && break
-      sleep 0.2
-    done ) >/dev/null 2>&1 &!
+_keylock)  # _keylock: toggle the keyboard lock (locked: only the mouse works; the footer [≡ menu] unlocks). It only flips
+            # the flag: fzf applies it itself, through _keysync, once the menu that called this has closed.
+  if [[ -e $STATE/keylock ]]; then rm -f $STATE/keylock; else : >$STATE/keylock; fi
+  ;;
+
+_keysync)  # _keysync: fzf actions (a transform) that make the panel's keys match the lock flag
+  if [[ -e $STATE/keylock ]]; then print -r -- "unbind($KEYLOCK_KEYS)+change-header-label( lzr1 · 🔒 keys locked )"
+  else print -r -- "rebind($KEYLOCK_KEYS)+change-header-label( lzr1 )"; fi
   ;;
 
 _tap)  # _tap ID KEY [PORT]: a left click on a row; a scroll row scrolls its section, and in the narrow layout a session shows
@@ -2858,14 +2852,15 @@ _panel)  # _panel ID
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
-  rm -f $STATE/$id.keylock  # a new panel starts with its keyboard unlocked
+  # A panel that restarts (or a second one) keeps the lock: its start action locks it again.
+  local lockstart=; [[ -e $STATE/keylock ]] && lockstart="+unbind($KEYLOCK_KEYS)+change-header-label( lzr1 · 🔒 keys locked )"
   fzf --ansi --read0 --no-input --layout=reverse --no-sort --track --id-nth=1 \
     --delimiter=$'\t' --with-nth=2 --header-lines=1 \
     --listen-unsafe --no-scrollbar --info=hidden --pointer='▌' --gutter=' ' --highlight-line \
     --border=none --header-border=bottom --header-label=' lzr1 ' \
     --footer=' [≡ menu]  [↻] ' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
-    --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)" \
+    --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)$lockstart" \
     --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
     --bind "focus:execute-silent($S _select $id {1} &)" \
     --bind "enter:transform:$S _enter $id {1}" \
