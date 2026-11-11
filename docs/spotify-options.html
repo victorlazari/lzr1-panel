@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lzr1 Spotify Section Options</title>
+<style>
+:root{--bg:#111213;--fg:#e8e6e1;--mut:#8b877c;--line:#2b2c2e;--card:#191a1b;--acc:#feed02;
+  --t-bg:#0c0d0e;--t-fg:#d8d6d0;--dim:#6f6c64;--cyan:#2ed8fe;--grn:#50f769;--yel:#e8d802;--mag:#d58cff;--spot:#1ed760}
+@media (prefers-color-scheme:light){:root{--bg:#f6f5f2;--fg:#191a1b;--mut:#6b675d;--line:#dcd9d1;--card:#fff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:26px;margin:0 0 6px}
+.lead{color:var(--mut);margin:0 0 28px;max-width:70ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:24px}
+.opt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.opt h2{font-size:17px;margin:0 0 2px}
+.opt .tag{display:inline-block;background:var(--acc);color:#191a1b;font-weight:600;font-size:12px;border-radius:4px;padding:0 7px;margin-right:6px}
+.opt p{color:var(--mut);margin:4px 0 12px;font-size:14px}
+.opt .rows{font-size:13px;color:var(--mut);margin:10px 0 0}
+/* the terminal: 56 columns of the panel */
+.term{background:var(--t-bg);color:var(--t-fg);border:1px solid #2a2b2d;border-radius:8px;padding:10px 0;
+  font:13px/1.3 "SF Mono","JetBrains Mono",Menlo,Consolas,monospace;width:max-content;max-width:100%;overflow-x:auto}
+.term .ln{white-space:pre;padding:0 10px;min-height:1.3em}
+.term .sep{border-top:1px solid #26272a;margin:6px 0}
+.d{color:var(--dim)}.c{color:var(--cyan)}.g{color:var(--grn)}.y{color:var(--yel)}.m{color:var(--mag)}.s{color:var(--spot)}.b{font-weight:700}
+.btn{color:var(--t-fg)}.btn.on{color:var(--spot);font-weight:700}
+.fill{color:var(--spot)}.rest{color:#3a3b3e}
+/* the cover: block characters, one cell per character */
+.row{display:flex;align-items:flex-start;gap:0;padding:0 10px}
+.cov{display:grid;flex:none;line-height:0}
+.cov i{display:block;width:1ch;height:1.3em}
+.col{white-space:pre;min-width:0}
+.col .ln{padding:0}
+</style>
+</head>
+<body>
+<main>
+<h1>Spotify section: 5 layouts</h1>
+<p class="lead">The section sits fixed at the bottom of the left panel, right above the <b>[≡ menu] [↻]</b> footer. Every mockup uses the panel's real 56-column width, the same sessions and the same sample song. The cover, song, times and progress are sample values; the buttons are clickable in the real panel. Pick 1 to 5.</p>
+
+<div class="grid" id="grid"></div>
+</main>
+
+<script>
+/* a sample cover: a 2-colour diagonal wash, drawn one cell per character like the panel's block-art */
+function cover(w,h,a,b,seed){
+  var el=document.createElement('div');el.className='cov';
+  el.style.gridTemplateColumns='repeat('+w+',1ch)';
+  for(var y=0;y<h;y++)for(var x=0;x<w;x++){
+    var t=(x/w*.6+y/h*.4);
+    var n=Math.sin((x+seed)*1.7)*Math.cos((y+seed)*2.3)*.18;
+    t=Math.min(1,Math.max(0,t+n));
+    var c=[0,1,2].map(function(k){return Math.round(a[k]+(b[k]-a[k])*t)});
+    var i=document.createElement('i');i.style.background='rgb('+c.join(',')+')';
+    el.appendChild(i);
+  }
+  return el;
+}
+var A=[34,28,60],B=[30,215,96];
+
+/* sample session rows above the section, so the placement is clear */
+function sessions(n){
+  var rows=[
+   ' <span class="d">⠿</span> <span class="b">lazari-personal</span><span class="d"> local · online · 3 ───────────</span>',
+   ' <span class="y">⧗</span> lzr1-panel                    <span class="c">sonnet</span><span class="d"> · 12s</span> <span class="g">●</span>',
+   '   <span class="y">⧗ Do you want to proceed?</span>',
+   ' <span class="d">·</span> lerian-clients                  <span class="c">opus</span><span class="d"> · 4m</span>',
+   '   <span class="m">clients-multi-domain</span>',
+   ' <span class="d">·</span> demo                            <span class="c">shell</span><span class="d"> · 0s</span>'
+  ];
+  return rows.slice(0,n).map(function(r){return '<div class="ln">'+r+'</div>'}).join('');
+}
+var FOOT='<div class="sep"></div><div class="ln y"> [≡ menu]  [↻] </div>';
+var BAR=function(n,total,w){var f=Math.round(w*n/total);return '<span class="fill">'+'━'.repeat(f)+'</span><span class="rest">'+'─'.repeat(w-f)+'</span>'};
+
+var opts=[
+ {n:1,t:'Cover left, info right',tag:'recommended',
+  d:'Cover thumbnail beside title, artist and album; progress bar and buttons under it. Four rows.',
+  rows:'4 rows · cover 8×4',
+  build:function(){
+    var h=sessions(6)+'<div class="sep"></div>';
+    var t=document.createElement('div');t.className='term';t.innerHTML=h;
+    var r=document.createElement('div');r.className='row';
+    r.appendChild(cover(8,4,A,B,1));
+    var c=document.createElement('div');c.className='col';
+    c.innerHTML='<div class="ln"> <span class="s b">♪</span> <span class="b">Blinding Lights</span></div>'+
+     '<div class="ln"> <span class="d">The Weeknd</span></div>'+
+     '<div class="ln"> <span class="d">After Hours</span></div>'+
+     '<div class="ln"> <span class="btn">⏮</span>  <span class="btn on">⏸</span>  <span class="btn">⏭</span>   <span class="d">🔊 65%</span></div>';
+    r.appendChild(c);t.appendChild(r);
+    var p=document.createElement('div');p.className='ln';
+    p.innerHTML=' <span class="d">1:12</span> '+BAR(72,200,36)+' <span class="d">3:20</span>';
+    t.appendChild(p);t.insertAdjacentHTML('beforeend',FOOT);return t}},
+ {n:2,t:'Tall cover, stacked info',tag:'',
+  d:'A larger cover (6 rows) on the left; everything else stacked on the right, bar and buttons at the bottom.',
+  rows:'6 rows · cover 12×6',
+  build:function(){
+    var t=document.createElement('div');t.className='term';t.innerHTML=sessions(6)+'<div class="sep"></div>';
+    var r=document.createElement('div');r.className='row';
+    r.appendChild(cover(12,6,[60,20,40],[255,170,60],3));
+    var c=document.createElement('div');c.className='col';
+    c.innerHTML='<div class="ln"> <span class="s b">♪ NOW PLAYING</span></div>'+
+     '<div class="ln"> <span class="b">Blinding Lights</span></div>'+
+     '<div class="ln"> <span class="d">The Weeknd</span></div>'+
+     '<div class="ln"> <span class="d">1:12 / 3:20</span></div>'+
+     '<div class="ln"> '+BAR(72,200,30)+'</div>'+
+     '<div class="ln"> <span class="btn">⏮</span>  <span class="btn on">⏸</span>  <span class="btn">⏭</span>  <span class="d">🔊</span></div>';
+    r.appendChild(c);t.appendChild(r);t.insertAdjacentHTML('beforeend',FOOT);return t}},
+ {n:3,t:'Full-width bar',tag:'',
+  d:'Small cover and text on top; a bar that spans the whole panel and a centered button row below.',
+  rows:'5 rows · cover 6×3',
+  build:function(){
+    var t=document.createElement('div');t.className='term';t.innerHTML=sessions(6)+'<div class="sep"></div>';
+    var r=document.createElement('div');r.className='row';
+    r.appendChild(cover(6,3,[20,40,90],[110,200,255],5));
+    var c=document.createElement('div');c.className='col';
+    c.innerHTML='<div class="ln"> <span class="b">Blinding Lights</span></div>'+
+     '<div class="ln"> <span class="d">The Weeknd · After Hours</span></div>'+
+     '<div class="ln"> <span class="s">♪ Spotify</span> <span class="d">· playing</span></div>';
+    r.appendChild(c);t.appendChild(r);
+    t.insertAdjacentHTML('beforeend','<div class="ln"> <span class="d">1:12</span> '+BAR(72,200,42)+' <span class="d">3:20</span></div>'+
+     '<div class="ln">          <span class="btn">⏮</span>    <span class="btn on">⏸</span>    <span class="btn">⏭</span>    <span class="d">🔉 −  65%  +</span></div>');
+    t.insertAdjacentHTML('beforeend',FOOT);return t}},
+ {n:4,t:'Compact (narrow panel)',tag:'',
+  d:'No cover. Title and artist on one line, bar, buttons. The fallback the panel would use when it is too narrow for a cover.',
+  rows:'3 rows · no cover',
+  build:function(){
+    var t=document.createElement('div');t.className='term';t.innerHTML=sessions(6)+'<div class="sep"></div>'+
+     '<div class="ln"> <span class="s b">♪</span> <span class="b">Blinding Lights</span> <span class="d">· The Weeknd</span></div>'+
+     '<div class="ln"> <span class="d">1:12</span> '+BAR(72,200,40)+' <span class="d">3:20</span></div>'+
+     '<div class="ln"> <span class="btn">⏮</span>  <span class="btn on">⏸</span>  <span class="btn">⏭</span>      <span class="d">🔊 65%</span></div>';
+    t.insertAdjacentHTML('beforeend',FOOT);return t}},
+ {n:5,t:'Cover on top, centered',tag:'',
+  d:'A wide cover banner (two rows of block characters) above centered text. The most album-art, the most height.',
+  rows:'7 rows · cover 24×3',
+  build:function(){
+    var t=document.createElement('div');t.className='term';t.innerHTML=sessions(4)+'<div class="sep"></div>';
+    var r=document.createElement('div');r.className='row';r.style.justifyContent='center';
+    r.appendChild(cover(24,3,[70,10,80],[255,100,120],7));t.appendChild(r);
+    t.insertAdjacentHTML('beforeend','<div class="ln">          <span class="b">Blinding Lights</span></div>'+
+     '<div class="ln">          <span class="d">The Weeknd · After Hours</span></div>'+
+     '<div class="ln"> <span class="d">1:12</span> '+BAR(72,200,40)+' <span class="d">3:20</span></div>'+
+     '<div class="ln">          <span class="btn">⏮</span>   <span class="btn on">⏸</span>   <span class="btn">⏭</span></div>');
+    t.insertAdjacentHTML('beforeend',FOOT);return t}}
+];
+var g=document.getElementById('grid');
+opts.forEach(function(o){
+  var d=document.createElement('section');d.className='opt';
+  d.innerHTML='<h2><span class="tag">'+o.n+'</span>'+o.t+(o.tag?' <small style="color:var(--mut)">· '+o.tag+'</small>':'')+'</h2><p>'+o.d+'</p>';
+  d.appendChild(o.build());
+  d.insertAdjacentHTML('beforeend','<div class="rows">'+o.rows+'. Buttons: ⏮ previous · ⏸/▶ pause or play · ⏭ next; a click on the bar seeks.</div>');
+  g.appendChild(d);
+});
+</script>
+</body>
+</html>
