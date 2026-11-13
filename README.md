@@ -98,7 +98,7 @@ If anything is off, `lzr1-panel doctor` tells you what is wrong and how to fix i
 | 🤖 **agy and opencode too** | New `agy` (`--dangerously-skip-permissions`) and `opencode` (`--auto`) sessions start from the same keys, menus and shortcuts, and are listed and alerted like Claude's (models `agy` and `opencode`). |
 | 🔔 **Told when it's your turn** | When a session finishes its reply or asks you something, its row gets `✱`, a tone plays and your system shows a detailed notification with the tmux session name, profile, repo/branch, and the exact agent request or completion summary (macOS and Linux). Looking at it in the viewer clears the mark. |
 | 🔀 **Your pull requests** | Below the sessions, the open PRs of the GitHub account on this computer, found by itself. `✓` checks passed · `✗` failed or changes requested · `⧗` running or waiting for review · `◌` draft. |
-| 👆 **Click to view** | Click a session and the viewer on the right shows it, live. Enter moves your keyboard there. |
+| 👆 **Click to view** | Click a session and the viewer on the right shows it, live, with your keyboard in it. The arrow keys only show it; Enter moves the keyboard there. |
 | 🖱 **Right-click menus** | On a session: links, copy, rename, end. On a PR: open it, ask Claude to review it or fix its checks, merge. |
 | 📱 **Remote Control** | Every session is also on your phone and at claude.ai/code. |
 | 🌐 **The panel in a browser** | One key publishes the whole panel to your tailnet, behind your Tailscale login and a password: use it from another laptop or a phone, as here. See [docs/remote.md](docs/remote.md). |
@@ -146,7 +146,8 @@ flowchart LR
 
 | Do this | And this happens |
 |---|---|
-| **click** a row, or `↑` `↓` | the session shows in the viewer |
+| **click** a row | the session shows in the viewer, and the keyboard moves there |
+| `↑` `↓` | the session shows in the viewer; the keyboard stays in the panel |
 | **enter** or double-click | you type in that session (on a PR: it opens in the browser) |
 | **right-click**, or `m` | the row's menu |
 | **`[≡ menu]`** (footer) | opens the footer menu list: new Opus / Sonnet / Agy / opencode sessions, refresh, web, full, Pokémon theme, keys, quit (never clips when the sidebar is narrow) |

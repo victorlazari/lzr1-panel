@@ -2678,14 +2678,14 @@ _keysync)  # _keysync: fzf actions (a transform) that make the panel's keys matc
   else print -r -- "rebind($KEYLOCK_KEYS)+change-header-label( lzr1 )"; fi
   ;;
 
-_tap)  # _tap ID KEY [PORT]: a left click on a row; a scroll row scrolls its section, and in the narrow layout a session shows
+_tap)  # _tap ID KEY [PORT]: a left click on a row; a scroll row scrolls its section, and a session shows in the viewer
+       # with the keyboard (narrow: the viewer alone), as enter does; a header or a PR row only takes the highlight
   case $3 in
     +pr:up/)   $SELF _layout $2 $4 scroll-up +pr/; exit 0 ;;
     +pr:dn/)   $SELF _layout $2 $4 scroll-down +pr/; exit 0 ;;
     +sess:up/) $SELF _layout $2 $4 scroll-up sess; exit 0 ;;
     +sess:dn/) $SELF _layout $2 $4 scroll-down sess; exit 0 ;;
   esac
-  [[ -e $STATE/$2.narrow ]] || exit 0
   case $3 in +*/*|*/) ;; */?*) $SELF _go $2 $3 ;; esac
   ;;
 
@@ -2983,14 +2983,14 @@ _panel)  # _panel ID
   # on its press and the menu takes the release, so the next footer click would be lost. In the tmux layout a release
   # typed into the panel once the menu is gone clears that (_unclick); a Ghostty split cannot be typed into.
   [[ $(mode $id) == tmux ]] && menu="execute($S _menu $id {1})+execute-silent($S _unclick $id $me)"
-  # Narrow (_fit): the viewer is hidden, so a tap on a session's row shows it (enter's action) instead of only moving the
-  # highlight (_tap decides). A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise
+  # A left click on a session's row shows it and moves the keyboard to the viewer (enter's action; narrow: the viewer
+  # alone) instead of only moving the highlight (_tap decides); the arrow keys still only show it. A hidden panel (1 column behind the zoomed viewer) skips the reload a resize otherwise
   # makes. A row's key ({1}) only ever reaches a command as one argument fzf quotes, never text a shell evaluates: a
   # session's name can hold "$(...)".
   local lmenu="execute($S _lmenu $id {1})+reload-sync($S _list $id)"
   [[ $(mode $id) == tmux ]] && lmenu="execute($S _lmenu $id {1})+execute-silent($S _unclick $id $me)"
-  local -a narrow=()
-  [[ $button != left-click ]] && narrow=( --bind "left-click:execute-silent($S _tap $id {1} \$FZF_PORT)" )
+  local -a tap=()
+  [[ $button != left-click ]] && tap=( --bind "left-click:execute-silent($S _tap $id {1} \$FZF_PORT)" )
   # The ticker and _pos send reloads through fzf's port, which plain --listen refuses; a per-panel key keeps
   # any other local process from sending commands to it.
   export FZF_API_KEY=$(openssl rand -hex 16)
@@ -3003,7 +3003,7 @@ _panel)  # _panel ID
     --footer=' [≡ menu]  [↻] ' --footer-border=top \
     --color='header:dim,footer:yellow,pointer:yellow,current-fg:bold' \
     --bind "start:reload($S _list $id)+execute-silent($S _ticker $id \$FZF_PORT)+execute-silent($S _spotpoll $id \$FZF_PORT $$)$lockstart" \
-    --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $narrow \
+    --bind "resize:transform:[ \$FZF_COLUMNS -gt 2 ] && echo 'reload-sync($S _list $id)'" $tap \
     --bind "focus:execute-silent($S _select $id {1} &)" \
     --bind "enter:transform:$S _enter $id {1}" \
     --bind "double-click:transform:$S _enter $id {1}" \
@@ -3062,7 +3062,8 @@ keys)
 
   lzr1-panel keys
 
-  click / ↑ ↓      show that session in the viewer
+  click            show that session in the viewer and move the keyboard there
+  ↑ ↓              show that session in the viewer (the keyboard stays in the panel)
   enter / dbl-click  show it and move the keyboard to the viewer (a PR: open it)
   right-click / m  the row's menu: links, copy, Claude on a PR, rename, end...
                    incl. a plain terminal (no agent) or another agent in the same folder
